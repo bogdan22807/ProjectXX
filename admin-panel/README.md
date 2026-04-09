@@ -1,3 +1,3 @@
-# Account Control — admin panel
+# Account Control
 
-Локальный интерфейс. Сборка: `npm ci && npm run build`, запуск разработки: `npm run dev`.
+`npm ci && npm run dev`

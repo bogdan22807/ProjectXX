@@ -5,21 +5,9 @@ export function SettingsPage() {
   const { settings, setSettings } = useAppState()
 
   const rows = [
-    {
-      key: 'notifications' as const,
-      title: 'Notifications',
-      description: 'Показывать уведомления о важных событиях в интерфейсе.',
-    },
-    {
-      key: 'autoRetryFailed' as const,
-      title: 'Auto retry failed',
-      description: 'При подключённой автоматизации повторять неудачные шаги.',
-    },
-    {
-      key: 'strictWarmup' as const,
-      title: 'Strict warmup',
-      description: 'Более строгие проверки перед статусом Ready.',
-    },
+    { key: 'notifications' as const, title: 'Notifications' },
+    { key: 'autoRetryFailed' as const, title: 'Auto retry failed' },
+    { key: 'strictWarmup' as const, title: 'Strict warmup' },
   ]
 
   return (
@@ -27,10 +15,7 @@ export function SettingsPage() {
       <Card className="divide-y divide-zinc-800/80">
         {rows.map((row) => (
           <div key={row.key} className="flex items-start justify-between gap-4 px-5 py-4">
-            <div>
-              <div className="text-sm font-medium text-zinc-200">{row.title}</div>
-              <p className="mt-1 text-xs text-zinc-500">{row.description}</p>
-            </div>
+            <div className="text-sm font-medium text-zinc-200">{row.title}</div>
             <button
               type="button"
               role="switch"
@@ -51,7 +36,6 @@ export function SettingsPage() {
           </div>
         ))}
       </Card>
-      <p className="text-xs text-zinc-600">Настройки хранятся только в памяти браузера и сбрасываются при обновлении страницы.</p>
     </div>
   )
 }

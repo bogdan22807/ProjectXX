@@ -254,7 +254,6 @@ export function DashboardPage() {
       <Card className="overflow-hidden p-0">
         <div className="border-b border-zinc-800/80 px-4 py-3">
           <h2 className="text-sm font-semibold text-zinc-200">Accounts</h2>
-          <p className="mt-0.5 text-xs text-zinc-500">Manage all accounts from the dashboard</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[960px] text-left text-sm">

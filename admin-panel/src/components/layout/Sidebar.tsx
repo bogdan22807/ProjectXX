@@ -19,7 +19,6 @@ export function Sidebar() {
         </div>
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-zinc-100">Account Control</div>
-          <div className="truncate text-xs text-zinc-500">Локально</div>
         </div>
       </div>
       <nav className="flex-1 space-y-0.5 p-3">
@@ -41,9 +40,6 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <div className="border-t border-zinc-800/80 p-3 text-xs text-zinc-600">
-        Локальная копия · данные только в этом браузере
-      </div>
     </aside>
   )
 }
