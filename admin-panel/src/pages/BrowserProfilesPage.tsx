@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
+import { checkboxClass, fieldClass } from '../components/ui/field-classes'
+import { EmptyState } from '../components/ui/EmptyState'
 import { Modal } from '../components/ui/Modal'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
@@ -24,6 +26,8 @@ export function BrowserProfilesPage() {
     proxyId: '' as string,
     status: 'Ready' as ProfileStatus,
   })
+
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   const location = useLocation()
   const navigate = useNavigate()
@@ -83,7 +87,7 @@ export function BrowserProfilesPage() {
         <Button
           variant="danger"
           disabled={selectedProfileIds.size === 0}
-          onClick={deleteSelectedProfiles}
+          onClick={() => setDeleteOpen(true)}
         >
           Delete
         </Button>
@@ -91,13 +95,24 @@ export function BrowserProfilesPage() {
 
       <div className="overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-900/30">
         <div className="overflow-x-auto">
+          {profiles.length === 0 ? (
+            <EmptyState
+              title="Нет профилей"
+              description="Создайте профиль браузера и привяжите к нему прокси."
+              action={
+                <Button variant="primary" onClick={openAddModal}>
+                  Создать профиль
+                </Button>
+              }
+            />
+          ) : (
           <table className="w-full min-w-[640px] text-left text-sm">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs uppercase tracking-wide text-zinc-500">
                 <th className="w-10 px-4 py-3">
                   <input
                     type="checkbox"
-                    className="rounded border-zinc-600 bg-zinc-900"
+                    className={checkboxClass}
                     checked={profiles.length > 0 && selectedProfileIds.size === profiles.length}
                     onChange={toggleAll}
                     aria-label="Select all"
@@ -111,11 +126,14 @@ export function BrowserProfilesPage() {
             </thead>
             <tbody className="divide-y divide-zinc-800/80">
               {profiles.map((bp) => (
-                <tr key={bp.id} className="hover:bg-zinc-900/40">
+                <tr
+                  key={bp.id}
+                  className="transition-[background-color] duration-200 ease-out hover:bg-zinc-900/40"
+                >
                   <td className="px-4 py-3">
                     <input
                       type="checkbox"
-                      className="rounded border-zinc-600 bg-zinc-900"
+                      className={checkboxClass}
                       checked={selectedProfileIds.has(bp.id)}
                       onChange={() => toggleRow(bp.id)}
                       aria-label={`Select ${bp.name}`}
@@ -133,11 +151,35 @@ export function BrowserProfilesPage() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
-        {profiles.length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-zinc-500">No profiles yet.</p>
-        ) : null}
       </div>
+
+      <Modal
+        open={deleteOpen}
+        title="Удалить профили?"
+        onClose={() => setDeleteOpen(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setDeleteOpen(false)}>
+              Отмена
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                deleteSelectedProfiles()
+                setDeleteOpen(false)
+              }}
+            >
+              Удалить
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-zinc-400">
+          Будет удалено профилей: {selectedProfileIds.size}. Связи с аккаунтами будут сброшены.
+        </p>
+      </Modal>
 
       <Modal
         open={addOpen}
@@ -158,7 +200,7 @@ export function BrowserProfilesPage() {
           <label className="block text-xs font-medium text-zinc-400">
             Profile Name
             <input
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={fieldClass}
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
@@ -166,7 +208,7 @@ export function BrowserProfilesPage() {
           <label className="block text-xs font-medium text-zinc-400">
             Linked Proxy
             <select
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={fieldClass}
               value={form.proxyId}
               onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
             >
@@ -182,7 +224,7 @@ export function BrowserProfilesPage() {
           <label className="block text-xs font-medium text-zinc-400">
             Status
             <select
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={fieldClass}
               value={form.status}
               onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as ProfileStatus }))}
             >

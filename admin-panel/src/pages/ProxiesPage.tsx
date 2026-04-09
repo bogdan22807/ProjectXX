@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
+import { checkboxClass, fieldClass } from '../components/ui/field-classes'
+import { EmptyState } from '../components/ui/EmptyState'
 import { Modal } from '../components/ui/Modal'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
@@ -24,6 +26,8 @@ export function ProxiesPage() {
     username: '',
     password: '',
   })
+
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   const location = useLocation()
   const navigate = useNavigate()
@@ -88,7 +92,7 @@ export function ProxiesPage() {
         <Button
           variant="danger"
           disabled={proxies.length === 0}
-          onClick={deleteSelectedProxies}
+          onClick={() => setDeleteOpen(true)}
         >
           Delete
         </Button>
@@ -96,13 +100,24 @@ export function ProxiesPage() {
 
       <div className="overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-900/30">
         <div className="overflow-x-auto">
+          {proxies.length === 0 ? (
+            <EmptyState
+              title="Нет прокси"
+              description="Добавьте прокси или импортируйте список позже."
+              action={
+                <Button variant="primary" onClick={openAddModal}>
+                  Добавить прокси
+                </Button>
+              }
+            />
+          ) : (
           <table className="w-full min-w-[720px] text-left text-sm">
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs uppercase tracking-wide text-zinc-500">
                 <th className="w-10 px-4 py-3">
                   <input
                     type="checkbox"
-                    className="rounded border-zinc-600 bg-zinc-900"
+                    className={checkboxClass}
                     checked={proxies.length > 0 && selectedProxyIds.size === proxies.length}
                     onChange={toggleAll}
                     aria-label="Select all"
@@ -117,11 +132,14 @@ export function ProxiesPage() {
             </thead>
             <tbody className="divide-y divide-zinc-800/80">
               {proxies.map((p) => (
-                <tr key={p.id} className="hover:bg-zinc-900/40">
+                <tr
+                  key={p.id}
+                  className="transition-[background-color] duration-200 ease-out hover:bg-zinc-900/40"
+                >
                   <td className="px-4 py-3">
                     <input
                       type="checkbox"
-                      className="rounded border-zinc-600 bg-zinc-900"
+                      className={checkboxClass}
                       checked={selectedProxyIds.has(p.id)}
                       onChange={() => toggleRow(p.id)}
                       aria-label={`Select ${p.host}`}
@@ -143,11 +161,37 @@ export function ProxiesPage() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
-        {proxies.length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-zinc-500">No proxies yet.</p>
-        ) : null}
       </div>
+
+      <Modal
+        open={deleteOpen}
+        title="Удалить прокси?"
+        onClose={() => setDeleteOpen(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setDeleteOpen(false)}>
+              Отмена
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                deleteSelectedProxies()
+                setDeleteOpen(false)
+              }}
+            >
+              Удалить
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm text-zinc-400">
+          {selectedProxyIds.size > 0
+            ? `Будет удалено выбранных строк: ${selectedProxyIds.size}. Связи с аккаунтами и профилями будут сброшены.`
+            : 'Будут удалены все прокси в списке. Связи с аккаунтами и профилями будут сброшены.'}
+        </p>
+      </Modal>
 
       <Modal
         open={addOpen}
@@ -168,7 +212,7 @@ export function ProxiesPage() {
           <label className="block text-xs font-medium text-zinc-400">
             Provider
             <input
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={fieldClass}
               value={form.provider}
               onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
               placeholder="SOAX"
@@ -177,7 +221,7 @@ export function ProxiesPage() {
           <label className="block text-xs font-medium text-zinc-400">
             Host
             <input
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={fieldClass}
               value={form.host}
               onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
               placeholder="proxy.example.com"
@@ -187,7 +231,7 @@ export function ProxiesPage() {
           <label className="block text-xs font-medium text-zinc-400">
             Port <span className="font-normal text-zinc-600">(optional)</span>
             <input
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={fieldClass}
               value={form.port}
               onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
               placeholder="9000"
@@ -196,7 +240,7 @@ export function ProxiesPage() {
           <label className="block text-xs font-medium text-zinc-400">
             Username <span className="font-normal text-zinc-600">(optional)</span>
             <input
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={fieldClass}
               value={form.username}
               onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
             />
@@ -205,7 +249,7 @@ export function ProxiesPage() {
             Password <span className="font-normal text-zinc-600">(optional)</span>
             <input
               type="password"
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={fieldClass}
               value={form.password}
               onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
               autoComplete="new-password"

@@ -29,7 +29,7 @@ export function Sidebar() {
             to={item.to}
             end={'end' in item ? item.end : false}
             className={({ isActive }) =>
-              `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+              `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium outline-none transition-[color,background-color] duration-200 ease-out focus-visible:ring-2 focus-visible:ring-violet-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0c12] ${
                 isActive
                   ? 'bg-zinc-800/90 text-white shadow-sm'
                   : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'

@@ -36,14 +36,14 @@ export function SettingsPage() {
               role="switch"
               aria-checked={settings[row.key]}
               onClick={() => setSettings({ [row.key]: !settings[row.key] })}
-              className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border transition-colors ${
+              className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border transition-[background-color,border-color,box-shadow] duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c0e14] disabled:cursor-not-allowed disabled:opacity-40 ${
                 settings[row.key]
                   ? 'border-violet-500/50 bg-violet-600'
                   : 'border-zinc-700 bg-zinc-800'
               }`}
             >
               <span
-                className={`pointer-events-none inline-block h-6 w-6 translate-y-0 rounded-full bg-white shadow transition-transform ${
+                className={`pointer-events-none inline-block h-6 w-6 translate-y-0 rounded-full bg-white shadow transition-transform duration-200 ease-out ${
                   settings[row.key] ? 'translate-x-5' : 'translate-x-0.5'
                 } mt-0.5`}
               />

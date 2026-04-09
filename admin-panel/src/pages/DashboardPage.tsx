@@ -2,6 +2,8 @@ import { useState, type Dispatch, type SetStateAction } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
+import { fieldClass, fieldClassMono } from '../components/ui/field-classes'
+import { EmptyState } from '../components/ui/EmptyState'
 import { Modal } from '../components/ui/Modal'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
@@ -67,7 +69,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Account Name
         <input
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.name}
           onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
         />
@@ -75,7 +77,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Login
         <input
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.login}
           onChange={(e) => setForm((f) => ({ ...f, login: e.target.value }))}
         />
@@ -84,7 +86,7 @@ function AccountFields({
         Cookies
         <textarea
           rows={3}
-          className="mt-1 w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClassMono}
           value={form.cookies}
           onChange={(e) => setForm((f) => ({ ...f, cookies: e.target.value }))}
           placeholder="Paste cookie string (local only)"
@@ -93,7 +95,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Platform
         <select
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.platform}
           onChange={(e) => setForm((f) => ({ ...f, platform: e.target.value as Platform }))}
         >
@@ -107,7 +109,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Proxy
         <select
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.proxyId}
           onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
         >
@@ -123,7 +125,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Browser Profile
         <select
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.profileId}
           onChange={(e) => setForm((f) => ({ ...f, profileId: e.target.value }))}
         >
@@ -138,7 +140,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Status
         <select
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.status}
           onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as AccountStatus }))}
         >
@@ -175,6 +177,8 @@ export function DashboardPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<FormState>(emptyForm)
+
+  const [deleteConfirm, setDeleteConfirm] = useState<Account | null>(null)
 
   function openEdit(a: Account) {
     setEditId(a.id)
@@ -301,6 +305,17 @@ export function DashboardPage() {
           </p>
         </div>
         <div className="overflow-x-auto">
+          {accounts.length === 0 ? (
+            <EmptyState
+              title="Нет аккаунтов"
+              description="Добавьте первый аккаунт — данные хранятся только в этом браузере."
+              action={
+                <Button variant="primary" onClick={() => setAddOpen(true)}>
+                  Добавить аккаунт
+                </Button>
+              }
+            />
+          ) : (
           <table className="w-full min-w-[1080px] table-fixed border-collapse text-left text-sm">
             <colgroup>
               <col className="w-[15%]" />
@@ -326,7 +341,7 @@ export function DashboardPage() {
               {accounts.map((a) => (
                 <tr
                   key={a.id}
-                  className="transition-colors hover:bg-zinc-800/45"
+                  className="transition-[background-color] duration-200 ease-out hover:bg-zinc-800/45"
                 >
                   <td className="px-4 py-3 align-middle">
                     <div className="min-w-0 font-medium text-zinc-200">
@@ -403,9 +418,7 @@ export function DashboardPage() {
                       <Button
                         className="h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs"
                         variant="danger"
-                        onClick={() => {
-                          if (confirm(`Удалить аккаунт «${a.name}»?`)) deleteAccountById(a.id)
-                        }}
+                        onClick={() => setDeleteConfirm(a)}
                       >
                         Удалить
                       </Button>
@@ -415,10 +428,8 @@ export function DashboardPage() {
               ))}
             </tbody>
           </table>
+          )}
         </div>
-        {accounts.length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-zinc-500">No accounts yet. Add one above.</p>
-        ) : null}
       </Card>
 
       <Card className="overflow-hidden ring-1 ring-inset ring-white/[0.03]">
@@ -429,19 +440,23 @@ export function DashboardPage() {
           </div>
           <Link
             to="/logs"
-            className="shrink-0 text-xs font-medium text-violet-400/90 transition hover:text-violet-300"
+            className="shrink-0 rounded-md text-xs font-medium text-violet-400/90 outline-none transition-colors duration-200 hover:text-violet-300 focus-visible:ring-2 focus-visible:ring-violet-500/45 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c0e14]"
           >
             View all logs →
           </Link>
         </div>
         <div className="p-2">
           {recentLogs.length === 0 ? (
-            <p className="px-3 py-10 text-center text-sm text-zinc-500">No logs yet.</p>
+            <EmptyState
+              className="py-12"
+              title="Событий пока нет"
+              description="Здесь появятся действия после работы с аккаунтами и настройками."
+            />
           ) : (
             <ul className="space-y-1">
               {recentLogs.map((l) => (
                 <li key={l.id}>
-                  <div className="group rounded-lg px-3 py-3 transition-colors hover:bg-zinc-800/35">
+                  <div className="group rounded-lg px-3 py-3 transition-[background-color] duration-200 ease-out hover:bg-zinc-800/35">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
                         <div className="flex flex-wrap items-center gap-2">
@@ -491,6 +506,38 @@ export function DashboardPage() {
         }
       >
         <AccountFields form={addForm} setForm={setAddForm} proxies={proxies} profiles={profiles} />
+      </Modal>
+
+      <Modal
+        open={deleteConfirm !== null}
+        title="Удалить аккаунт?"
+        onClose={() => setDeleteConfirm(null)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setDeleteConfirm(null)}>
+              Отмена
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (deleteConfirm) {
+                  deleteAccountById(deleteConfirm.id)
+                  setDeleteConfirm(null)
+                }
+              }}
+            >
+              Удалить
+            </Button>
+          </div>
+        }
+      >
+        {deleteConfirm ? (
+          <p className="text-sm text-zinc-400">
+            Аккаунт{' '}
+            <span className="font-medium text-zinc-200">«{deleteConfirm.name}»</span> будет удалён
+            без возможности восстановления.
+          </p>
+        ) : null}
       </Modal>
 
       <Modal

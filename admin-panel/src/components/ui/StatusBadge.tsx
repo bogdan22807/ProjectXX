@@ -18,7 +18,7 @@ export function StatusBadge({ status, children }: { status: AnyStatus; children?
   const cls = styles[status] ?? 'bg-zinc-800 text-zinc-400 border-zinc-700'
   return (
     <span
-      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${cls}`}
+      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium transition-[border-color,background-color] duration-200 ${cls}`}
     >
       {children ?? status}
     </span>
