@@ -226,24 +226,61 @@ export function DashboardPage() {
     return bp?.name ?? '—'
   }
 
-  const cards = [
-    { label: 'Total Accounts', value: stats.totalAccounts },
-    { label: 'Active', value: stats.activeAccounts },
-    { label: 'Running', value: stats.runningAccounts },
-    { label: 'Errors', value: stats.errorAccounts },
-    { label: 'Total Proxies', value: stats.totalProxies },
+  const statCards: {
+    label: string
+    value: number
+    hint: string
+    accent: 'violet' | 'emerald' | 'sky' | 'rose' | 'amber'
+  }[] = [
+    { label: 'Total accounts', value: stats.totalAccounts, hint: 'In workspace', accent: 'violet' },
+    { label: 'Active', value: stats.activeAccounts, hint: 'Ready or running', accent: 'emerald' },
+    { label: 'Running', value: stats.runningAccounts, hint: 'Live sessions', accent: 'sky' },
+    { label: 'Errors', value: stats.errorAccounts, hint: 'Needs attention', accent: 'rose' },
+    { label: 'Proxies', value: stats.totalProxies, hint: 'Configured endpoints', accent: 'amber' },
   ]
 
+  const accentBar: Record<(typeof statCards)[number]['accent'], string> = {
+    violet: 'from-violet-500/90 to-fuchsia-500/50',
+    emerald: 'from-emerald-400/90 to-teal-500/40',
+    sky: 'from-sky-400/80 to-blue-500/40',
+    rose: 'from-rose-400/80 to-red-500/35',
+    amber: 'from-amber-400/75 to-orange-500/35',
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {cards.map((c) => (
-          <Card key={c.label} className="p-4">
-            <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{c.label}</div>
-            <div className="mt-2 text-2xl font-semibold tabular-nums text-zinc-100">{c.value}</div>
-          </Card>
-        ))}
-      </div>
+    <div className="space-y-8">
+      <section className="space-y-4">
+        <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <h2 className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Overview</h2>
+            <p className="mt-1 text-sm text-zinc-400">Fleet health at a glance</p>
+          </div>
+        </div>
+        <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {statCards.map((c) => (
+            <Card
+              key={c.label}
+              className="relative flex h-full min-h-[112px] flex-col overflow-hidden p-0"
+            >
+              <div
+                className={`h-0.5 w-full bg-gradient-to-r ${accentBar[c.accent]} opacity-90`}
+                aria-hidden
+              />
+              <div className="flex flex-1 flex-col justify-between p-5">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider text-zinc-500">
+                    {c.label}
+                  </p>
+                  <p className="mt-3 text-3xl font-semibold tabular-nums tracking-tight text-zinc-50">
+                    {c.value}
+                  </p>
+                </div>
+                <p className="mt-4 text-xs leading-relaxed text-zinc-600">{c.hint}</p>
+              </div>
+            </Card>
+          ))}
+        </div>
+      </section>
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" onClick={() => setAddOpen(true)}>
@@ -333,20 +370,45 @@ export function DashboardPage() {
       </Card>
 
       <Card className="overflow-hidden">
-        <div className="border-b border-zinc-800/80 px-4 py-3">
-          <h2 className="text-sm font-semibold text-zinc-200">Recent logs</h2>
+        <div className="flex items-start justify-between gap-4 border-b border-zinc-800/80 bg-zinc-950/30 px-5 py-4">
+          <div>
+            <h2 className="text-sm font-semibold text-zinc-100">Recent activity</h2>
+            <p className="mt-0.5 text-xs text-zinc-500">Latest operations and state changes</p>
+          </div>
+          {recentLogs.length > 0 ? (
+            <span className="shrink-0 rounded-full border border-zinc-700/80 bg-zinc-900/80 px-2.5 py-0.5 text-[11px] font-medium tabular-nums text-zinc-400">
+              {recentLogs.length} shown
+            </span>
+          ) : null}
         </div>
-        <div className="divide-y divide-zinc-800/60">
+        <div className="divide-y divide-zinc-800/50">
           {recentLogs.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-zinc-500">No logs yet.</p>
+            <div className="px-5 py-12 text-center">
+              <p className="text-sm font-medium text-zinc-400">No activity yet</p>
+              <p className="mt-1 text-xs text-zinc-600">Actions on accounts will appear here.</p>
+            </div>
           ) : (
             recentLogs.map((l) => (
-              <div key={l.id} className="px-4 py-3 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-zinc-200">{l.action}</span>
-                  <span className="shrink-0 text-xs text-zinc-500">{formatTime(l.time)}</span>
+              <div
+                key={l.id}
+                className="group flex gap-3 px-5 py-3.5 transition-colors hover:bg-zinc-900/35"
+              >
+                <span
+                  className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-violet-500/70 ring-2 ring-violet-500/15 group-hover:bg-violet-400"
+                  aria-hidden
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+                    <span className="text-sm font-medium text-zinc-100">{l.action}</span>
+                    <time
+                      className="shrink-0 font-mono text-[11px] tabular-nums text-zinc-500"
+                      dateTime={l.time}
+                    >
+                      {formatTime(l.time)}
+                    </time>
+                  </div>
+                  <p className="mt-1.5 text-sm leading-relaxed text-zinc-500">{l.details}</p>
                 </div>
-                <p className="mt-1 text-zinc-500">{l.details}</p>
               </div>
             ))
           )}
