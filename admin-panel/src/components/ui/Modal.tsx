@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
+import { modalPanelClass } from './patterns'
 
 type Props = {
   open: boolean
@@ -33,8 +34,8 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
         aria-label="Close dialog"
         onClick={onClose}
       />
-      <div className="relative z-10 w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl shadow-black/50">
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
+      <div className={`relative z-10 w-full max-w-md ${modalPanelClass}`}>
+        <div className="flex items-center justify-between border-b border-zinc-800/80 px-5 py-4">
           <h2 id="modal-title" className="text-base font-semibold text-zinc-100">
             {title}
           </h2>
@@ -50,7 +51,7 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
           </button>
         </div>
         <div className="px-5 py-4">{children}</div>
-        {footer ? <div className="border-t border-zinc-800 px-5 py-4">{footer}</div> : null}
+        {footer ? <div className="border-t border-zinc-800/80 px-5 py-4">{footer}</div> : null}
       </div>
     </div>
   )

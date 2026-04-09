@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { cardRootClass } from './patterns'
 
 export function Card({
   children,
@@ -7,11 +8,5 @@ export function Card({
   children: ReactNode
   className?: string
 }) {
-  return (
-    <div
-      className={`rounded-xl border border-zinc-800/80 bg-zinc-900/40 shadow-sm shadow-black/20 transition-[border-color,box-shadow] duration-200 ease-out ${className}`}
-    >
-      {children}
-    </div>
-  )
+  return <div className={`${cardRootClass} ${className}`}>{children}</div>
 }

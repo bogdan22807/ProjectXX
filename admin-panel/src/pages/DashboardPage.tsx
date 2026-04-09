@@ -5,6 +5,18 @@ import { Card } from '../components/ui/Card'
 import { fieldClass, fieldClassMono } from '../components/ui/field-classes'
 import { EmptyState } from '../components/ui/EmptyState'
 import { Modal } from '../components/ui/Modal'
+import {
+  cardSectionHeaderClass,
+  pageStackClass,
+  tableActionButtonClass,
+  tableBodyClass,
+  tableCellClass,
+  tableCellHeaderClass,
+  tableClass,
+  tableHeadRowClass,
+  tableRowClass,
+  tableScrollClass,
+} from '../components/ui/patterns'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
 import { formatTime } from '../utils/format'
@@ -260,12 +272,12 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className={pageStackClass}>
       <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-5 lg:gap-4">
         {statCards.map((c) => (
           <Card
             key={c.label}
-            className="relative flex h-full min-h-[118px] flex-col justify-between overflow-hidden p-5 ring-1 ring-inset ring-white/[0.04]"
+            className="relative flex h-full min-h-[118px] flex-col justify-between overflow-hidden p-5"
           >
             <div
               className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${accentGlow[c.accent]} to-transparent opacity-90`}
@@ -297,14 +309,14 @@ export function DashboardPage() {
         </Button>
       </div>
 
-      <Card className="overflow-hidden p-0 ring-1 ring-inset ring-white/[0.03]">
-        <div className="border-b border-zinc-800/80 bg-zinc-950/25 px-5 py-4">
+      <Card className="overflow-hidden p-0">
+        <div className={cardSectionHeaderClass}>
           <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Accounts</h2>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
             Manage all accounts from the dashboard
           </p>
         </div>
-        <div className="overflow-x-auto">
+        <div className={tableScrollClass}>
           {accounts.length === 0 ? (
             <EmptyState
               title="Нет аккаунтов"
@@ -316,7 +328,7 @@ export function DashboardPage() {
               }
             />
           ) : (
-          <table className="w-full min-w-[1080px] table-fixed border-collapse text-left text-sm">
+          <table className={`${tableClass} min-w-[1080px] table-fixed border-collapse`}>
             <colgroup>
               <col className="w-[15%]" />
               <col className="w-[17%]" />
@@ -327,42 +339,39 @@ export function DashboardPage() {
               <col className="w-[12%]" />
             </colgroup>
             <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs uppercase tracking-wide text-zinc-500">
-                <th className="px-4 py-3 text-left font-medium">Аккаунт</th>
-                <th className="px-4 py-3 text-left font-medium">Логин</th>
-                <th className="px-4 py-3 text-left font-medium">Платформа</th>
-                <th className="px-4 py-3 text-left font-medium">Прокси</th>
-                <th className="px-4 py-3 text-left font-medium">Профиль</th>
-                <th className="px-4 py-3 text-left font-medium">Статус</th>
-                <th className="px-4 py-3 text-right font-medium">Действия</th>
+              <tr className={tableHeadRowClass}>
+                <th className={tableCellHeaderClass}>Аккаунт</th>
+                <th className={tableCellHeaderClass}>Логин</th>
+                <th className={tableCellHeaderClass}>Платформа</th>
+                <th className={tableCellHeaderClass}>Прокси</th>
+                <th className={tableCellHeaderClass}>Профиль</th>
+                <th className={tableCellHeaderClass}>Статус</th>
+                <th className={`${tableCellHeaderClass} text-right`}>Действия</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800/80">
+            <tbody className={tableBodyClass}>
               {accounts.map((a) => (
-                <tr
-                  key={a.id}
-                  className="transition-[background-color] duration-200 ease-out hover:bg-zinc-800/45"
-                >
-                  <td className="px-4 py-3 align-middle">
+                <tr key={a.id} className={tableRowClass}>
+                  <td className={tableCellClass}>
                     <div className="min-w-0 font-medium text-zinc-200">
                       <span className="block truncate" title={a.name}>
                         {a.name}
                       </span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 align-middle text-zinc-400">
+                  <td className={`${tableCellClass} text-zinc-400`}>
                     <div className="min-w-0">
                       <span className="block truncate font-mono text-[13px] leading-snug" title={a.login}>
                         {a.login || '—'}
                       </span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 align-middle text-zinc-400">
+                  <td className={`${tableCellClass} text-zinc-400`}>
                     <span className="block truncate" title={a.platform}>
                       {a.platform}
                     </span>
                   </td>
-                  <td className="px-4 py-3 align-middle text-zinc-400">
+                  <td className={`${tableCellClass} text-zinc-400`}>
                     <div className="min-w-0">
                       <span
                         className="block truncate text-[13px] leading-snug text-zinc-400"
@@ -372,7 +381,7 @@ export function DashboardPage() {
                       </span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 align-middle text-zinc-400">
+                  <td className={`${tableCellClass} text-zinc-400`}>
                     <div className="min-w-0">
                       <span
                         className="block truncate text-[13px] leading-snug"
@@ -382,7 +391,7 @@ export function DashboardPage() {
                       </span>
                     </div>
                   </td>
-                  <td className="px-4 py-3 align-middle">
+                  <td className={tableCellClass}>
                     <StatusBadge status={a.status}>
                       {a.status === 'New' && 'Новая'}
                       {a.status === 'Ready' && 'Готово'}
@@ -390,11 +399,11 @@ export function DashboardPage() {
                       {a.status === 'Error' && 'Ошибка'}
                     </StatusBadge>
                   </td>
-                  <td className="px-4 py-3 align-middle text-right">
+                  <td className={`${tableCellClass} text-right`}>
                     <div className="flex flex-wrap items-center justify-end gap-1.5">
                       {a.status === 'New' || a.status === 'Ready' ? (
                         <Button
-                          className="h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs"
+                          className={tableActionButtonClass}
                           variant="primary"
                           onClick={() => startAccount(a.id)}
                         >
@@ -403,20 +412,20 @@ export function DashboardPage() {
                       ) : null}
                       {a.status === 'Running' ? (
                         <Button
-                          className="h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs"
+                          className={tableActionButtonClass}
                           onClick={() => stopAccount(a.id)}
                         >
                           Остановить
                         </Button>
                       ) : null}
                       <Button
-                        className="h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs"
+                        className={tableActionButtonClass}
                         onClick={() => openEdit(a)}
                       >
                         Редактировать
                       </Button>
                       <Button
-                        className="h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs"
+                        className={tableActionButtonClass}
                         variant="danger"
                         onClick={() => setDeleteConfirm(a)}
                       >
@@ -432,8 +441,10 @@ export function DashboardPage() {
         </div>
       </Card>
 
-      <Card className="overflow-hidden ring-1 ring-inset ring-white/[0.03]">
-        <div className="flex flex-col gap-1 border-b border-zinc-800/80 bg-zinc-950/25 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+      <Card className="overflow-hidden">
+        <div
+          className={`flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-4 ${cardSectionHeaderClass}`}
+        >
           <div>
             <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Recent activity</h2>
             <p className="mt-0.5 text-xs text-zinc-500">Latest operations and system events</p>
@@ -445,7 +456,7 @@ export function DashboardPage() {
             View all logs →
           </Link>
         </div>
-        <div className="p-2">
+        <div className="p-4">
           {recentLogs.length === 0 ? (
             <EmptyState
               className="py-12"
