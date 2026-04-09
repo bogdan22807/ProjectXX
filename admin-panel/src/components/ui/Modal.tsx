@@ -1,4 +1,5 @@
 import { useEffect, type ReactNode } from 'react'
+import { uiModalBody, uiModalFooter, uiModalHeader, uiModalPanel } from './primitives'
 
 type Props = {
   open: boolean
@@ -33,11 +34,8 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
         aria-label="Close dialog"
         onClick={onClose}
       />
-      <div
-        className="relative z-10 w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl shadow-black/50"
-        style={{ animation: 'modalIn 0.2s ease-out both' }}
-      >
-        <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
+      <div className={uiModalPanel} style={{ animation: 'modalIn 0.2s ease-out both' }}>
+        <div className={uiModalHeader}>
           <h2 id="modal-title" className="text-base font-semibold text-zinc-100">
             {title}
           </h2>
@@ -52,8 +50,8 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
             </svg>
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
-        {footer ? <div className="border-t border-zinc-800 px-5 py-4">{footer}</div> : null}
+        <div className={uiModalBody}>{children}</div>
+        {footer ? <div className={uiModalFooter}>{footer}</div> : null}
       </div>
     </div>
   )

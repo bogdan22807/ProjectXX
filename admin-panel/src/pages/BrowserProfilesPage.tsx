@@ -1,7 +1,20 @@
 import { useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
+import { Card } from '../components/ui/Card'
 import { Modal } from '../components/ui/Modal'
+import {
+  uiFormStack,
+  uiInputField,
+  uiLabel,
+  uiPageStack,
+  uiTable,
+  uiTableBodyRow,
+  uiTableCheckbox,
+  uiTableHeadRow,
+  uiTableTd,
+  uiTableTh,
+} from '../components/ui/primitives'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
 import type { ProfileStatus } from '../types/domain'
@@ -75,7 +88,7 @@ export function BrowserProfilesPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className={uiPageStack}>
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" onClick={openAddModal}>
           Create Profile
@@ -89,44 +102,47 @@ export function BrowserProfilesPage() {
         </Button>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-zinc-800/80 bg-zinc-900/30">
+      <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left text-sm">
+          <table className={`${uiTable} min-w-[640px]`}>
             <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs uppercase tracking-wide text-zinc-500">
-                <th className="w-10 px-4 py-3">
+              <tr className={uiTableHeadRow}>
+                <th className={`${uiTableTh} w-12`}>
                   <input
                     type="checkbox"
-                    className="rounded border-zinc-600 bg-zinc-900"
+                    className={uiTableCheckbox}
                     checked={profiles.length > 0 && selectedProfileIds.size === profiles.length}
                     onChange={toggleAll}
                     aria-label="Select all"
                   />
                 </th>
-                <th className="px-4 py-3">ID</th>
-                <th className="px-4 py-3">Profile Name</th>
-                <th className="px-4 py-3">Linked Proxy</th>
-                <th className="px-4 py-3">Status</th>
+                <th className={uiTableTh}>ID</th>
+                <th className={uiTableTh}>Profile Name</th>
+                <th className={uiTableTh}>Linked Proxy</th>
+                <th className={uiTableTh}>Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800/80">
+            <tbody>
               {profiles.map((bp) => (
-                <tr key={bp.id} className="hover:bg-zinc-900/40">
-                  <td className="px-4 py-3">
+                <tr key={bp.id} className={uiTableBodyRow}>
+                  <td className={uiTableTd}>
                     <input
                       type="checkbox"
-                      className="rounded border-zinc-600 bg-zinc-900"
+                      className={uiTableCheckbox}
                       checked={selectedProfileIds.has(bp.id)}
                       onChange={() => toggleRow(bp.id)}
                       aria-label={`Select ${bp.name}`}
                     />
                   </td>
-                  <td className="px-4 py-3 font-mono text-xs text-zinc-500">{bp.id}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-200">{bp.name}</td>
-                  <td className="max-w-[220px] truncate px-4 py-3 text-zinc-400" title={proxyLabel(bp.proxyId)}>
+                  <td className={`${uiTableTd} font-mono text-xs text-zinc-500`}>{bp.id}</td>
+                  <td className={`${uiTableTd} font-medium text-zinc-200`}>{bp.name}</td>
+                  <td
+                    className={`${uiTableTd} max-w-[220px] truncate text-zinc-400`}
+                    title={proxyLabel(bp.proxyId)}
+                  >
                     {proxyLabel(bp.proxyId)}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className={uiTableTd}>
                     <StatusBadge status={bp.status} />
                   </td>
                 </tr>
@@ -135,9 +151,9 @@ export function BrowserProfilesPage() {
           </table>
         </div>
         {profiles.length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-zinc-500">No profiles yet.</p>
+          <p className="px-5 py-10 text-center text-sm text-zinc-500">No profiles yet.</p>
         ) : null}
-      </div>
+      </Card>
 
       <Modal
         open={addOpen}
@@ -154,19 +170,19 @@ export function BrowserProfilesPage() {
           </div>
         }
       >
-        <div className="space-y-3">
-          <label className="block text-xs font-medium text-zinc-400">
+        <div className={uiFormStack}>
+          <label className={uiLabel}>
             Profile Name
             <input
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={uiInputField}
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
             />
           </label>
-          <label className="block text-xs font-medium text-zinc-400">
+          <label className={uiLabel}>
             Linked Proxy
             <select
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={uiInputField}
               value={form.proxyId}
               onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
             >
@@ -179,10 +195,10 @@ export function BrowserProfilesPage() {
               ))}
             </select>
           </label>
-          <label className="block text-xs font-medium text-zinc-400">
+          <label className={uiLabel}>
             Status
             <select
-              className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+              className={uiInputField}
               value={form.status}
               onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as ProfileStatus }))}
             >

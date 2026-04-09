@@ -1,4 +1,5 @@
 import { Card } from '../components/ui/Card'
+import { uiPageStack } from '../components/ui/primitives'
 import { useAppState } from '../context/AppState'
 
 export function SettingsPage() {
@@ -23,7 +24,7 @@ export function SettingsPage() {
   ]
 
   return (
-    <div className="max-w-xl space-y-4">
+    <div className={`max-w-xl ${uiPageStack}`}>
       <Card className="divide-y divide-zinc-800/80">
         {rows.map((row) => (
           <div key={row.key} className="flex items-start justify-between gap-4 px-5 py-4">
@@ -36,7 +37,7 @@ export function SettingsPage() {
               role="switch"
               aria-checked={settings[row.key]}
               onClick={() => setSettings({ [row.key]: !settings[row.key] })}
-              className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border transition-colors ${
+              className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50 focus-visible:ring-offset-2 focus-visible:ring-offset-[#0c0e14] ${
                 settings[row.key]
                   ? 'border-violet-500/50 bg-violet-600'
                   : 'border-zinc-700 bg-zinc-800'

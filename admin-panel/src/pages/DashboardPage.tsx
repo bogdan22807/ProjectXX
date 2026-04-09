@@ -2,6 +2,18 @@ import { useState, type Dispatch, type SetStateAction } from 'react'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Modal } from '../components/ui/Modal'
+import {
+  uiCardHeaderPadding,
+  uiFormStack,
+  uiInputField,
+  uiLabel,
+  uiPageStack,
+  uiTable,
+  uiTableBodyRow,
+  uiTableHeadRow,
+  uiTableTd,
+  uiTableTh,
+} from '../components/ui/primitives'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
 import { formatTime } from '../utils/format'
@@ -11,11 +23,6 @@ import type { Account, AccountStatus, Platform } from '../types/domain'
 /** Unified compact actions in account table (same height) */
 const tableActionBtn =
   '!h-8 !min-h-[2rem] !shrink-0 !px-2.5 !py-0 text-xs font-medium leading-none'
-
-const fieldClass =
-  'mt-1 w-full rounded-lg border border-zinc-700/90 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition-[border-color,box-shadow] duration-150 ease-out ' +
-  'placeholder:text-zinc-600 hover:border-zinc-600 ' +
-  'focus:border-violet-500/60 focus:ring-2 focus:ring-violet-500/25 disabled:cursor-not-allowed disabled:opacity-45'
 
 const platforms: Platform[] = [
   'Twitter',
@@ -72,29 +79,29 @@ function AccountFields({
   profiles: { id: string; name: string }[]
 }) {
   return (
-    <div className="space-y-3">
-      <label className="block text-xs font-medium text-zinc-400">
+    <div className={uiFormStack}>
+      <label className={uiLabel}>
         Account Name
-        <input className={fieldClass} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
+        <input className={uiInputField} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
       </label>
-      <label className="block text-xs font-medium text-zinc-400">
+      <label className={uiLabel}>
         Login
-        <input className={fieldClass} value={form.login} onChange={(e) => setForm((f) => ({ ...f, login: e.target.value }))} />
+        <input className={uiInputField} value={form.login} onChange={(e) => setForm((f) => ({ ...f, login: e.target.value }))} />
       </label>
-      <label className="block text-xs font-medium text-zinc-400">
+      <label className={uiLabel}>
         Cookies
         <textarea
           rows={3}
-          className={`${fieldClass} resize-y font-mono text-xs`}
+          className={`${uiInputField} resize-y font-mono text-xs`}
           value={form.cookies}
           onChange={(e) => setForm((f) => ({ ...f, cookies: e.target.value }))}
           placeholder="Paste cookie string (local only)"
         />
       </label>
-      <label className="block text-xs font-medium text-zinc-400">
+      <label className={uiLabel}>
         Platform
         <select
-          className={fieldClass}
+          className={uiInputField}
           value={form.platform}
           onChange={(e) => setForm((f) => ({ ...f, platform: e.target.value as Platform }))}
         >
@@ -105,10 +112,10 @@ function AccountFields({
           ))}
         </select>
       </label>
-      <label className="block text-xs font-medium text-zinc-400">
+      <label className={uiLabel}>
         Proxy
         <select
-          className={fieldClass}
+          className={uiInputField}
           value={form.proxyId}
           onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
         >
@@ -121,10 +128,10 @@ function AccountFields({
           ))}
         </select>
       </label>
-      <label className="block text-xs font-medium text-zinc-400">
+      <label className={uiLabel}>
         Browser Profile
         <select
-          className={fieldClass}
+          className={uiInputField}
           value={form.profileId}
           onChange={(e) => setForm((f) => ({ ...f, profileId: e.target.value }))}
         >
@@ -136,10 +143,10 @@ function AccountFields({
           ))}
         </select>
       </label>
-      <label className="block text-xs font-medium text-zinc-400">
+      <label className={uiLabel}>
         Status
         <select
-          className={fieldClass}
+          className={uiInputField}
           value={form.status}
           onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as AccountStatus }))}
         >
@@ -252,7 +259,7 @@ export function DashboardPage() {
   }
 
   return (
-    <div className="space-y-8">
+    <div className={uiPageStack}>
       <section className="space-y-4">
         <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -316,12 +323,12 @@ export function DashboardPage() {
 
       {accounts.length > 0 ? (
       <Card className="overflow-hidden p-0">
-        <div className="border-b border-zinc-800/80 px-4 py-3">
+        <div className={`border-b border-zinc-800/80 ${uiCardHeaderPadding}`}>
           <h2 className="text-sm font-semibold text-zinc-200">Accounts</h2>
           <p className="mt-0.5 text-xs text-zinc-500">Manage all accounts from the dashboard</p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1080px] table-fixed border-collapse text-left text-sm">
+          <table className={`${uiTable} min-w-[1080px] table-fixed`}>
             <colgroup>
               <col style={{ width: '14%' }} />
               <col style={{ width: '17%' }} />
@@ -332,51 +339,48 @@ export function DashboardPage() {
               <col style={{ width: '10%' }} />
             </colgroup>
             <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs font-medium uppercase tracking-wide text-zinc-500">
-                <th className="px-4 py-3.5 align-middle">Account Name</th>
-                <th className="px-4 py-3.5 align-middle">Login</th>
-                <th className="px-4 py-3.5 align-middle">Platform</th>
-                <th className="px-4 py-3.5 align-middle">Proxy</th>
-                <th className="px-4 py-3.5 align-middle">Browser Profile</th>
-                <th className="px-4 py-3.5 align-middle">Status</th>
-                <th className="px-4 py-3.5 align-middle">Actions</th>
+              <tr className={uiTableHeadRow}>
+                <th className={uiTableTh}>Account Name</th>
+                <th className={uiTableTh}>Login</th>
+                <th className={uiTableTh}>Platform</th>
+                <th className={uiTableTh}>Proxy</th>
+                <th className={uiTableTh}>Browser Profile</th>
+                <th className={uiTableTh}>Status</th>
+                <th className={`${uiTableTh} text-right`}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {accounts.map((a) => (
-                <tr
-                  key={a.id}
-                  className="border-b border-zinc-800/60 transition-colors duration-150 ease-out hover:bg-zinc-900/55"
-                >
+                <tr key={a.id} className={uiTableBodyRow}>
                   <td
-                    className="max-w-0 truncate px-4 py-3 align-middle font-medium text-zinc-200"
+                    className={`${uiTableTd} max-w-0 truncate font-medium text-zinc-200`}
                     title={a.name}
                   >
                     {a.name}
                   </td>
                   <td
-                    className="max-w-0 truncate px-4 py-3 align-middle font-mono text-[13px] text-zinc-300"
+                    className={`${uiTableTd} max-w-0 truncate font-mono text-[13px] text-zinc-300`}
                     title={a.login}
                   >
                     {a.login}
                   </td>
-                  <td className="max-w-0 truncate px-4 py-3 align-middle text-zinc-400">{a.platform}</td>
+                  <td className={`${uiTableTd} max-w-0 truncate text-zinc-400`}>{a.platform}</td>
                   <td
-                    className="max-w-0 truncate px-4 py-3 align-middle text-[13px] text-zinc-400"
+                    className={`${uiTableTd} max-w-0 truncate text-[13px] text-zinc-400`}
                     title={proxyLabel(a.proxyId)}
                   >
                     {proxyLabel(a.proxyId)}
                   </td>
                   <td
-                    className="max-w-0 truncate px-4 py-3 align-middle text-[13px] text-zinc-400"
+                    className={`${uiTableTd} max-w-0 truncate text-[13px] text-zinc-400`}
                     title={profileLabel(a.profileId)}
                   >
                     {profileLabel(a.profileId)}
                   </td>
-                  <td className="px-4 py-3 align-middle">
+                  <td className={uiTableTd}>
                     <StatusBadge status={a.status} label={accountStatusLabelRu[a.status]} />
                   </td>
-                  <td className="whitespace-nowrap px-4 py-2.5 align-middle">
+                  <td className={`${uiTableTd} whitespace-nowrap text-right`}>
                     <div className="flex flex-wrap items-center justify-end gap-1.5">
                       {a.status === 'New' || a.status === 'Ready' ? (
                         <Button
@@ -409,7 +413,9 @@ export function DashboardPage() {
       ) : null}
 
       <Card className="overflow-hidden">
-        <div className="flex items-start justify-between gap-4 border-b border-zinc-800/80 bg-zinc-950/30 px-5 py-4">
+        <div
+          className={`flex items-start justify-between gap-4 border-b border-zinc-800/80 bg-zinc-950/30 ${uiCardHeaderPadding}`}
+        >
           <div>
             <h2 className="text-sm font-semibold text-zinc-100">Recent activity</h2>
             <p className="mt-0.5 text-xs text-zinc-500">Latest operations and state changes</p>
