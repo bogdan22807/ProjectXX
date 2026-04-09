@@ -9,12 +9,12 @@ export function SettingsPage() {
     {
       key: 'notifications' as const,
       title: 'Notifications',
-      description: 'Show in-app notices for important events (UI only).',
+      description: 'Show notices for important events.',
     },
     {
       key: 'autoRetryFailed' as const,
       title: 'Auto retry failed',
-      description: 'When automation is connected, retry failed steps automatically.',
+      description: 'Retry failed steps automatically.',
     },
     {
       key: 'strictWarmup' as const,
@@ -52,9 +52,6 @@ export function SettingsPage() {
           </div>
         ))}
       </Card>
-      <p className="text-xs text-zinc-600">
-        These preferences are stored in component state only and reset on refresh.
-      </p>
     </div>
   )
 }

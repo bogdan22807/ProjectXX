@@ -30,6 +30,7 @@ export function ProxiesPage() {
   } = useAppState()
 
   const [userAddOpen, setUserAddOpen] = useState(false)
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
   const [form, setForm] = useState({
     provider: 'SOAX',
     host: '',
@@ -76,6 +77,11 @@ export function ProxiesPage() {
     }
   }
 
+  function confirmDelete() {
+    deleteSelectedProxies()
+    setDeleteConfirmOpen(false)
+  }
+
   function submitAdd() {
     if (!form.host.trim()) return
     addProxy({
@@ -96,14 +102,14 @@ export function ProxiesPage() {
           Add Proxy
         </Button>
         <Button disabled={selectedProxyIds.size === 0} onClick={checkSelectedProxies}>
-          Check
+          Проверить
         </Button>
         <Button
           variant="danger"
           disabled={selectedProxyIds.size === 0}
-          onClick={deleteSelectedProxies}
+          onClick={() => setDeleteConfirmOpen(true)}
         >
-          Delete
+          Удалить
         </Button>
       </div>
 
@@ -161,6 +167,26 @@ export function ProxiesPage() {
           <p className="px-5 py-10 text-center text-sm text-zinc-500">No proxies yet.</p>
         ) : null}
       </Card>
+
+      <Modal
+        open={deleteConfirmOpen}
+        title="Удалить прокси"
+        onClose={() => setDeleteConfirmOpen(false)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setDeleteConfirmOpen(false)}>
+              Отмена
+            </Button>
+            <Button variant="danger" onClick={confirmDelete}>
+              Удалить
+            </Button>
+          </div>
+        }
+      >
+        <p className="text-sm leading-relaxed text-zinc-400">
+          Удалить выбранные прокси ({selectedProxyIds.size})? Связи с аккаунтами и профилями будут сброшены.
+        </p>
+      </Modal>
 
       <Modal
         open={addOpen}

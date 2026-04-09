@@ -22,7 +22,7 @@ export function Sidebar() {
           <div className="truncate text-xs text-zinc-500">Admin</div>
         </div>
       </div>
-      <nav className="flex-1 space-y-0.5 p-3">
+      <nav className="flex flex-1 flex-col space-y-0.5 p-3">
         {nav.map((item) => (
           <NavLink
             key={item.to}
@@ -41,9 +41,6 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <div className="border-t border-zinc-800/80 p-3 text-xs text-zinc-600">
-        Accounts are managed on Dashboard
-      </div>
     </aside>
   )
 }

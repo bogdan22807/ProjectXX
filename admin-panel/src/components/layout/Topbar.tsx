@@ -16,7 +16,7 @@ export function Topbar() {
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800/80 bg-zinc-950/50 px-6 backdrop-blur">
       <div>
         <h1 className="text-sm font-semibold text-zinc-100">{title}</h1>
-        <p className="text-xs text-zinc-500">Local state · ready for automation hooks</p>
+        <p className="text-xs text-zinc-500">Control panel</p>
       </div>
       <div className="flex items-center gap-3">
         <span className="hidden rounded-md border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-xs text-zinc-500 sm:inline">

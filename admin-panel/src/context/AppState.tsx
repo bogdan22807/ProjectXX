@@ -276,7 +276,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     )
     appendLog(
       'Check proxies',
-      `Marked ${selectedProxyIds.size} proxy row(s) as ${nextStatus} (mock)`,
+      `Marked ${selectedProxyIds.size} proxy row(s) as ${nextStatus}`,
     )
   }, [selectedProxyIds, appendLog])
 
@@ -308,7 +308,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const startWarmupSelected = useCallback(() => {
     const targets = accounts.filter((a) => selectedAccountIds.has(a.id) && a.status === 'New')
     if (targets.length === 0) {
-      appendLog('Start warmup', 'No selected accounts in New status (mock)')
+      appendLog('Start warmup', 'No selected accounts in New status')
       return
     }
     targets.forEach((acc) => startAccount(acc.id))

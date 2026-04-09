@@ -88,7 +88,7 @@ function AccountFields({
           className={`${uiInputField} resize-y font-mono text-xs`}
           value={form.cookies}
           onChange={(e) => setForm((f) => ({ ...f, cookies: e.target.value }))}
-          placeholder="Paste cookie string (local only)"
+          placeholder="Cookie string"
         />
       </label>
       <label className={uiLabel}>
@@ -306,7 +306,7 @@ export function DashboardPage() {
           </div>
           <h3 className="mt-5 text-base font-semibold text-zinc-100">Нет аккаунтов</h3>
           <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-zinc-500">
-            Добавьте первый аккаунт — он появится в таблице ниже. Все данные хранятся локально в браузере.
+            Добавьте первый аккаунт — он появится в таблице ниже.
           </p>
           <Button variant="primary" className="mt-6" onClick={() => setAddOpen(true)}>
             Добавить аккаунт

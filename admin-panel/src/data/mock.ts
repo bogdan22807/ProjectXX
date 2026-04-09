@@ -91,12 +91,12 @@ export const initialLogs: LogEntry[] = [
     id: 'l1',
     time: now(),
     action: 'System',
-    details: 'Local session started (mock data loaded)',
+    details: 'Session started',
   },
   {
     id: 'l2',
     time: now(),
     action: 'Account',
-    details: 'Loaded sample accounts for UI preview',
+    details: 'Accounts loaded',
   },
 ]
