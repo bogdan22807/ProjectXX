@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Modal } from '../components/ui/Modal'
 import { StatusBadge } from '../components/ui/StatusBadge'
@@ -25,6 +25,9 @@ export function AccountsPage() {
     addAccount,
     deleteSelectedAccounts,
     startWarmupSelected,
+    startAccount,
+    stopAccount,
+    deleteAccountById,
     selectedAccountIds,
     setSelectedAccountIds,
   } = useAppState()
@@ -118,10 +121,10 @@ export function AccountsPage() {
           disabled={selectedAccountIds.size === 0}
           onClick={deleteSelectedAccounts}
         >
-          Delete
+          Delete selected
         </Button>
         <Button disabled={selectedAccountIds.size === 0} onClick={startWarmupSelected}>
-          Start Warmup
+          Start warmup (New)
         </Button>
       </div>
 
@@ -162,7 +165,14 @@ export function AccountsPage() {
                     />
                   </td>
                   <td className="px-4 py-3 font-mono text-xs text-zinc-500">{a.id}</td>
-                  <td className="px-4 py-3 font-medium text-zinc-200">{a.name}</td>
+                  <td className="px-4 py-3 font-medium text-zinc-200">
+                    <Link
+                      to={`/accounts/${a.id}`}
+                      className="text-violet-300 hover:text-violet-200 hover:underline"
+                    >
+                      {a.name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3 text-zinc-400">{a.login}</td>
                   <td className="px-4 py-3 text-zinc-400">{a.platform}</td>
                   <td className="max-w-[180px] truncate px-4 py-3 text-zinc-500" title={proxyLabel(a.proxyId)}>
@@ -174,7 +184,34 @@ export function AccountsPage() {
                   <td className="px-4 py-3">
                     <StatusBadge status={a.status} />
                   </td>
-                  <td className="px-4 py-3 text-zinc-600">—</td>
+                  <td className="whitespace-nowrap px-4 py-3">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Button
+                        className="!px-2 !py-1 text-xs"
+                        variant="primary"
+                        disabled={a.status === 'Running'}
+                        onClick={() => startAccount(a.id)}
+                      >
+                        Start
+                      </Button>
+                      <Button
+                        className="!px-2 !py-1 text-xs"
+                        disabled={a.status !== 'Running'}
+                        onClick={() => stopAccount(a.id)}
+                      >
+                        Stop
+                      </Button>
+                      <Button
+                        className="!px-2 !py-1 text-xs"
+                        variant="danger"
+                        onClick={() => {
+                          if (confirm(`Delete "${a.name}"?`)) deleteAccountById(a.id)
+                        }}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>

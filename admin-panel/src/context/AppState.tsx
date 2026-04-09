@@ -50,6 +50,10 @@ interface AppStateValue {
     profileId: string | null
     status: AccountStatus
   }) => void
+  updateAccount: (id: string, patch: Partial<Omit<Account, 'id'>>) => void
+  deleteAccountById: (id: string) => void
+  startAccount: (id: string) => void
+  stopAccount: (id: string) => void
   deleteSelectedAccounts: () => void
   addProxy: (input: {
     provider: string
@@ -145,9 +149,99 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [appendLog],
   )
 
+  const deleteAccountById = useCallback(
+    (id: string) => {
+      const acc = accounts.find((a) => a.id === id)
+      if (!acc) return
+      const t = warmupTimers.current.get(id)
+      if (t) {
+        clearTimeout(t)
+        warmupTimers.current.delete(id)
+      }
+      setAccounts((prev) => prev.filter((a) => a.id !== id))
+      setSelectedAccountIds((prev) => {
+        const next = new Set(prev)
+        next.delete(id)
+        return next
+      })
+      appendLog('Delete account', `Removed "${acc.name}"`)
+    },
+    [accounts, appendLog],
+  )
+
+  const updateAccount = useCallback(
+    (id: string, patch: Partial<Omit<Account, 'id'>>) => {
+      const acc = accounts.find((a) => a.id === id)
+      if (!acc) return
+      setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)))
+      appendLog('Update account', `Saved changes for "${acc.name}"`)
+    },
+    [accounts, appendLog],
+  )
+
+  const startAccount = useCallback(
+    (id: string) => {
+      const acc = accounts.find((a) => a.id === id)
+      if (!acc || acc.status === 'Running') return
+
+      const existing = warmupTimers.current.get(id)
+      if (existing) {
+        clearTimeout(existing)
+        warmupTimers.current.delete(id)
+      }
+
+      if (acc.status === 'New') {
+        setAccounts((prev) =>
+          prev.map((a) => (a.id === id ? { ...a, status: 'Running' as const } : a)),
+        )
+        appendLog('Start', `Account "${acc.name}" → Running (warmup mock)`)
+        const t1 = setTimeout(() => {
+          setAccounts((prev) =>
+            prev.map((a) => (a.id === id ? { ...a, status: 'Ready' as const } : a)),
+          )
+          appendLog('Start', `Account "${acc.name}" → Ready (warmup complete)`)
+          warmupTimers.current.delete(id)
+        }, 1800)
+        warmupTimers.current.set(id, t1)
+        return
+      }
+
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, status: 'Running' as const } : a)),
+      )
+      appendLog('Start', `Account "${acc.name}" → Running`)
+    },
+    [accounts, appendLog],
+  )
+
+  const stopAccount = useCallback(
+    (id: string) => {
+      const acc = accounts.find((a) => a.id === id)
+      if (!acc) return
+      const t = warmupTimers.current.get(id)
+      if (t) {
+        clearTimeout(t)
+        warmupTimers.current.delete(id)
+      }
+      if (acc.status !== 'Running') return
+      setAccounts((prev) =>
+        prev.map((a) => (a.id === id ? { ...a, status: 'Ready' as const } : a)),
+      )
+      appendLog('Stop', `Account "${acc.name}" → Ready (stopped)`)
+    },
+    [accounts, appendLog],
+  )
+
   const deleteSelectedAccounts = useCallback(() => {
     if (selectedAccountIds.size === 0) return
     const ids = selectedAccountIds
+    ids.forEach((id) => {
+      const t = warmupTimers.current.get(id)
+      if (t) {
+        clearTimeout(t)
+        warmupTimers.current.delete(id)
+      }
+    })
     setAccounts((prev) => prev.filter((a) => !ids.has(a.id)))
     appendLog('Delete accounts', `Removed ${ids.size} account(s)`)
     setSelectedAccountIds(new Set())
@@ -233,27 +327,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       appendLog('Start warmup', 'No selected accounts in New status (mock)')
       return
     }
-
-    targets.forEach((acc) => {
-      const existing = warmupTimers.current.get(acc.id)
-      if (existing) clearTimeout(existing)
-
-      setAccounts((prev) =>
-        prev.map((a) => (a.id === acc.id ? { ...a, status: 'Running' as const } : a)),
-      )
-      appendLog('Start warmup', `Account "${acc.name}" → Running (mock)`)
-
-      const t1 = setTimeout(() => {
-        setAccounts((prev) =>
-          prev.map((a) => (a.id === acc.id ? { ...a, status: 'Ready' as const } : a)),
-        )
-        appendLog('Start warmup', `Account "${acc.name}" → Ready (mock)`)
-        warmupTimers.current.delete(acc.id)
-      }, 1800)
-
-      warmupTimers.current.set(acc.id, t1)
-    })
-  }, [accounts, selectedAccountIds, appendLog])
+    targets.forEach((acc) => startAccount(acc.id))
+  }, [accounts, selectedAccountIds, appendLog, startAccount])
 
   const stats = useMemo(() => {
     const totalAccounts = accounts.length
@@ -285,6 +360,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       selectedProfileIds,
       setSelectedProfileIds,
       addAccount,
+      updateAccount,
+      deleteAccountById,
+      startAccount,
+      stopAccount,
       deleteSelectedAccounts,
       addProxy,
       deleteSelectedProxies,
@@ -306,6 +385,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       selectedProxyIds,
       selectedProfileIds,
       addAccount,
+      updateAccount,
+      deleteAccountById,
+      startAccount,
+      stopAccount,
       deleteSelectedAccounts,
       addProxy,
       deleteSelectedProxies,
