@@ -1,4 +1,10 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+
+/** Matches Vite `base` so routing works on GitHub Pages (`/repo-name/`). */
+const routerBasename =
+  (import.meta.env.BASE_URL.endsWith('/')
+    ? import.meta.env.BASE_URL.slice(0, -1)
+    : import.meta.env.BASE_URL) || undefined
 import { AppStateProvider } from './context/AppState'
 import { MainLayout } from './components/layout/MainLayout'
 import { DashboardPage } from './pages/DashboardPage'
@@ -9,7 +15,7 @@ import { SettingsPage } from './pages/SettingsPage'
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={routerBasename}>
       <AppStateProvider>
         <Routes>
           <Route element={<MainLayout />}>
