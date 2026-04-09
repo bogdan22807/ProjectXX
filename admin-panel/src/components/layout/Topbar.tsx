@@ -2,7 +2,6 @@ import { useLocation } from 'react-router-dom'
 
 const titles: Record<string, string> = {
   '/': 'Dashboard',
-  '/accounts': 'Accounts',
   '/proxies': 'Proxies',
   '/profiles': 'Browser Profiles',
   '/logs': 'Logs',
@@ -11,10 +10,7 @@ const titles: Record<string, string> = {
 
 export function Topbar() {
   const { pathname } = useLocation()
-  let title = titles[pathname] ?? 'Account Control'
-  if (pathname.startsWith('/accounts/') && pathname !== '/accounts') {
-    title = 'Account'
-  }
+  const title = titles[pathname] ?? 'Account Control'
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800/80 bg-zinc-950/50 px-6 backdrop-blur">

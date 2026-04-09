@@ -183,27 +183,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     (id: string) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc || acc.status === 'Running') return
+      if (acc.status !== 'New' && acc.status !== 'Ready') return
 
       const existing = warmupTimers.current.get(id)
       if (existing) {
         clearTimeout(existing)
         warmupTimers.current.delete(id)
-      }
-
-      if (acc.status === 'New') {
-        setAccounts((prev) =>
-          prev.map((a) => (a.id === id ? { ...a, status: 'Running' as const } : a)),
-        )
-        appendLog('Start', `Account "${acc.name}" → Running (warmup mock)`)
-        const t1 = setTimeout(() => {
-          setAccounts((prev) =>
-            prev.map((a) => (a.id === id ? { ...a, status: 'Ready' as const } : a)),
-          )
-          appendLog('Start', `Account "${acc.name}" → Ready (warmup complete)`)
-          warmupTimers.current.delete(id)
-        }, 1800)
-        warmupTimers.current.set(id, t1)
-        return
       }
 
       setAccounts((prev) =>
@@ -217,17 +202,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const stopAccount = useCallback(
     (id: string) => {
       const acc = accounts.find((a) => a.id === id)
-      if (!acc) return
+      if (!acc || acc.status !== 'Running') return
       const t = warmupTimers.current.get(id)
       if (t) {
         clearTimeout(t)
         warmupTimers.current.delete(id)
       }
-      if (acc.status !== 'Running') return
       setAccounts((prev) =>
         prev.map((a) => (a.id === id ? { ...a, status: 'Ready' as const } : a)),
       )
-      appendLog('Stop', `Account "${acc.name}" → Ready (stopped)`)
+      appendLog('Stop', `Account "${acc.name}" → Ready`)
     },
     [accounts, appendLog],
   )
