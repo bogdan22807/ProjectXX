@@ -1,4 +1,5 @@
 import { useState, type Dispatch, type SetStateAction } from 'react'
+import { Link } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Modal } from '../components/ui/Modal'
@@ -226,21 +227,62 @@ export function DashboardPage() {
     return bp?.name ?? '—'
   }
 
-  const cards = [
-    { label: 'Total Accounts', value: stats.totalAccounts },
-    { label: 'Active', value: stats.activeAccounts },
-    { label: 'Running', value: stats.runningAccounts },
-    { label: 'Errors', value: stats.errorAccounts },
-    { label: 'Total Proxies', value: stats.totalProxies },
+  const statCards: {
+    label: string
+    value: number
+    accent: 'violet' | 'emerald' | 'sky' | 'rose' | 'amber'
+  }[] = [
+    { label: 'Total Accounts', value: stats.totalAccounts, accent: 'violet' },
+    { label: 'Active', value: stats.activeAccounts, accent: 'emerald' },
+    { label: 'Running', value: stats.runningAccounts, accent: 'sky' },
+    { label: 'Errors', value: stats.errorAccounts, accent: 'rose' },
+    { label: 'Total Proxies', value: stats.totalProxies, accent: 'amber' },
   ]
+
+  const accentBar: Record<(typeof statCards)[number]['accent'], string> = {
+    violet: 'bg-violet-500/80',
+    emerald: 'bg-emerald-500/80',
+    sky: 'bg-sky-500/80',
+    rose: 'bg-rose-500/80',
+    amber: 'bg-amber-500/80',
+  }
+
+  const accentGlow: Record<(typeof statCards)[number]['accent'], string> = {
+    violet: 'from-violet-500/15',
+    emerald: 'from-emerald-500/12',
+    sky: 'from-sky-500/12',
+    rose: 'from-rose-500/12',
+    amber: 'from-amber-500/12',
+  }
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        {cards.map((c) => (
-          <Card key={c.label} className="p-4">
-            <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">{c.label}</div>
-            <div className="mt-2 text-2xl font-semibold tabular-nums text-zinc-100">{c.value}</div>
+      <div className="grid auto-rows-fr gap-3 sm:grid-cols-2 lg:grid-cols-5 lg:gap-4">
+        {statCards.map((c) => (
+          <Card
+            key={c.label}
+            className="relative flex h-full min-h-[118px] flex-col justify-between overflow-hidden p-5 ring-1 ring-inset ring-white/[0.04]"
+          >
+            <div
+              className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${accentGlow[c.accent]} to-transparent opacity-90`}
+              aria-hidden
+            />
+            <div
+              className={`absolute left-0 top-0 h-full w-[3px] ${accentBar[c.accent]}`}
+              aria-hidden
+            />
+            <div className="relative pl-1">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                {c.label}
+              </p>
+              <p
+                className={`mt-3 text-3xl font-semibold tracking-tight tabular-nums ${
+                  c.accent === 'rose' && c.value > 0 ? 'text-rose-100' : 'text-zinc-50'
+                }`}
+              >
+                {c.value}
+              </p>
+            </div>
           </Card>
         ))}
       </div>
@@ -251,10 +293,12 @@ export function DashboardPage() {
         </Button>
       </div>
 
-      <Card className="overflow-hidden p-0">
-        <div className="border-b border-zinc-800/80 px-4 py-3">
-          <h2 className="text-sm font-semibold text-zinc-200">Accounts</h2>
-          <p className="mt-0.5 text-xs text-zinc-500">Manage all accounts from the dashboard</p>
+      <Card className="overflow-hidden p-0 ring-1 ring-inset ring-white/[0.03]">
+        <div className="border-b border-zinc-800/80 bg-zinc-950/25 px-5 py-4">
+          <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Accounts</h2>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            Manage all accounts from the dashboard
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[960px] text-left text-sm">
@@ -332,23 +376,47 @@ export function DashboardPage() {
         ) : null}
       </Card>
 
-      <Card className="overflow-hidden">
-        <div className="border-b border-zinc-800/80 px-4 py-3">
-          <h2 className="text-sm font-semibold text-zinc-200">Recent logs</h2>
+      <Card className="overflow-hidden ring-1 ring-inset ring-white/[0.03]">
+        <div className="flex flex-col gap-1 border-b border-zinc-800/80 bg-zinc-950/25 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div>
+            <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Recent activity</h2>
+            <p className="mt-0.5 text-xs text-zinc-500">Latest operations and system events</p>
+          </div>
+          <Link
+            to="/logs"
+            className="shrink-0 text-xs font-medium text-violet-400/90 transition hover:text-violet-300"
+          >
+            View all logs →
+          </Link>
         </div>
-        <div className="divide-y divide-zinc-800/60">
+        <div className="p-2">
           {recentLogs.length === 0 ? (
-            <p className="px-4 py-6 text-sm text-zinc-500">No logs yet.</p>
+            <p className="px-3 py-10 text-center text-sm text-zinc-500">No logs yet.</p>
           ) : (
-            recentLogs.map((l) => (
-              <div key={l.id} className="px-4 py-3 text-sm">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-zinc-200">{l.action}</span>
-                  <span className="shrink-0 text-xs text-zinc-500">{formatTime(l.time)}</span>
-                </div>
-                <p className="mt-1 text-zinc-500">{l.details}</p>
-              </div>
-            ))
+            <ul className="space-y-1">
+              {recentLogs.map((l) => (
+                <li key={l.id}>
+                  <div className="group rounded-lg px-3 py-3 transition-colors hover:bg-zinc-800/35">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center rounded-md border border-zinc-700/80 bg-zinc-900/60 px-2 py-0.5 text-[11px] font-medium uppercase tracking-wide text-zinc-300">
+                            {l.action}
+                          </span>
+                        </div>
+                        <p className="mt-2 text-sm leading-snug text-zinc-400">{l.details}</p>
+                      </div>
+                      <time
+                        dateTime={l.time}
+                        className="shrink-0 rounded-md bg-zinc-950/80 px-2 py-1 font-mono text-[10px] tabular-nums text-zinc-500 ring-1 ring-zinc-800/80"
+                      >
+                        {formatTime(l.time)}
+                      </time>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
           )}
         </div>
       </Card>
