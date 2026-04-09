@@ -255,8 +255,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   )
 
   const deleteSelectedProxies = useCallback(() => {
-    if (selectedProxyIds.size === 0) return
-    const ids = selectedProxyIds
+    const ids =
+      selectedProxyIds.size > 0
+        ? selectedProxyIds
+        : new Set(proxies.map((p) => p.id))
+    if (ids.size === 0) return
     setProxies((prev) => prev.filter((p) => !ids.has(p.id)))
     setAccounts((prev) =>
       prev.map((a) => (a.proxyId && ids.has(a.proxyId) ? { ...a, proxyId: null } : a)),
@@ -266,19 +269,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     )
     appendLog('Delete proxies', `Removed ${ids.size} proxy row(s)`)
     setSelectedProxyIds(new Set())
-  }, [selectedProxyIds, appendLog])
+  }, [selectedProxyIds, proxies, appendLog])
 
   const checkSelectedProxies = useCallback(() => {
-    if (selectedProxyIds.size === 0) return
+    const targetIds =
+      selectedProxyIds.size > 0
+        ? selectedProxyIds
+        : new Set(proxies.map((p) => p.id))
+    if (targetIds.size === 0) return
     const nextStatus: ProxyStatus = 'Active'
     setProxies((prev) =>
-      prev.map((p) => (selectedProxyIds.has(p.id) ? { ...p, status: nextStatus } : p)),
+      prev.map((p) => (targetIds.has(p.id) ? { ...p, status: nextStatus } : p)),
     )
     appendLog(
       'Check proxies',
-      `Marked ${selectedProxyIds.size} proxy row(s) as ${nextStatus} (mock)`,
+      `Marked ${targetIds.size} proxy row(s) as ${nextStatus} (mock)`,
     )
-  }, [selectedProxyIds, appendLog])
+  }, [selectedProxyIds, proxies, appendLog])
 
   const addProfile = useCallback(
     (input: { name: string; proxyId: string | null; status: ProfileStatus }) => {

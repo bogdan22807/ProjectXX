@@ -82,12 +82,12 @@ export function ProxiesPage() {
         <Button variant="primary" onClick={openAddModal}>
           Add Proxy
         </Button>
-        <Button disabled={selectedProxyIds.size === 0} onClick={checkSelectedProxies}>
+        <Button disabled={proxies.length === 0} onClick={checkSelectedProxies}>
           Check
         </Button>
         <Button
           variant="danger"
-          disabled={selectedProxyIds.size === 0}
+          disabled={proxies.length === 0}
           onClick={deleteSelectedProxies}
         >
           Delete
