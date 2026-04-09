@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import type { AccountStatus, ProfileStatus, ProxyStatus } from '../../types/domain'
 
 type AnyStatus = AccountStatus | ProxyStatus | ProfileStatus
@@ -13,13 +14,13 @@ const styles: Record<string, string> = {
   'In Use': 'bg-blue-950/80 text-blue-300 border-blue-800/60',
 }
 
-export function StatusBadge({ status }: { status: AnyStatus }) {
+export function StatusBadge({ status, children }: { status: AnyStatus; children?: ReactNode }) {
   const cls = styles[status] ?? 'bg-zinc-800 text-zinc-400 border-zinc-700'
   return (
     <span
       className={`inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium ${cls}`}
     >
-      {status}
+      {children ?? status}
     </span>
   )
 }

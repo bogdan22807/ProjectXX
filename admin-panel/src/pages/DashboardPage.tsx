@@ -301,68 +301,113 @@ export function DashboardPage() {
           </p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[960px] text-left text-sm">
+          <table className="w-full min-w-[1080px] table-fixed border-collapse text-left text-sm">
+            <colgroup>
+              <col className="w-[15%]" />
+              <col className="w-[17%]" />
+              <col className="w-[11%]" />
+              <col className="w-[20%]" />
+              <col className="w-[15%]" />
+              <col className="w-[10%]" />
+              <col className="w-[12%]" />
+            </colgroup>
             <thead>
               <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs uppercase tracking-wide text-zinc-500">
-                <th className="px-4 py-3">Account Name</th>
-                <th className="px-4 py-3">Login</th>
-                <th className="px-4 py-3">Platform</th>
-                <th className="px-4 py-3">Proxy</th>
-                <th className="px-4 py-3">Browser Profile</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Actions</th>
+                <th className="px-4 py-3 text-left font-medium">Аккаунт</th>
+                <th className="px-4 py-3 text-left font-medium">Логин</th>
+                <th className="px-4 py-3 text-left font-medium">Платформа</th>
+                <th className="px-4 py-3 text-left font-medium">Прокси</th>
+                <th className="px-4 py-3 text-left font-medium">Профиль</th>
+                <th className="px-4 py-3 text-left font-medium">Статус</th>
+                <th className="px-4 py-3 text-right font-medium">Действия</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800/80">
               {accounts.map((a) => (
-                <tr key={a.id} className="hover:bg-zinc-900/40">
-                  <td className="px-4 py-3 font-medium text-zinc-200">{a.name}</td>
-                  <td className="max-w-[140px] truncate px-4 py-3 text-zinc-400" title={a.login}>
-                    {a.login}
+                <tr
+                  key={a.id}
+                  className="transition-colors hover:bg-zinc-800/45"
+                >
+                  <td className="px-4 py-3 align-middle">
+                    <div className="min-w-0 font-medium text-zinc-200">
+                      <span className="block truncate" title={a.name}>
+                        {a.name}
+                      </span>
+                    </div>
                   </td>
-                  <td className="px-4 py-3 text-zinc-400">{a.platform}</td>
-                  <td
-                    className="max-w-[200px] truncate px-4 py-3 text-zinc-500"
-                    title={proxyLabel(a.proxyId)}
-                  >
-                    {proxyLabel(a.proxyId)}
+                  <td className="px-4 py-3 align-middle text-zinc-400">
+                    <div className="min-w-0">
+                      <span className="block truncate font-mono text-[13px] leading-snug" title={a.login}>
+                        {a.login || '—'}
+                      </span>
+                    </div>
                   </td>
-                  <td
-                    className="max-w-[160px] truncate px-4 py-3 text-zinc-500"
-                    title={profileLabel(a.profileId)}
-                  >
-                    {profileLabel(a.profileId)}
+                  <td className="px-4 py-3 align-middle text-zinc-400">
+                    <span className="block truncate" title={a.platform}>
+                      {a.platform}
+                    </span>
                   </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={a.status} />
+                  <td className="px-4 py-3 align-middle text-zinc-400">
+                    <div className="min-w-0">
+                      <span
+                        className="block truncate text-[13px] leading-snug text-zinc-400"
+                        title={proxyLabel(a.proxyId)}
+                      >
+                        {proxyLabel(a.proxyId)}
+                      </span>
+                    </div>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-1">
+                  <td className="px-4 py-3 align-middle text-zinc-400">
+                    <div className="min-w-0">
+                      <span
+                        className="block truncate text-[13px] leading-snug"
+                        title={profileLabel(a.profileId)}
+                      >
+                        {profileLabel(a.profileId)}
+                      </span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 align-middle">
+                    <StatusBadge status={a.status}>
+                      {a.status === 'New' && 'Новая'}
+                      {a.status === 'Ready' && 'Готово'}
+                      {a.status === 'Running' && 'Работает'}
+                      {a.status === 'Error' && 'Ошибка'}
+                    </StatusBadge>
+                  </td>
+                  <td className="px-4 py-3 align-middle text-right">
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
                       {a.status === 'New' || a.status === 'Ready' ? (
                         <Button
-                          className="!px-2 !py-1 text-xs"
+                          className="h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs"
                           variant="primary"
                           onClick={() => startAccount(a.id)}
                         >
-                          Start
+                          Начать
                         </Button>
                       ) : null}
                       {a.status === 'Running' ? (
-                        <Button className="!px-2 !py-1 text-xs" onClick={() => stopAccount(a.id)}>
-                          Stop
+                        <Button
+                          className="h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs"
+                          onClick={() => stopAccount(a.id)}
+                        >
+                          Остановить
                         </Button>
                       ) : null}
-                      <Button className="!px-2 !py-1 text-xs" onClick={() => openEdit(a)}>
-                        Edit
+                      <Button
+                        className="h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs"
+                        onClick={() => openEdit(a)}
+                      >
+                        Редактировать
                       </Button>
                       <Button
-                        className="!px-2 !py-1 text-xs"
+                        className="h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs"
                         variant="danger"
                         onClick={() => {
-                          if (confirm(`Delete account "${a.name}"?`)) deleteAccountById(a.id)
+                          if (confirm(`Удалить аккаунт «${a.name}»?`)) deleteAccountById(a.id)
                         }}
                       >
-                        Delete
+                        Удалить
                       </Button>
                     </div>
                   </td>
