@@ -3,9 +3,9 @@ import type { AccountStatus, ProfileStatus, ProxyStatus } from '../../types/doma
 type AnyStatus = AccountStatus | ProxyStatus | ProfileStatus
 
 const styles: Record<string, string> = {
-  New: 'bg-sky-950/80 text-sky-300 border-sky-800/60',
-  Ready: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60',
-  Running: 'bg-violet-950/80 text-violet-300 border-violet-800/60',
+  New: 'bg-zinc-800/90 text-zinc-300 border-zinc-600/60',
+  Ready: 'bg-sky-950/80 text-sky-300 border-sky-800/60',
+  Running: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60',
   Error: 'bg-red-950/80 text-red-300 border-red-800/60',
   Active: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60',
   'Needs Check': 'bg-amber-950/80 text-amber-300 border-amber-800/60',

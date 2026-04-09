@@ -2,7 +2,6 @@ import { NavLink } from 'react-router-dom'
 
 const nav = [
   { to: '/', label: 'Dashboard', end: true },
-  { to: '/accounts', label: 'Accounts' },
   { to: '/proxies', label: 'Proxies' },
   { to: '/profiles', label: 'Browser Profiles' },
   { to: '/logs', label: 'Logs' },
@@ -43,7 +42,7 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="border-t border-zinc-800/80 p-3 text-xs text-zinc-600">
-        Frontend mock · API later
+        Accounts are managed on Dashboard
       </div>
     </aside>
   )
