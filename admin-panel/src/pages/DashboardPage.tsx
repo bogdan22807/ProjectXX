@@ -5,7 +5,12 @@ import { Modal } from '../components/ui/Modal'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
 import { formatTime } from '../utils/format'
+import { accountStatusLabelRu } from '../utils/accountStatusLabels'
 import type { Account, AccountStatus, Platform } from '../types/domain'
+
+/** Unified compact actions in account table (same height) */
+const tableActionBtn =
+  '!h-8 !min-h-[2rem] !shrink-0 !px-2.5 !py-0 text-xs font-medium leading-none'
 
 const platforms: Platform[] = [
   'Twitter',
@@ -143,7 +148,7 @@ function AccountFields({
         >
           {accountStatuses.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {accountStatusLabelRu[s]}
             </option>
           ))}
         </select>
@@ -294,68 +299,88 @@ export function DashboardPage() {
           <p className="mt-0.5 text-xs text-zinc-500">Manage all accounts from the dashboard</p>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[960px] text-left text-sm">
+          <table className="w-full min-w-[1080px] table-fixed border-collapse text-left text-sm">
+            <colgroup>
+              <col style={{ width: '14%' }} />
+              <col style={{ width: '17%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '22%' }} />
+              <col style={{ width: '17%' }} />
+              <col style={{ width: '10%' }} />
+              <col style={{ width: '10%' }} />
+            </colgroup>
             <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs uppercase tracking-wide text-zinc-500">
-                <th className="px-4 py-3">Account Name</th>
-                <th className="px-4 py-3">Login</th>
-                <th className="px-4 py-3">Platform</th>
-                <th className="px-4 py-3">Proxy</th>
-                <th className="px-4 py-3">Browser Profile</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Actions</th>
+              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs font-medium uppercase tracking-wide text-zinc-500">
+                <th className="px-4 py-3.5 align-middle">Account Name</th>
+                <th className="px-4 py-3.5 align-middle">Login</th>
+                <th className="px-4 py-3.5 align-middle">Platform</th>
+                <th className="px-4 py-3.5 align-middle">Proxy</th>
+                <th className="px-4 py-3.5 align-middle">Browser Profile</th>
+                <th className="px-4 py-3.5 align-middle">Status</th>
+                <th className="px-4 py-3.5 align-middle">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-800/80">
+            <tbody>
               {accounts.map((a) => (
-                <tr key={a.id} className="hover:bg-zinc-900/40">
-                  <td className="px-4 py-3 font-medium text-zinc-200">{a.name}</td>
-                  <td className="max-w-[140px] truncate px-4 py-3 text-zinc-400" title={a.login}>
+                <tr
+                  key={a.id}
+                  className="border-b border-zinc-800/60 transition-colors hover:bg-zinc-900/55"
+                >
+                  <td
+                    className="max-w-0 truncate px-4 py-3 align-middle font-medium text-zinc-200"
+                    title={a.name}
+                  >
+                    {a.name}
+                  </td>
+                  <td
+                    className="max-w-0 truncate px-4 py-3 align-middle font-mono text-[13px] text-zinc-300"
+                    title={a.login}
+                  >
                     {a.login}
                   </td>
-                  <td className="px-4 py-3 text-zinc-400">{a.platform}</td>
+                  <td className="max-w-0 truncate px-4 py-3 align-middle text-zinc-400">{a.platform}</td>
                   <td
-                    className="max-w-[200px] truncate px-4 py-3 text-zinc-500"
+                    className="max-w-0 truncate px-4 py-3 align-middle text-[13px] text-zinc-400"
                     title={proxyLabel(a.proxyId)}
                   >
                     {proxyLabel(a.proxyId)}
                   </td>
                   <td
-                    className="max-w-[160px] truncate px-4 py-3 text-zinc-500"
+                    className="max-w-0 truncate px-4 py-3 align-middle text-[13px] text-zinc-400"
                     title={profileLabel(a.profileId)}
                   >
                     {profileLabel(a.profileId)}
                   </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={a.status} />
+                  <td className="px-4 py-3 align-middle">
+                    <StatusBadge status={a.status} label={accountStatusLabelRu[a.status]} />
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3">
-                    <div className="flex flex-wrap items-center gap-1">
+                  <td className="whitespace-nowrap px-4 py-2.5 align-middle">
+                    <div className="flex flex-wrap items-center justify-end gap-1.5">
                       {a.status === 'New' || a.status === 'Ready' ? (
                         <Button
-                          className="!px-2 !py-1 text-xs"
+                          className={tableActionBtn}
                           variant="primary"
                           onClick={() => startAccount(a.id)}
                         >
-                          Start
+                          Начать
                         </Button>
                       ) : null}
                       {a.status === 'Running' ? (
-                        <Button className="!px-2 !py-1 text-xs" onClick={() => stopAccount(a.id)}>
-                          Stop
+                        <Button className={tableActionBtn} onClick={() => stopAccount(a.id)}>
+                          Остановить
                         </Button>
                       ) : null}
-                      <Button className="!px-2 !py-1 text-xs" onClick={() => openEdit(a)}>
-                        Edit
+                      <Button className={tableActionBtn} onClick={() => openEdit(a)}>
+                        Редактировать
                       </Button>
                       <Button
-                        className="!px-2 !py-1 text-xs"
+                        className={tableActionBtn}
                         variant="danger"
                         onClick={() => {
-                          if (confirm(`Delete account "${a.name}"?`)) deleteAccountById(a.id)
+                          if (confirm(`Удалить аккаунт «${a.name}»?`)) deleteAccountById(a.id)
                         }}
                       >
-                        Delete
+                        Удалить
                       </Button>
                     </div>
                   </td>
