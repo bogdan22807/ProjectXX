@@ -29,11 +29,14 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
     >
       <button
         type="button"
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+        className="absolute inset-0 bg-black/60 backdrop-blur-sm transition-opacity duration-200 ease-out"
         aria-label="Close dialog"
         onClick={onClose}
       />
-      <div className="relative z-10 w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl shadow-black/50">
+      <div
+        className="relative z-10 w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl shadow-black/50"
+        style={{ animation: 'modalIn 0.2s ease-out both' }}
+      >
         <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
           <h2 id="modal-title" className="text-base font-semibold text-zinc-100">
             {title}
@@ -41,7 +44,7 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-800 hover:text-zinc-300"
+            className="rounded-lg p-1.5 text-zinc-500 transition-colors duration-150 hover:bg-zinc-800 hover:text-zinc-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500/50"
             aria-label="Close"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">

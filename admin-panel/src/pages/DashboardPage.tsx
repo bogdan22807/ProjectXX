@@ -12,6 +12,11 @@ import type { Account, AccountStatus, Platform } from '../types/domain'
 const tableActionBtn =
   '!h-8 !min-h-[2rem] !shrink-0 !px-2.5 !py-0 text-xs font-medium leading-none'
 
+const fieldClass =
+  'mt-1 w-full rounded-lg border border-zinc-700/90 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none transition-[border-color,box-shadow] duration-150 ease-out ' +
+  'placeholder:text-zinc-600 hover:border-zinc-600 ' +
+  'focus:border-violet-500/60 focus:ring-2 focus:ring-violet-500/25 disabled:cursor-not-allowed disabled:opacity-45'
+
 const platforms: Platform[] = [
   'Twitter',
   'Instagram',
@@ -70,25 +75,17 @@ function AccountFields({
     <div className="space-y-3">
       <label className="block text-xs font-medium text-zinc-400">
         Account Name
-        <input
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
-          value={form.name}
-          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-        />
+        <input className={fieldClass} value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} />
       </label>
       <label className="block text-xs font-medium text-zinc-400">
         Login
-        <input
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
-          value={form.login}
-          onChange={(e) => setForm((f) => ({ ...f, login: e.target.value }))}
-        />
+        <input className={fieldClass} value={form.login} onChange={(e) => setForm((f) => ({ ...f, login: e.target.value }))} />
       </label>
       <label className="block text-xs font-medium text-zinc-400">
         Cookies
         <textarea
           rows={3}
-          className="mt-1 w-full resize-y rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 font-mono text-xs text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={`${fieldClass} resize-y font-mono text-xs`}
           value={form.cookies}
           onChange={(e) => setForm((f) => ({ ...f, cookies: e.target.value }))}
           placeholder="Paste cookie string (local only)"
@@ -97,7 +94,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Platform
         <select
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.platform}
           onChange={(e) => setForm((f) => ({ ...f, platform: e.target.value as Platform }))}
         >
@@ -111,7 +108,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Proxy
         <select
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.proxyId}
           onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
         >
@@ -127,7 +124,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Browser Profile
         <select
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.profileId}
           onChange={(e) => setForm((f) => ({ ...f, profileId: e.target.value }))}
         >
@@ -142,7 +139,7 @@ function AccountFields({
       <label className="block text-xs font-medium text-zinc-400">
         Status
         <select
-          className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 outline-none ring-violet-500/30 focus:ring-2"
+          className={fieldClass}
           value={form.status}
           onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as AccountStatus }))}
         >
@@ -179,6 +176,8 @@ export function DashboardPage() {
   const [editOpen, setEditOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<FormState>(emptyForm)
+
+  const [deleteTarget, setDeleteTarget] = useState<Account | null>(null)
 
   function openEdit(a: Account) {
     setEditId(a.id)
@@ -265,7 +264,7 @@ export function DashboardPage() {
           {statCards.map((c) => (
             <Card
               key={c.label}
-              className="relative flex h-full min-h-[112px] flex-col overflow-hidden p-0"
+              className="relative flex h-full min-h-[112px] flex-col overflow-hidden p-0 hover:border-zinc-700/90 hover:shadow-md hover:shadow-black/25"
             >
               <div
                 className={`h-0.5 w-full bg-gradient-to-r ${accentBar[c.accent]} opacity-90`}
@@ -293,6 +292,29 @@ export function DashboardPage() {
         </Button>
       </div>
 
+      {accounts.length === 0 ? (
+        <Card className="border-dashed border-zinc-700/80 bg-zinc-950/40 px-8 py-14 text-center">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-xl border border-zinc-700/80 bg-zinc-900/80 text-violet-400/90 shadow-inner">
+            <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" aria-hidden>
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={1.5}
+                d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"
+              />
+            </svg>
+          </div>
+          <h3 className="mt-5 text-base font-semibold text-zinc-100">Нет аккаунтов</h3>
+          <p className="mx-auto mt-2 max-w-sm text-sm leading-relaxed text-zinc-500">
+            Добавьте первый аккаунт — он появится в таблице ниже. Все данные хранятся локально в браузере.
+          </p>
+          <Button variant="primary" className="mt-6" onClick={() => setAddOpen(true)}>
+            Добавить аккаунт
+          </Button>
+        </Card>
+      ) : null}
+
+      {accounts.length > 0 ? (
       <Card className="overflow-hidden p-0">
         <div className="border-b border-zinc-800/80 px-4 py-3">
           <h2 className="text-sm font-semibold text-zinc-200">Accounts</h2>
@@ -324,7 +346,7 @@ export function DashboardPage() {
               {accounts.map((a) => (
                 <tr
                   key={a.id}
-                  className="border-b border-zinc-800/60 transition-colors hover:bg-zinc-900/55"
+                  className="border-b border-zinc-800/60 transition-colors duration-150 ease-out hover:bg-zinc-900/55"
                 >
                   <td
                     className="max-w-0 truncate px-4 py-3 align-middle font-medium text-zinc-200"
@@ -373,13 +395,7 @@ export function DashboardPage() {
                       <Button className={tableActionBtn} onClick={() => openEdit(a)}>
                         Редактировать
                       </Button>
-                      <Button
-                        className={tableActionBtn}
-                        variant="danger"
-                        onClick={() => {
-                          if (confirm(`Удалить аккаунт «${a.name}»?`)) deleteAccountById(a.id)
-                        }}
-                      >
+                      <Button className={tableActionBtn} variant="danger" onClick={() => setDeleteTarget(a)}>
                         Удалить
                       </Button>
                     </div>
@@ -389,10 +405,8 @@ export function DashboardPage() {
             </tbody>
           </table>
         </div>
-        {accounts.length === 0 ? (
-          <p className="px-4 py-8 text-center text-sm text-zinc-500">No accounts yet. Add one above.</p>
-        ) : null}
       </Card>
+      ) : null}
 
       <Card className="overflow-hidden">
         <div className="flex items-start justify-between gap-4 border-b border-zinc-800/80 bg-zinc-950/30 px-5 py-4">
@@ -416,7 +430,7 @@ export function DashboardPage() {
             recentLogs.map((l) => (
               <div
                 key={l.id}
-                className="group flex gap-3 px-5 py-3.5 transition-colors hover:bg-zinc-900/35"
+                className="group flex gap-3 px-5 py-3.5 transition-colors duration-150 ease-out hover:bg-zinc-900/35"
               >
                 <span
                   className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-violet-500/70 ring-2 ring-violet-500/15 group-hover:bg-violet-400"
@@ -465,6 +479,38 @@ export function DashboardPage() {
         }
       >
         <AccountFields form={addForm} setForm={setAddForm} proxies={proxies} profiles={profiles} />
+      </Modal>
+
+      <Modal
+        open={deleteTarget !== null}
+        title="Удалить аккаунт"
+        onClose={() => setDeleteTarget(null)}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>
+              Отмена
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => {
+                if (deleteTarget) {
+                  deleteAccountById(deleteTarget.id)
+                  setDeleteTarget(null)
+                }
+              }}
+            >
+              Удалить
+            </Button>
+          </div>
+        }
+      >
+        {deleteTarget ? (
+          <p className="text-sm leading-relaxed text-zinc-400">
+            Удалить аккаунт{' '}
+            <span className="font-medium text-zinc-200">«{deleteTarget.name}»</span>? Это действие нельзя
+            отменить.
+          </p>
+        ) : null}
       </Modal>
 
       <Modal
