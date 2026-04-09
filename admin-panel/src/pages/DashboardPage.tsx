@@ -24,14 +24,7 @@ import type { Account, AccountStatus, Platform } from '../types/domain'
 const tableActionBtn =
   '!h-8 !min-h-[2rem] !shrink-0 !px-2.5 !py-0 text-xs font-medium leading-none'
 
-const platforms: Platform[] = [
-  'Twitter',
-  'Instagram',
-  'Facebook',
-  'TikTok',
-  'LinkedIn',
-  'Other',
-]
+const platforms: Platform[] = ['TikTok']
 
 const accountStatuses: AccountStatus[] = ['New', 'Ready', 'Running', 'Error']
 
@@ -49,7 +42,7 @@ const emptyForm = (): FormState => ({
   name: '',
   login: '',
   cookies: '',
-  platform: 'Twitter',
+  platform: 'TikTok',
   proxyId: '',
   profileId: '',
   status: 'New',
