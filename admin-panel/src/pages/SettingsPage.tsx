@@ -8,17 +8,17 @@ export function SettingsPage() {
     {
       key: 'notifications' as const,
       title: 'Notifications',
-      description: 'Show in-app notices for important events (UI only).',
+      description: 'Показывать уведомления о важных событиях в интерфейсе.',
     },
     {
       key: 'autoRetryFailed' as const,
       title: 'Auto retry failed',
-      description: 'When automation is connected, retry failed steps automatically.',
+      description: 'При подключённой автоматизации повторять неудачные шаги.',
     },
     {
       key: 'strictWarmup' as const,
       title: 'Strict warmup',
-      description: 'Stricter checks before marking an account as Ready.',
+      description: 'Более строгие проверки перед статусом Ready.',
     },
   ]
 
@@ -51,9 +51,7 @@ export function SettingsPage() {
           </div>
         ))}
       </Card>
-      <p className="text-xs text-zinc-600">
-        These preferences are stored in component state only and reset on refresh.
-      </p>
+      <p className="text-xs text-zinc-600">Настройки хранятся только в памяти браузера и сбрасываются при обновлении страницы.</p>
     </div>
   )
 }

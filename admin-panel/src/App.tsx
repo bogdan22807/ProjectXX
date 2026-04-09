@@ -7,7 +7,6 @@ import { BrowserProfilesPage } from './pages/BrowserProfilesPage'
 import { LogsPage } from './pages/LogsPage'
 import { SettingsPage } from './pages/SettingsPage'
 
-/** Matches Vite `base` (e.g. GitHub Pages subpath); `/` on Vercel. */
 const routerBasename =
   (import.meta.env.BASE_URL.endsWith('/')
     ? import.meta.env.BASE_URL.slice(0, -1)
