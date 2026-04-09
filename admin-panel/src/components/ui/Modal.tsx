@@ -22,7 +22,7 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center p-2 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
@@ -33,7 +33,7 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
         aria-label="Close dialog"
         onClick={onClose}
       />
-      <div className="relative z-10 w-full max-w-md rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl shadow-black/50">
+      <div className="relative z-10 flex max-h-[95vh] w-full max-w-md flex-col rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl shadow-black/50">
         <div className="flex items-center justify-between border-b border-zinc-800 px-5 py-4">
           <h2 id="modal-title" className="text-base font-semibold text-zinc-100">
             {title}
@@ -49,7 +49,7 @@ export function Modal({ open, title, onClose, children, footer }: Props) {
             </svg>
           </button>
         </div>
-        <div className="px-5 py-4">{children}</div>
+        <div className="overflow-y-auto px-5 py-4">{children}</div>
         {footer ? <div className="border-t border-zinc-800 px-5 py-4">{footer}</div> : null}
       </div>
     </div>

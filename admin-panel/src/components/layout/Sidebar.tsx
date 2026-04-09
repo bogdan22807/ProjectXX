@@ -8,9 +8,16 @@ const nav = [
   { to: '/settings', label: 'Settings' },
 ] as const
 
-export function Sidebar() {
+type Props = {
+  className?: string
+  onNavigate?: () => void
+}
+
+export function Sidebar({ className = '', onNavigate }: Props) {
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-950/80">
+    <aside
+      className={`flex w-56 shrink-0 flex-col border-r border-zinc-800/80 bg-zinc-950/95 backdrop-blur ${className}`}
+    >
       <div className="flex h-14 items-center gap-2 border-b border-zinc-800/80 px-4">
         <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-600/20 text-violet-400 ring-1 ring-violet-500/30">
           <svg className="h-4 w-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
@@ -28,6 +35,7 @@ export function Sidebar() {
             key={item.to}
             to={item.to}
             end={'end' in item ? item.end : false}
+            onClick={onNavigate}
             className={({ isActive }) =>
               `flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                 isActive

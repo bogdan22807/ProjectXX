@@ -154,7 +154,7 @@ export function ProxiesPage() {
         title="Add Proxy"
         onClose={closeAddModal}
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse justify-end gap-2 sm:flex-row">
             <Button variant="ghost" onClick={closeAddModal}>
               Cancel
             </Button>

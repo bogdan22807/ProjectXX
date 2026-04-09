@@ -8,8 +8,10 @@ import { LogsPage } from './pages/LogsPage'
 import { SettingsPage } from './pages/SettingsPage'
 
 export default function App() {
+  const basename = import.meta.env.BASE_URL.replace(/\/$/, '')
+
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={basename || undefined}>
       <AppStateProvider>
         <Routes>
           <Route element={<MainLayout />}>

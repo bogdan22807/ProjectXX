@@ -26,7 +26,10 @@ export function SettingsPage() {
     <div className="max-w-xl space-y-4">
       <Card className="divide-y divide-zinc-800/80">
         {rows.map((row) => (
-          <div key={row.key} className="flex items-start justify-between gap-4 px-5 py-4">
+          <div
+            key={row.key}
+            className="flex flex-col items-start justify-between gap-3 px-4 py-4 sm:flex-row sm:items-start sm:gap-4 sm:px-5"
+          >
             <div>
               <div className="text-sm font-medium text-zinc-200">{row.title}</div>
               <p className="mt-1 text-xs text-zinc-500">{row.description}</p>

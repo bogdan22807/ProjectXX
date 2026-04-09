@@ -4,6 +4,8 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vite.dev/config/
 export default defineConfig({
+  // App is deployed under /admin-panel on Vercel.
+  base: '/admin-panel/',
   plugins: [react(), tailwindcss()],
   server: {
     host: true,

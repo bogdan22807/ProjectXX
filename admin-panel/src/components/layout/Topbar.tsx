@@ -8,15 +8,31 @@ const titles: Record<string, string> = {
   '/settings': 'Settings',
 }
 
-export function Topbar() {
+type Props = {
+  onMenuClick?: () => void
+}
+
+export function Topbar({ onMenuClick }: Props) {
   const { pathname } = useLocation()
-  const title = titles[pathname] ?? 'Account Control'
+  const normalizedPath =
+    pathname.length > 1 && pathname.endsWith('/') ? pathname.slice(0, -1) : pathname
+  const title = titles[normalizedPath] ?? 'Account Control'
 
   return (
-    <header className="flex h-14 shrink-0 items-center justify-between border-b border-zinc-800/80 bg-zinc-950/50 px-6 backdrop-blur">
-      <div>
+    <header className="flex min-h-14 shrink-0 items-center justify-between border-b border-zinc-800/80 bg-zinc-950/50 px-4 py-2 backdrop-blur sm:px-6">
+      <div className="flex items-center gap-3">
+        <button
+          type="button"
+          onClick={onMenuClick}
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-zinc-800 bg-zinc-900/70 text-zinc-200 md:hidden"
+          aria-label="Open navigation"
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7h16M4 12h16M4 17h16" />
+          </svg>
+        </button>
         <h1 className="text-sm font-semibold text-zinc-100">{title}</h1>
-        <p className="text-xs text-zinc-500">Local state · ready for automation hooks</p>
+        <p className="hidden text-xs text-zinc-500 sm:block">Local state · ready for automation hooks</p>
       </div>
       <div className="flex items-center gap-3">
         <span className="hidden rounded-md border border-zinc-800 bg-zinc-900/50 px-2 py-1 text-xs text-zinc-500 sm:inline">

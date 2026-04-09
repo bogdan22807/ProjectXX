@@ -361,7 +361,7 @@ export function DashboardPage() {
           setAddForm(emptyForm())
         }}
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse justify-end gap-2 sm:flex-row">
             <Button
               variant="ghost"
               onClick={() => {
@@ -385,7 +385,7 @@ export function DashboardPage() {
         title="Edit Account"
         onClose={closeEdit}
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-col-reverse justify-end gap-2 sm:flex-row">
             <Button variant="ghost" onClick={closeEdit}>
               Cancel
             </Button>
