@@ -266,11 +266,5 @@ export async function abortPlaywrightTestRun(accountId) {
     /* ignore */
   }
   playwrightRuns.delete(accountId)
-  try {
-    logStep(accountId, 'playwright aborted', 'user or stop')
-    updateStatus(accountId, 'Ready')
-  } catch {
-    /* ignore */
-  }
   return true
 }

@@ -5,6 +5,7 @@
 
 import { Router } from 'express'
 import { getAccount } from '../executor/runner.js'
+import { db, newId } from '../db.js'
 import {
   abortPlaywrightTestRun,
   isPlaywrightTestRunActive,
@@ -55,6 +56,16 @@ router.post('/abort', async (req, res) => {
   }
 
   const aborted = await abortPlaywrightTestRun(accountId)
+  if (aborted) {
+    const id = newId('log')
+    db.prepare(`INSERT INTO logs (id, account_id, action, details) VALUES (?, ?, ?, ?)`).run(
+      id,
+      accountId,
+      'playwright aborted',
+      'test-run abort',
+    )
+    db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Ready', accountId)
+  }
   res.json({ ok: true, accountId, aborted })
 })
 
