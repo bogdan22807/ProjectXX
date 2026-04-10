@@ -4,6 +4,7 @@ import proxiesRouter from './routes/proxies.js'
 import profilesRouter from './routes/profiles.js'
 import logsRouter from './routes/logs.js'
 import warmupRouter from './routes/warmup.js'
+import warmupTestRunRouter from './routes/warmupTestRun.js'
 
 const app = express()
 const PORT = Number(process.env.PORT) || 3000
@@ -23,6 +24,7 @@ app.use('/proxies', proxiesRouter)
 app.use('/profiles', profilesRouter)
 app.use('/logs', logsRouter)
 app.use('/warmup', warmupRouter)
+app.use('/warmup/test-run', warmupTestRunRouter)
 
 app.get('/health', (_req, res) => {
   res.json({ ok: true })

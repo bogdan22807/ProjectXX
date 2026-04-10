@@ -1,6 +1,6 @@
 /**
- * In-house social / test executor — data + logging + status primitives.
- * Warmup fake workflow stays in routes/warmup.js until you choose to delegate here.
+ * In-house social / test executor — data + logging + status primitives,
+ * plus optional Playwright test run (see playwrightTestRun.js).
  */
 
 export {
@@ -15,3 +15,10 @@ export {
   isExecutorActive,
   scheduleStep,
 } from './runner.js'
+
+export {
+  getDefaultSocialTestUrl,
+  runPlaywrightTestRun,
+  abortPlaywrightTestRun,
+  isPlaywrightTestRunActive,
+} from './playwrightTestRun.js'

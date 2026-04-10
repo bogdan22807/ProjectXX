@@ -1,5 +1,9 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
+import {
+  isPlaywrightTestRunActive,
+  runPlaywrightTestRun,
+} from '../executor/playwrightTestRun.js'
 
 const router = Router()
 
@@ -51,6 +55,11 @@ function beginWarmupChain(accountId) {
           insertLog(accountId, 'Завершено', '')
           db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Ready', accountId)
           jobs.delete(accountId)
+          if (process.env.WARMUP_PLAYWRIGHT_AFTER_FAKE === '1' && !isPlaywrightTestRunActive(accountId)) {
+            void runPlaywrightTestRun(accountId).catch((err) => {
+              console.error('[warmup → playwright]', err)
+            })
+          }
         })
       })
     })
