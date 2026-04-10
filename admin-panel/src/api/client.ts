@@ -1,4 +1,21 @@
-const base = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? ''
+const configuredBase = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '')
+const base = configuredBase
+  ? configuredBase.endsWith('/api')
+    ? configuredBase
+    : `${configuredBase}/api`
+  : '/api'
+
+type ApiSuccess<T> = {
+  success: true
+  data?: T
+}
+
+type ApiFailure = {
+  success: false
+  error?: string
+}
+
+type ApiEnvelope<T> = ApiSuccess<T> | ApiFailure
 
 export class ApiError extends Error {
   readonly status: number
@@ -16,8 +33,18 @@ async function readErrorMessage(res: Response, path: string): Promise<string> {
   const text = await res.text()
   if (!text) return `${path} ${res.status}`
   try {
-    const j = JSON.parse(text) as { error?: string }
-    if (j && typeof j.error === 'string' && j.error.trim()) {
+    const j = JSON.parse(text) as ApiEnvelope<unknown> | { error?: string }
+    if (
+      j &&
+      typeof j === 'object' &&
+      'success' in j &&
+      j.success === false &&
+      typeof j.error === 'string' &&
+      j.error.trim()
+    ) {
+      return `${path} ${res.status}: ${j.error.trim()}`
+    }
+    if (j && typeof j === 'object' && 'error' in j && typeof j.error === 'string' && j.error.trim()) {
       return `${path} ${res.status}: ${j.error.trim()}`
     }
   } catch {
@@ -33,11 +60,27 @@ async function parseJsonOk<T>(res: Response, path: string): Promise<T> {
   if (!text.trim()) {
     throw new ApiError(`Invalid JSON response (${res.status})`, path, res.status)
   }
+
+  let parsed: ApiEnvelope<T>
   try {
-    return JSON.parse(text) as T
+    parsed = JSON.parse(text) as ApiEnvelope<T>
   } catch {
     throw new ApiError(`Invalid JSON response (${res.status})`, path, res.status)
   }
+
+  if (!parsed || typeof parsed !== 'object' || !('success' in parsed)) {
+    throw new ApiError(`Invalid JSON response (${res.status})`, path, res.status)
+  }
+
+  if (!parsed.success) {
+    throw new ApiError(
+      parsed.error?.trim() ? `${path} ${res.status}: ${parsed.error.trim()}` : `${path} ${res.status}`,
+      path,
+      res.status,
+    )
+  }
+
+  return parsed.data as T
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
@@ -45,16 +88,7 @@ export async function apiGet<T>(path: string): Promise<T> {
   if (!res.ok) {
     throw new ApiError(await readErrorMessage(res, path), path, res.status)
   }
-  const text = await res.text()
-  // Some proxies/servers may return 200 with empty body; list endpoints expect an array.
-  if (!text.trim()) {
-    return [] as T
-  }
-  try {
-    return JSON.parse(text) as T
-  } catch {
-    throw new ApiError(`Invalid JSON response (${res.status})`, path, res.status)
-  }
+  return parseJsonOk<T>(res, path)
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {
@@ -83,7 +117,8 @@ export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 
 export async function apiDelete(path: string): Promise<void> {
   const res = await fetch(`${base}${path}`, { method: 'DELETE' })
-  if (res.status !== 204 && !res.ok) {
+  if (!res.ok) {
     throw new ApiError(await readErrorMessage(res, path), path, res.status)
   }
+  await parseJsonOk<undefined>(res, path)
 }

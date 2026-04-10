@@ -10,11 +10,7 @@ export default defineConfig({
   server: {
     host: true,
     proxy: {
-      '/accounts': { target: 'http://localhost:3000', changeOrigin: true },
-      '/proxies': { target: 'http://localhost:3000', changeOrigin: true },
-      '/profiles': { target: 'http://localhost:3000', changeOrigin: true },
-      '/logs': { target: 'http://localhost:3000', changeOrigin: true },
-      '/warmup': { target: 'http://localhost:3000', changeOrigin: true },
+      '/api': { target: 'http://localhost:3000', changeOrigin: true },
     },
   },
 })

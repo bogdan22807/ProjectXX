@@ -5,6 +5,7 @@ import {
   isPlaywrightTestRunActive,
   runPlaywrightTestRun,
 } from '../executor/playwrightTestRun.js'
+import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
 
@@ -71,16 +72,16 @@ router.post('/start', (req, res) => {
   const body = req.body ?? {}
   const accountId = body.accountId ?? body.account_id
   if (!accountId || String(accountId).trim() === '') {
-    return res.status(400).json({ error: 'accountId is required' })
+    return sendJsonError(res, 400, 'accountId is required')
   }
 
   const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId)
   if (!account) {
-    return res.status(404).json({ error: 'Account not found' })
+    return sendJsonError(res, 404, 'Account not found')
   }
 
   if (jobs.has(accountId)) {
-    return res.status(409).json({ error: 'Warmup already running for this account' })
+    return sendJsonError(res, 409, 'Warmup already running for this account')
   }
 
   db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Running', accountId)
@@ -88,19 +89,19 @@ router.post('/start', (req, res) => {
 
   beginWarmupChain(accountId)
 
-  res.json({ ok: true, state: 'started', accountId })
+  return sendJsonData(res, 200, { state: 'started', accountId })
 })
 
 router.post('/stop', async (req, res) => {
   const body = req.body ?? {}
   const accountId = body.accountId ?? body.account_id
   if (!accountId || String(accountId).trim() === '') {
-    return res.status(400).json({ error: 'accountId is required' })
+    return sendJsonError(res, 400, 'accountId is required')
   }
 
   const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId)
   if (!account) {
-    return res.status(404).json({ error: 'Account not found' })
+    return sendJsonError(res, 404, 'Account not found')
   }
 
   const wasFake = clearWarmupJob(accountId)
@@ -115,7 +116,10 @@ router.post('/stop', async (req, res) => {
     insertLog(accountId, 'stopped by user', '')
   }
 
-  res.json({ ok: true, state: stoppedSomething ? 'stopped' : 'idle', accountId })
+  return sendJsonData(res, 200, {
+    state: stoppedSomething ? 'stopped' : 'idle',
+    accountId,
+  })
 })
 
 export default router
