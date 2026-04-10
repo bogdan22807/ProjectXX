@@ -1,17 +1,29 @@
 /* eslint-disable react-refresh/only-export-components -- context module exports provider and hook */
 import {
   createContext,
+  startTransition,
   useCallback,
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type Dispatch,
   type ReactNode,
   type SetStateAction,
 } from 'react'
-import { initialAccounts, initialLogs, initialProfiles, initialProxies } from '../data/mock'
+import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
+import {
+  accountPatchToApi,
+  accountToApiBody,
+  mapAccount,
+  mapLog,
+  mapProfile,
+  mapProxy,
+  type ApiAccount,
+  type ApiLog,
+  type ApiProfile,
+  type ApiProxy,
+} from '../api/mappers'
 import type {
   Account,
   AccountStatus,
@@ -23,10 +35,6 @@ import type {
   Proxy,
   ProxyStatus,
 } from '../types/domain'
-
-function newId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
-}
 
 interface AppStateValue {
   accounts: Account[]
@@ -49,30 +57,29 @@ interface AppStateValue {
     proxyId: string | null
     profileId: string | null
     status: AccountStatus
-  }) => void
-  updateAccount: (id: string, patch: Partial<Omit<Account, 'id'>>) => void
-  deleteAccountById: (id: string) => void
-  startAccount: (id: string) => void
-  stopAccount: (id: string) => void
-  deleteSelectedAccounts: () => void
+  }) => Promise<void>
+  updateAccount: (id: string, patch: Partial<Omit<Account, 'id'>>) => Promise<void>
+  deleteAccountById: (id: string) => Promise<void>
+  startAccount: (id: string) => Promise<void>
+  stopAccount: (id: string) => Promise<void>
+  deleteSelectedAccounts: () => Promise<void>
   addProxy: (input: {
     provider: string
     host: string
     port: string
     username: string
     password: string
-  }) => void
-  deleteSelectedProxies: () => void
-  checkSelectedProxies: () => void
+  }) => Promise<void>
+  deleteSelectedProxies: () => Promise<void>
+  checkSelectedProxies: () => Promise<void>
   addProfile: (input: {
     name: string
     proxyId: string | null
     status: ProfileStatus
-  }) => void
-  deleteSelectedProfiles: () => void
-  startWarmupSelected: () => void
-  appendLog: (action: string, details: string) => void
-  /** Derived stats for dashboard */
+  }) => Promise<void>
+  deleteSelectedProfiles: () => Promise<void>
+  startWarmupSelected: () => Promise<void>
+  appendLog: (action: string, details: string) => Promise<void>
   stats: {
     totalAccounts: number
     activeAccounts: number
@@ -85,10 +92,10 @@ interface AppStateValue {
 const AppStateContext = createContext<AppStateValue | null>(null)
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
-  const [accounts, setAccounts] = useState<Account[]>(initialAccounts)
-  const [proxies, setProxies] = useState<Proxy[]>(initialProxies)
-  const [profiles, setProfiles] = useState<BrowserProfile[]>(initialProfiles)
-  const [logs, setLogs] = useState<LogEntry[]>(initialLogs)
+  const [accounts, setAccounts] = useState<Account[]>([])
+  const [proxies, setProxies] = useState<Proxy[]>([])
+  const [profiles, setProfiles] = useState<BrowserProfile[]>([])
+  const [logs, setLogs] = useState<LogEntry[]>([])
   const [settings, setSettingsState] = useState<AppSettings>({
     notifications: true,
     autoRetryFailed: false,
@@ -99,24 +106,32 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [selectedProxyIds, setSelectedProxyIds] = useState<Set<string>>(new Set())
   const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(new Set())
 
-  const warmupTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
-
-  useEffect(() => {
-    const timers = warmupTimers.current
-    return () => {
-      timers.forEach((t) => clearTimeout(t))
-      timers.clear()
-    }
+  const refreshAll = useCallback(async () => {
+    const [a, p, prof, l] = await Promise.all([
+      apiGet<ApiAccount[]>('/accounts'),
+      apiGet<ApiProxy[]>('/proxies'),
+      apiGet<ApiProfile[]>('/profiles'),
+      apiGet<ApiLog[]>('/logs'),
+    ])
+    setAccounts(a.map(mapAccount))
+    setProxies(p.map(mapProxy))
+    setProfiles(prof.map(mapProfile))
+    setLogs(l.map(mapLog))
   }, [])
 
-  const appendLog = useCallback((action: string, details: string) => {
-    const entry: LogEntry = {
-      id: newId('log'),
-      time: new Date().toISOString(),
+  useEffect(() => {
+    startTransition(() => {
+      void refreshAll().catch((e) => console.error('Failed to load data', e))
+    })
+  }, [refreshAll])
+
+  const appendLog = useCallback(async (action: string, details: string) => {
+    const row = await apiPost<ApiLog>('/logs', {
+      account_id: null,
       action,
       details,
-    }
-    setLogs((prev) => [entry, ...prev].slice(0, 500))
+    })
+    setLogs((prev) => [mapLog(row), ...prev].slice(0, 500))
   }, [])
 
   const setSettings = useCallback((patch: Partial<AppSettings>) => {
@@ -124,7 +139,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const addAccount = useCallback(
-    (input: {
+    async (input: {
       name: string
       login: string
       cookies: string
@@ -133,192 +148,179 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       profileId: string | null
       status: AccountStatus
     }) => {
-      const acc: Account = {
-        id: newId('acc'),
-        name: input.name,
-        login: input.login,
-        cookies: input.cookies,
-        platform: input.platform,
-        proxyId: input.proxyId,
-        profileId: input.profileId,
-        status: input.status,
-      }
-      setAccounts((prev) => [acc, ...prev])
-      appendLog('Add account', `Created "${acc.name}" (${acc.platform}) as ${acc.status}`)
+      const row = await apiPost<ApiAccount>(
+        '/accounts',
+        accountToApiBody({
+          name: input.name,
+          login: input.login,
+          cookies: input.cookies,
+          platform: input.platform,
+          proxyId: input.proxyId,
+          profileId: input.profileId,
+          status: input.status,
+        }),
+      )
+      setAccounts((prev) => [mapAccount(row), ...prev])
+      await appendLog(
+        'Add account',
+        `Created "${row.name}" (${row.platform}) as ${row.status}`,
+      )
     },
     [appendLog],
   )
 
   const deleteAccountById = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc) return
-      const t = warmupTimers.current.get(id)
-      if (t) {
-        clearTimeout(t)
-        warmupTimers.current.delete(id)
-      }
+      await apiDelete(`/accounts/${id}`)
       setAccounts((prev) => prev.filter((a) => a.id !== id))
       setSelectedAccountIds((prev) => {
         const next = new Set(prev)
         next.delete(id)
         return next
       })
-      appendLog('Delete account', `Removed "${acc.name}"`)
+      await appendLog('Delete account', `Removed "${acc.name}"`)
     },
     [accounts, appendLog],
   )
 
   const updateAccount = useCallback(
-    (id: string, patch: Partial<Omit<Account, 'id'>>) => {
+    async (id: string, patch: Partial<Omit<Account, 'id'>>) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc) return
-      setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, ...patch } : a)))
-      appendLog('Update account', `Saved changes for "${acc.name}"`)
+      const body = accountPatchToApi(patch)
+      if (Object.keys(body).length === 0) return
+      const row = await apiPatch<ApiAccount>(`/accounts/${id}`, body)
+      setAccounts((prev) => prev.map((a) => (a.id === id ? mapAccount(row) : a)))
+      await appendLog('Update account', `Saved changes for "${acc.name}"`)
     },
     [accounts, appendLog],
   )
 
   const startAccount = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc || acc.status === 'Running') return
       if (acc.status !== 'New' && acc.status !== 'Ready') return
-
-      const existing = warmupTimers.current.get(id)
-      if (existing) {
-        clearTimeout(existing)
-        warmupTimers.current.delete(id)
-      }
-
-      setAccounts((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, status: 'Running' as const } : a)),
-      )
-      appendLog('Start', `Account "${acc.name}" → Running`)
+      const row = await apiPatch<ApiAccount>(`/accounts/${id}`, { status: 'Running' })
+      setAccounts((prev) => prev.map((a) => (a.id === id ? mapAccount(row) : a)))
+      await appendLog('Start', `Account "${acc.name}" → Running`)
     },
     [accounts, appendLog],
   )
 
   const stopAccount = useCallback(
-    (id: string) => {
+    async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc || acc.status !== 'Running') return
-      const t = warmupTimers.current.get(id)
-      if (t) {
-        clearTimeout(t)
-        warmupTimers.current.delete(id)
-      }
-      setAccounts((prev) =>
-        prev.map((a) => (a.id === id ? { ...a, status: 'Ready' as const } : a)),
-      )
-      appendLog('Stop', `Account "${acc.name}" → Ready`)
+      const row = await apiPatch<ApiAccount>(`/accounts/${id}`, { status: 'Ready' })
+      setAccounts((prev) => prev.map((a) => (a.id === id ? mapAccount(row) : a)))
+      await appendLog('Stop', `Account "${acc.name}" → Ready`)
     },
     [accounts, appendLog],
   )
 
-  const deleteSelectedAccounts = useCallback(() => {
+  const deleteSelectedAccounts = useCallback(async () => {
     if (selectedAccountIds.size === 0) return
-    const ids = selectedAccountIds
-    ids.forEach((id) => {
-      const t = warmupTimers.current.get(id)
-      if (t) {
-        clearTimeout(t)
-        warmupTimers.current.delete(id)
-      }
-    })
-    setAccounts((prev) => prev.filter((a) => !ids.has(a.id)))
-    appendLog('Delete accounts', `Removed ${ids.size} account(s)`)
+    const ids = [...selectedAccountIds]
+    for (const id of ids) {
+      await apiDelete(`/accounts/${id}`)
+    }
+    const idSet = new Set(ids)
+    setAccounts((prev) => prev.filter((a) => !idSet.has(a.id)))
+    await appendLog('Delete accounts', `Removed ${ids.length} account(s)`)
     setSelectedAccountIds(new Set())
   }, [selectedAccountIds, appendLog])
 
   const addProxy = useCallback(
-    (input: {
+    async (input: {
       provider: string
       host: string
       port: string
       username: string
       password: string
     }) => {
-      const proxy: Proxy = {
-        id: newId('px'),
+      const row = await apiPost<ApiProxy>('/proxies', {
         provider: input.provider || 'SOAX',
         host: input.host,
         port: input.port,
         username: input.username,
         password: input.password,
         status: 'Needs Check',
-      }
-      setProxies((prev) => [proxy, ...prev])
-      appendLog('Add proxy', `${proxy.provider} ${proxy.host}${proxy.port ? `:${proxy.port}` : ''}`)
+      })
+      setProxies((prev) => [mapProxy(row), ...prev])
+      await appendLog(
+        'Add proxy',
+        `${row.provider} ${row.host}${row.port ? `:${row.port}` : ''}`,
+      )
     },
     [appendLog],
   )
 
-  const deleteSelectedProxies = useCallback(() => {
+  const deleteSelectedProxies = useCallback(async () => {
     const ids =
       selectedProxyIds.size > 0
         ? selectedProxyIds
         : new Set(proxies.map((p) => p.id))
     if (ids.size === 0) return
-    setProxies((prev) => prev.filter((p) => !ids.has(p.id)))
-    setAccounts((prev) =>
-      prev.map((a) => (a.proxyId && ids.has(a.proxyId) ? { ...a, proxyId: null } : a)),
-    )
-    setProfiles((prev) =>
-      prev.map((p) => (p.proxyId && ids.has(p.proxyId) ? { ...p, proxyId: null } : p)),
-    )
-    appendLog('Delete proxies', `Removed ${ids.size} proxy row(s)`)
+    for (const id of ids) {
+      await apiDelete(`/proxies/${id}`)
+    }
+    await refreshAll()
+    await appendLog('Delete proxies', `Removed ${ids.size} proxy row(s)`)
     setSelectedProxyIds(new Set())
-  }, [selectedProxyIds, proxies, appendLog])
+  }, [selectedProxyIds, proxies, appendLog, refreshAll])
 
-  const checkSelectedProxies = useCallback(() => {
+  const checkSelectedProxies = useCallback(async () => {
     const targetIds =
       selectedProxyIds.size > 0
         ? selectedProxyIds
         : new Set(proxies.map((p) => p.id))
     if (targetIds.size === 0) return
     const nextStatus: ProxyStatus = 'Active'
-    setProxies((prev) =>
-      prev.map((p) => (targetIds.has(p.id) ? { ...p, status: nextStatus } : p)),
-    )
-    appendLog(
-      'Check proxies',
-      `Marked ${targetIds.size} proxy row(s) as ${nextStatus}`,
-    )
-  }, [selectedProxyIds, proxies, appendLog])
+    const now = new Date().toISOString()
+    for (const id of targetIds) {
+      await apiPatch(`/proxies/${id}`, { status: nextStatus, last_check: now })
+    }
+    await refreshAll()
+    await appendLog('Check proxies', `Marked ${targetIds.size} proxy row(s) as ${nextStatus}`)
+  }, [selectedProxyIds, proxies, appendLog, refreshAll])
 
   const addProfile = useCallback(
-    (input: { name: string; proxyId: string | null; status: ProfileStatus }) => {
-      const profile: BrowserProfile = {
-        id: newId('bp'),
+    async (input: { name: string; proxyId: string | null; status: ProfileStatus }) => {
+      const row = await apiPost<ApiProfile>('/profiles', {
         name: input.name,
-        proxyId: input.proxyId,
+        linked_proxy_id: input.proxyId,
+        linked_account_id: null,
         status: input.status,
-      }
-      setProfiles((prev) => [profile, ...prev])
-      appendLog('Create profile', `Profile "${profile.name}" (${profile.status})`)
+      })
+      setProfiles((prev) => [mapProfile(row), ...prev])
+      await appendLog('Create profile', `Profile "${row.name}" (${row.status})`)
     },
     [appendLog],
   )
 
-  const deleteSelectedProfiles = useCallback(() => {
+  const deleteSelectedProfiles = useCallback(async () => {
     if (selectedProfileIds.size === 0) return
-    const ids = selectedProfileIds
-    setProfiles((prev) => prev.filter((p) => !ids.has(p.id)))
-    setAccounts((prev) =>
-      prev.map((a) => (a.profileId && ids.has(a.profileId) ? { ...a, profileId: null } : a)),
-    )
-    appendLog('Delete profiles', `Removed ${ids.size} profile(s)`)
+    const ids = [...selectedProfileIds]
+    for (const id of ids) {
+      await apiDelete(`/profiles/${id}`)
+    }
+    await refreshAll()
+    await appendLog('Delete profiles', `Removed ${ids.length} profile(s)`)
     setSelectedProfileIds(new Set())
-  }, [selectedProfileIds, appendLog])
+  }, [selectedProfileIds, appendLog, refreshAll])
 
-  const startWarmupSelected = useCallback(() => {
+  const startWarmupSelected = useCallback(async () => {
     const targets = accounts.filter((a) => selectedAccountIds.has(a.id) && a.status === 'New')
     if (targets.length === 0) {
-      appendLog('Start warmup', 'No selected accounts in New status')
+      await appendLog('Start warmup', 'No selected accounts in New status')
       return
     }
-    targets.forEach((acc) => startAccount(acc.id))
+    for (const acc of targets) {
+      await startAccount(acc.id)
+    }
   }, [accounts, selectedAccountIds, appendLog, startAccount])
 
   const stats = useMemo(() => {

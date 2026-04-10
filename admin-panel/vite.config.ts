@@ -9,5 +9,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     host: true,
+    proxy: {
+      '/accounts': { target: 'http://localhost:3000', changeOrigin: true },
+      '/proxies': { target: 'http://localhost:3000', changeOrigin: true },
+      '/profiles': { target: 'http://localhost:3000', changeOrigin: true },
+      '/logs': { target: 'http://localhost:3000', changeOrigin: true },
+      '/warmup': { target: 'http://localhost:3000', changeOrigin: true },
+    },
   },
 })
