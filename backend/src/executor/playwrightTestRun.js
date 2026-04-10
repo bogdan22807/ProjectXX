@@ -1,6 +1,6 @@
 /**
  * Playwright test run for an in-house / test social URL only.
- * Minimal flow: launch → optional proxy → context → cookies → goto → verify → log → close.
+ * Stable single-account flow: launch → proxy → cookies → page → optional ready selector → scroll → done.
  */
 
 import { chromium } from 'playwright'
@@ -19,27 +19,86 @@ import { getExecutionContext, logStep, updateStatus } from './runner.js'
 /** @type {Map<string, PlaywrightRunState>} */
 const playwrightRuns = new Map()
 
+/** Log + status for executor failures (not user stop). */
+function failRun(accountId, state, action, details) {
+  if (state.abortedByUser) return
+  logStep(accountId, action, String(details ?? '').slice(0, 2000))
+  try {
+    updateStatus(accountId, 'Error')
+  } catch {
+    /* account removed */
+  }
+}
+
 /**
- * Base URL of your test social app (same-origin cookies).
- * Override per request via `targetUrl` in {@link runPlaywrightTestRun}.
+ * Map Playwright / network errors to stable log actions.
+ * @param {unknown} err
+ * @param {{ phase: string }} ctx
  */
+function classifyError(err, ctx) {
+  const msg = err instanceof Error ? err.message : String(err)
+  const name = err instanceof Error ? err.name : ''
+  const lower = msg.toLowerCase()
+
+  if (stateAbortedMessage(lower)) {
+    return { action: 'stopped by user', details: msg, treatAsUserStop: true }
+  }
+
+  if (name === 'TimeoutError' || lower.includes('timeout')) {
+    if (ctx.phase === 'goto' || ctx.phase === 'navigation') {
+      return { action: 'page load timeout', details: msg }
+    }
+    if (ctx.phase === 'selector') {
+      return { action: 'selector not found', details: msg }
+    }
+  }
+
+  if (
+    lower.includes('err_proxy') ||
+    lower.includes('proxy') ||
+    lower.includes('tunnel') ||
+    (lower.includes('econnrefused') && (ctx.phase === 'goto' || ctx.phase === 'navigation'))
+  ) {
+    return { action: 'proxy connection failed', details: msg }
+  }
+
+  if (lower.includes('target page, context or browser has been closed')) {
+    return { action: 'stopped by user', details: msg, treatAsUserStop: true }
+  }
+
+  if (ctx.phase === 'launch') {
+    return { action: 'browser launch failed', details: msg }
+  }
+
+  if (ctx.phase === 'goto' || ctx.phase === 'navigation' || ctx.phase === 'scroll') {
+    return { action: 'page load timeout', details: msg }
+  }
+
+  if (ctx.phase === 'selector') {
+    return { action: 'selector not found', details: msg }
+  }
+
+  return { action: 'executor error', details: `[${ctx.phase}] ${msg}` }
+}
+
+function stateAbortedMessage(lower) {
+  return lower.includes('abort') || lower.includes('cancelled')
+}
+
 export function getDefaultSocialTestUrl() {
   const u = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL ?? ''
   return String(u).trim()
 }
 
-/**
- * @param {string} accountId
- */
+export function getReadySelector() {
+  const s = process.env.SOCIAL_TEST_READY_SELECTOR ?? process.env.TEST_SOCIAL_READY_SELECTOR ?? ''
+  return String(s).trim()
+}
+
 export function isPlaywrightTestRunActive(accountId) {
   return playwrightRuns.has(accountId)
 }
 
-/**
- * Sleep that ends early when {@link abortPlaywrightTestRun} calls `sleepWake` (browser close + cancel).
- * @param {PlaywrightRunState} state
- * @param {number} ms
- */
 function interruptibleSleep(state, ms) {
   return new Promise((resolve) => {
     const tid = setTimeout(() => {
@@ -54,15 +113,10 @@ function interruptibleSleep(state, ms) {
   })
 }
 
-/** Inclusive random integer in [min, max]. */
 function randomInt(min, max) {
   return min + Math.floor(Math.random() * (max - min + 1))
 }
 
-/**
- * @param {import('./runner.js').ProxyRow | null} proxy
- * @returns {import('playwright').LaunchOptions['proxy'] | undefined}
- */
 function proxyLaunchOptions(proxy) {
   if (!proxy) return undefined
   const host = String(proxy.host ?? '').trim()
@@ -78,32 +132,44 @@ function proxyLaunchOptions(proxy) {
 }
 
 /**
- * Build Playwright cookie objects for addCookies using page URL origin.
- * Accepts JSON array of cookie objects, or Playwright storageState JSON, or "name=value; name2=value2".
- *
- * @param {string} raw
- * @param {URL} pageUrl
- * @returns {import('playwright').Cookie[]}
+ * Parse cookies for addCookies. If user supplied non-empty cookie data that cannot be used → invalid.
+ * @returns {{ cookies: import('playwright').Cookie[], invalid?: string }}
  */
-export function parseCookiesForUrl(raw, pageUrl) {
+export function parseCookiesForUrlStrict(raw, pageUrl) {
   const s = String(raw ?? '').trim()
-  if (!s) return []
-
-  try {
-    const parsed = JSON.parse(s)
-    if (Array.isArray(parsed)) {
-      return normalizeCookieList(parsed, pageUrl)
-    }
-    if (parsed && typeof parsed === 'object' && Array.isArray(parsed.cookies)) {
-      return normalizeCookieList(parsed.cookies, pageUrl)
-    }
-  } catch {
-    /* fall through */
+  if (!s) {
+    return { cookies: [] }
   }
 
-  const hostname = pageUrl.hostname
   const origin = pageUrl.origin
-  const out = []
+  const host = pageUrl.hostname
+
+  const trimmed = s.trim()
+  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+    try {
+      const parsed = JSON.parse(trimmed)
+      if (Array.isArray(parsed)) {
+        const cookies = normalizeCookieList(parsed, pageUrl)
+        if (cookies.length === 0) {
+          return { cookies: [], invalid: 'JSON array parsed but no valid cookie entries' }
+        }
+        return { cookies }
+      }
+      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.cookies)) {
+        const cookies = normalizeCookieList(parsed.cookies, pageUrl)
+        if (cookies.length === 0) {
+          return { cookies: [], invalid: 'storageState.cookies empty or invalid' }
+        }
+        return { cookies }
+      }
+      return { cookies: [], invalid: 'JSON is not a cookie array or storageState' }
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e)
+      return { cookies: [], invalid: `invalid JSON: ${m}` }
+    }
+  }
+
+  const headerCookies = []
   for (const part of s.split(';')) {
     const p = part.trim()
     if (!p) continue
@@ -112,19 +178,20 @@ export function parseCookiesForUrl(raw, pageUrl) {
     const name = p.slice(0, eq).trim()
     const value = p.slice(eq + 1).trim()
     if (!name) continue
-    out.push({ name, value, url: origin })
+    headerCookies.push({ name, value, url: origin })
   }
-  return out
+
+  if (headerCookies.length === 0) {
+    return {
+      cookies: [],
+      invalid: 'cookie string is not valid JSON and has no name=value pairs',
+    }
+  }
+  return { cookies: headerCookies }
 }
 
-/**
- * @param {unknown[]} list
- * @param {URL} pageUrl
- * @returns {import('playwright').Cookie[]}
- */
 function normalizeCookieList(list, pageUrl) {
   const host = pageUrl.hostname
-  const origin = pageUrl.origin
   /** @type {import('playwright').Cookie[]} */
   const out = []
   for (const item of list) {
@@ -133,9 +200,9 @@ function normalizeCookieList(list, pageUrl) {
     const name = o.name != null ? String(o.name) : ''
     if (!name) continue
     const value = o.value != null ? String(o.value) : ''
+    const path = o.path != null ? String(o.path) : '/'
     let domain = o.domain != null ? String(o.domain) : host
     if (!domain) domain = host
-    const path = o.path != null ? String(o.path) : '/'
     /** @type {import('playwright').Cookie} */
     const c =
       o.url != null
@@ -154,9 +221,30 @@ function normalizeCookieList(list, pageUrl) {
   return out
 }
 
+/** Re-export loose parser name for tests importing parseCookiesForUrl */
+export function parseCookiesForUrl(raw, pageUrl) {
+  const r = parseCookiesForUrlStrict(raw, pageUrl)
+  return r.cookies
+}
+
+function launchTimeoutMs() {
+  const n = Number(process.env.PLAYWRIGHT_LAUNCH_TIMEOUT_MS)
+  return Number.isFinite(n) && n > 0 ? n : 60_000
+}
+
+function gotoTimeoutMs() {
+  const n = Number(process.env.PLAYWRIGHT_GOTO_TIMEOUT_MS)
+  return Number.isFinite(n) && n > 0 ? n : 60_000
+}
+
+function selectorTimeoutMs() {
+  const n = Number(process.env.PLAYWRIGHT_SELECTOR_TIMEOUT_MS)
+  return Number.isFinite(n) && n > 0 ? n : 15_000
+}
+
 /**
  * @param {string} accountId
- * @param {{ targetUrl?: string }} [options]
+ * @param {{ targetUrl?: string; readySelector?: string }} [options]
  */
 export async function runPlaywrightTestRun(accountId, options = {}) {
   const targetUrl = String(options.targetUrl ?? getDefaultSocialTestUrl()).trim()
@@ -184,6 +272,9 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
   }
   playwrightRuns.set(accountId, state)
 
+  const readySelector =
+    String(options.readySelector ?? getReadySelector()).trim() || null
+
   try {
     const ctx = getExecutionContext(accountId)
     if (!ctx) {
@@ -195,43 +286,114 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     const launchOpts = {
       headless: process.env.PLAYWRIGHT_HEADED === '1' ? false : true,
       proxy: proxyLaunchOptions(ctx.proxy),
+      args: process.env.PLAYWRIGHT_CHROMIUM_ARGS
+        ? process.env.PLAYWRIGHT_CHROMIUM_ARGS.split(/\s+/).filter(Boolean)
+        : [],
     }
 
-    const browser = await chromium.launch(launchOpts)
+    let browser
+    try {
+      let launchTimeoutId
+      const timeoutPromise = new Promise((_, reject) => {
+        launchTimeoutId = setTimeout(() => reject(new Error('Launch timed out')), launchTimeoutMs())
+      })
+      try {
+        browser = await Promise.race([chromium.launch(launchOpts), timeoutPromise])
+      } finally {
+        if (launchTimeoutId) clearTimeout(launchTimeoutId)
+      }
+    } catch (err) {
+      const { action, details } = classifyError(err, { phase: 'launch' })
+      failRun(accountId, state, action, details)
+      return
+    }
+
     state.browser = browser
     if (state.cancelled) return
 
-    const context = await browser.newContext()
+    let context
+    try {
+      context = await browser.newContext({
+        ignoreHTTPSErrors: process.env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS === '1',
+      })
+    } catch (err) {
+      const { action, details } = classifyError(err, { phase: 'launch' })
+      failRun(accountId, state, action, details)
+      return
+    }
+
     state.context = context
     logStep(accountId, 'browser started', ctx.proxy?.host ? 'with proxy' : 'no proxy')
 
     const rawCookies = String(ctx.account.cookies ?? '').trim()
-    const cookies = parseCookiesForUrl(rawCookies, pageUrl)
-    if (cookies.length > 0) {
-      await context.addCookies(cookies)
-      logStep(accountId, 'cookies loaded', `${cookies.length} cookie(s)`)
+    const parsed = parseCookiesForUrlStrict(rawCookies, pageUrl)
+    if (parsed.invalid) {
+      failRun(accountId, state, 'cookies invalid', parsed.invalid)
+      return
+    }
+    if (parsed.cookies.length > 0) {
+      try {
+        await context.addCookies(parsed.cookies)
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        failRun(accountId, state, 'cookies invalid', msg)
+        return
+      }
+      logStep(accountId, 'cookies loaded', `${parsed.cookies.length} cookie(s)`)
     } else {
-      logStep(accountId, 'cookies loaded', rawCookies ? 'unparsed or empty — skipped' : 'none')
+      logStep(accountId, 'cookies loaded', 'none')
     }
 
     if (state.cancelled) return
 
-    const page = await context.newPage()
-    const response = await page.goto(targetUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 60_000,
-    })
+    let page
+    try {
+      page = await context.newPage()
+    } catch (err) {
+      const { action, details } = classifyError(err, { phase: 'launch' })
+      failRun(accountId, state, action, details)
+      return
+    }
+
+    let response
+    try {
+      response = await page.goto(targetUrl, {
+        waitUntil: 'domcontentloaded',
+        timeout: gotoTimeoutMs(),
+      })
+    } catch (err) {
+      if (state.abortedByUser) return
+      const { action, details, treatAsUserStop } = classifyError(err, { phase: 'goto' })
+      if (treatAsUserStop) return
+      failRun(accountId, state, action, details)
+      return
+    }
 
     if (state.cancelled) return
 
     const ok = response === null || response.ok()
     if (!ok) {
       const status = response?.status() ?? 'unknown'
-      throw new Error(`HTTP ${status} for ${targetUrl}`)
+      failRun(accountId, state, 'page load timeout', `HTTP ${status} for ${targetUrl}`)
+      return
     }
 
-    const opened = page.url()
-    logStep(accountId, 'page opened', opened)
+    logStep(accountId, 'page opened', page.url())
+
+    if (readySelector) {
+      try {
+        await page.waitForSelector(readySelector, {
+          state: 'attached',
+          timeout: selectorTimeoutMs(),
+        })
+      } catch (err) {
+        if (state.abortedByUser) return
+        const { action, details, treatAsUserStop } = classifyError(err, { phase: 'selector' })
+        if (treatAsUserStop) return
+        failRun(accountId, state, action, details)
+        return
+      }
+    }
 
     updateStatus(accountId, 'Running')
 
@@ -239,14 +401,20 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     if (state.cancelled) return
 
     const deltaY = randomInt(200, 800)
-    await page.mouse.wheel(0, deltaY)
-    if (state.cancelled) return
+    try {
+      await page.mouse.wheel(0, deltaY)
+    } catch (err) {
+      if (state.abortedByUser) return
+      const { action, details, treatAsUserStop } = classifyError(err, { phase: 'scroll' })
+      if (treatAsUserStop) return
+      failRun(accountId, state, action, details)
+      return
+    }
 
     await interruptibleSleep(state, randomInt(2000, 4000))
     if (state.cancelled) return
 
     logStep(accountId, 'scroll completed', `${deltaY}px`)
-
     logStep(accountId, 'completed', targetUrl)
     updateStatus(accountId, 'Ready')
   } catch (err) {
@@ -254,13 +422,9 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       return
     }
     const msg = err instanceof Error ? err.message : String(err)
-    logStep(accountId, 'playwright error', msg)
-    try {
-      updateStatus(accountId, 'Error')
-    } catch {
-      /* account may be gone */
-    }
-    throw err
+    const { action, details, treatAsUserStop } = classifyError(err, { phase: 'unknown' })
+    if (treatAsUserStop) return
+    failRun(accountId, state, action, details)
   } finally {
     const run = playwrightRuns.get(accountId)
     if (run) {
@@ -281,10 +445,6 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
   }
 }
 
-/**
- * Best-effort abort: closes browser/context if still open.
- * @param {string} accountId
- */
 export async function abortPlaywrightTestRun(accountId) {
   const run = playwrightRuns.get(accountId)
   if (!run) return false
@@ -301,6 +461,5 @@ export async function abortPlaywrightTestRun(accountId) {
   } catch {
     /* ignore */
   }
-  /* Keep entry until runPlaywrightTestRun finally runs so in-flight work can exit cleanly. */
   return true
 }
