@@ -1,0 +1,30 @@
+import express from 'express'
+import accountsRouter from './routes/accounts.js'
+import proxiesRouter from './routes/proxies.js'
+import profilesRouter from './routes/profiles.js'
+import logsRouter from './routes/logs.js'
+import warmupRouter from './routes/warmup.js'
+
+const app = express()
+const PORT = Number(process.env.PORT) || 3000
+
+app.use(express.json({ limit: '1mb' }))
+
+app.use('/accounts', accountsRouter)
+app.use('/proxies', proxiesRouter)
+app.use('/profiles', profilesRouter)
+app.use('/logs', logsRouter)
+app.use('/warmup', warmupRouter)
+
+app.get('/health', (_req, res) => {
+  res.json({ ok: true })
+})
+
+app.use((err, _req, res, _next) => {
+  console.error(err)
+  res.status(500).json({ error: 'Internal server error' })
+})
+
+app.listen(PORT, () => {
+  console.log(`API listening on http://localhost:${PORT}`)
+})
