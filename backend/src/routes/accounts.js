@@ -20,10 +20,23 @@ router.post('/', (req, res) => {
     status,
   } = accountCreatePayload(req.body)
   const id = newId('acc')
-  db.prepare(
-    `INSERT INTO accounts (id, name, login, cookies, platform, proxy_id, browser_profile_id, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, name, login, cookies, platform, proxy_id, browser_profile_id, status)
+  try {
+    db.prepare(
+      `INSERT INTO accounts (id, name, login, cookies, platform, proxy_id, browser_profile_id, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, name, login, cookies, platform, proxy_id, browser_profile_id, status)
+  } catch (e) {
+    const code = e && typeof e === 'object' && 'code' in e ? String(/** @type {{ code?: string }} */ (e).code) : ''
+    const msg = e instanceof Error ? e.message : String(e)
+    if (code.includes('SQLITE_CONSTRAINT') || msg.includes('FOREIGN KEY')) {
+      return res.status(400).json({
+        error:
+          'Invalid proxy or browser profile: pick existing items from the lists or choose “None”.',
+      })
+    }
+    console.error(e)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
   const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id)
   res.status(201).json(row)
 })

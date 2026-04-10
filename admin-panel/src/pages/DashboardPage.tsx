@@ -218,18 +218,28 @@ export function DashboardPage() {
     closeEdit()
   }
 
-  function submitAdd() {
-    addAccount({
-      name: addForm.name.trim() || 'Unnamed',
-      login: addForm.login.trim(),
-      cookies: addForm.cookies,
-      platform: addForm.platform,
-      proxyId: addForm.proxyId || null,
-      profileId: addForm.profileId || null,
-      status: addForm.status,
-    })
-    setAddOpen(false)
-    setAddForm(emptyForm())
+  const [addSubmitting, setAddSubmitting] = useState(false)
+
+  async function submitAdd() {
+    if (addSubmitting) return
+    setAddSubmitting(true)
+    try {
+      const ok = await addAccount({
+        name: addForm.name.trim() || 'Unnamed',
+        login: addForm.login.trim(),
+        cookies: addForm.cookies,
+        platform: addForm.platform,
+        proxyId: addForm.proxyId || null,
+        profileId: addForm.profileId || null,
+        status: addForm.status,
+      })
+      if (ok) {
+        setAddOpen(false)
+        setAddForm(emptyForm())
+      }
+    } finally {
+      setAddSubmitting(false)
+    }
   }
 
   function proxyLabel(id: string | null) {
@@ -514,8 +524,8 @@ export function DashboardPage() {
             >
               Cancel
             </Button>
-            <Button variant="primary" onClick={submitAdd}>
-              Save
+            <Button variant="primary" disabled={addSubmitting} onClick={() => void submitAdd()}>
+              {addSubmitting ? 'Saving…' : 'Save'}
             </Button>
           </div>
         }
