@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
+import { profileCreatePayload, profilePatchPayload } from '../requestFields.js'
 
 const router = Router()
 
@@ -9,12 +10,7 @@ router.get('/', (_req, res) => {
 })
 
 router.post('/', (req, res) => {
-  const {
-    name = 'Unnamed profile',
-    linked_proxy_id = null,
-    linked_account_id = null,
-    status = 'Ready',
-  } = req.body ?? {}
+  const { name, linked_proxy_id, linked_account_id, status } = profileCreatePayload(req.body)
   const id = newId('bp')
   db.prepare(
     `INSERT INTO browser_profiles (id, name, linked_proxy_id, linked_account_id, status)
@@ -29,10 +25,10 @@ router.patch('/:id', (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' })
 
   const allowed = ['name', 'linked_proxy_id', 'linked_account_id', 'status']
-  const patch = req.body ?? {}
+  const normalized = profilePatchPayload(req.body)
   const updates = {}
   for (const key of allowed) {
-    if (Object.prototype.hasOwnProperty.call(patch, key)) updates[key] = patch[key]
+    if (Object.prototype.hasOwnProperty.call(normalized, key)) updates[key] = normalized[key]
   }
   if (Object.keys(updates).length === 0) return res.json(existing)
 

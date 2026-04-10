@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
+import { proxyCreatePayload, proxyPatchPayload } from '../requestFields.js'
 
 const router = Router()
 
@@ -10,15 +11,15 @@ router.get('/', (_req, res) => {
 
 router.post('/', (req, res) => {
   const {
-    provider = '',
+    provider,
     host,
-    port = '',
-    username = '',
-    password = '',
-    status = 'Needs Check',
-    assigned_to = '',
-    last_check = null,
-  } = req.body ?? {}
+    port,
+    username,
+    password,
+    status,
+    assigned_to,
+    last_check,
+  } = proxyCreatePayload(req.body)
   if (!host || String(host).trim() === '') {
     return res.status(400).json({ error: 'host is required' })
   }
@@ -55,10 +56,10 @@ router.patch('/:id', (req, res) => {
     'assigned_to',
     'last_check',
   ]
-  const patch = req.body ?? {}
+  const normalized = proxyPatchPayload(req.body)
   const updates = {}
   for (const key of allowed) {
-    if (Object.prototype.hasOwnProperty.call(patch, key)) updates[key] = patch[key]
+    if (Object.prototype.hasOwnProperty.call(normalized, key)) updates[key] = normalized[key]
   }
   if (Object.keys(updates).length === 0) return res.json(existing)
 
