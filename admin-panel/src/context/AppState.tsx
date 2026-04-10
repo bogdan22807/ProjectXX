@@ -11,7 +11,7 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react'
-import { apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
+import { ApiError, apiDelete, apiGet, apiPatch, apiPost } from '../api/client'
 import {
   accountPatchToApi,
   accountToApiBody,
@@ -82,6 +82,8 @@ interface AppStateValue {
   deleteSelectedProfiles: () => Promise<void>
   startWarmupSelected: () => Promise<void>
   appendLog: (action: string, details: string) => Promise<void>
+  lastError: string | null
+  dismissLastError: () => void
   stats: {
     totalAccounts: number
     activeAccounts: number
@@ -92,6 +94,14 @@ interface AppStateValue {
 }
 
 const AppStateContext = createContext<AppStateValue | null>(null)
+
+const POLL_MS = 3000
+
+function formatApiFailure(e: unknown): string {
+  if (e instanceof ApiError) return e.message
+  if (e instanceof Error) return e.message
+  return 'Something went wrong'
+}
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
   const [accounts, setAccounts] = useState<Account[]>([])
@@ -108,6 +118,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [selectedProxyIds, setSelectedProxyIds] = useState<Set<string>>(new Set())
   const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(new Set())
   const [warmupPending, setWarmupPending] = useState<Partial<Record<string, 'start' | 'stop'>>>({})
+  const [lastError, setLastError] = useState<string | null>(null)
+
+  const dismissLastError = useCallback(() => setLastError(null), [])
 
   const refreshAll = useCallback(async () => {
     const [a, p, prof, l] = await Promise.all([
@@ -122,19 +135,46 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setLogs(l.map(mapLog))
   }, [])
 
+  const refreshAccountsAndLogs = useCallback(async () => {
+    const [a, l] = await Promise.all([
+      apiGet<ApiAccount[]>('/accounts'),
+      apiGet<ApiLog[]>('/logs'),
+    ])
+    setAccounts(a.map(mapAccount))
+    setLogs(l.map(mapLog))
+  }, [])
+
   useEffect(() => {
     startTransition(() => {
-      void refreshAll().catch((e) => console.error('Failed to load data', e))
+      void refreshAll().catch((e) => {
+        console.error('Failed to load data', e)
+        setLastError(formatApiFailure(e))
+      })
     })
   }, [refreshAll])
 
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      void refreshAccountsAndLogs().catch((e) => {
+        console.error('Poll failed', e)
+        setLastError(formatApiFailure(e))
+      })
+    }, POLL_MS)
+    return () => window.clearInterval(id)
+  }, [refreshAccountsAndLogs])
+
   const appendLog = useCallback(async (action: string, details: string) => {
-    const row = await apiPost<ApiLog>('/logs', {
-      account_id: null,
-      action,
-      details,
-    })
-    setLogs((prev) => [mapLog(row), ...prev].slice(0, 500))
+    try {
+      const row = await apiPost<ApiLog>('/logs', {
+        account_id: null,
+        action,
+        details,
+      })
+      setLogs((prev) => [mapLog(row), ...prev].slice(0, 500))
+    } catch (e) {
+      console.error('appendLog failed', e)
+      setLastError(formatApiFailure(e))
+    }
   }, [])
 
   const setSettings = useCallback((patch: Partial<AppSettings>) => {
@@ -151,23 +191,28 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       profileId: string | null
       status: AccountStatus
     }) => {
-      const row = await apiPost<ApiAccount>(
-        '/accounts',
-        accountToApiBody({
-          name: input.name,
-          login: input.login,
-          cookies: input.cookies,
-          platform: input.platform,
-          proxyId: input.proxyId,
-          profileId: input.profileId,
-          status: input.status,
-        }),
-      )
-      setAccounts((prev) => [mapAccount(row), ...prev])
-      await appendLog(
-        'Add account',
-        `Created "${row.name}" (${row.platform}) as ${row.status}`,
-      )
+      try {
+        const row = await apiPost<ApiAccount>(
+          '/accounts',
+          accountToApiBody({
+            name: input.name,
+            login: input.login,
+            cookies: input.cookies,
+            platform: input.platform,
+            proxyId: input.proxyId,
+            profileId: input.profileId,
+            status: input.status,
+          }),
+        )
+        setAccounts((prev) => [mapAccount(row), ...prev])
+        await appendLog(
+          'Add account',
+          `Created "${row.name}" (${row.platform}) as ${row.status}`,
+        )
+      } catch (e) {
+        console.error('addAccount failed', e)
+        setLastError(formatApiFailure(e))
+      }
     },
     [appendLog],
   )
@@ -176,14 +221,19 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc) return
-      await apiDelete(`/accounts/${id}`)
-      setAccounts((prev) => prev.filter((a) => a.id !== id))
-      setSelectedAccountIds((prev) => {
-        const next = new Set(prev)
-        next.delete(id)
-        return next
-      })
-      await appendLog('Delete account', `Removed "${acc.name}"`)
+      try {
+        await apiDelete(`/accounts/${id}`)
+        setAccounts((prev) => prev.filter((a) => a.id !== id))
+        setSelectedAccountIds((prev) => {
+          const next = new Set(prev)
+          next.delete(id)
+          return next
+        })
+        await appendLog('Delete account', `Removed "${acc.name}"`)
+      } catch (e) {
+        console.error('deleteAccountById failed', e)
+        setLastError(formatApiFailure(e))
+      }
     },
     [accounts, appendLog],
   )
@@ -194,9 +244,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       if (!acc) return
       const body = accountPatchToApi(patch)
       if (Object.keys(body).length === 0) return
-      const row = await apiPatch<ApiAccount>(`/accounts/${id}`, body)
-      setAccounts((prev) => prev.map((a) => (a.id === id ? mapAccount(row) : a)))
-      await appendLog('Update account', `Saved changes for "${acc.name}"`)
+      try {
+        const row = await apiPatch<ApiAccount>(`/accounts/${id}`, body)
+        setAccounts((prev) => prev.map((a) => (a.id === id ? mapAccount(row) : a)))
+        await appendLog('Update account', `Saved changes for "${acc.name}"`)
+      } catch (e) {
+        console.error('updateAccount failed', e)
+        setLastError(formatApiFailure(e))
+      }
     },
     [accounts, appendLog],
   )
@@ -213,6 +268,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         await refreshAll()
       } catch (e) {
         console.error('Warmup start failed', e)
+        setLastError(formatApiFailure(e))
         await refreshAll()
       } finally {
         setWarmupPending((p) => {
@@ -236,6 +292,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         await refreshAll()
       } catch (e) {
         console.error('Warmup stop failed', e)
+        setLastError(formatApiFailure(e))
         await refreshAll()
       } finally {
         setWarmupPending((p) => {
@@ -251,13 +308,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const deleteSelectedAccounts = useCallback(async () => {
     if (selectedAccountIds.size === 0) return
     const ids = [...selectedAccountIds]
-    for (const id of ids) {
-      await apiDelete(`/accounts/${id}`)
+    try {
+      for (const id of ids) {
+        await apiDelete(`/accounts/${id}`)
+      }
+      const idSet = new Set(ids)
+      setAccounts((prev) => prev.filter((a) => !idSet.has(a.id)))
+      await appendLog('Delete accounts', `Removed ${ids.length} account(s)`)
+      setSelectedAccountIds(new Set())
+    } catch (e) {
+      console.error('deleteSelectedAccounts failed', e)
+      setLastError(formatApiFailure(e))
     }
-    const idSet = new Set(ids)
-    setAccounts((prev) => prev.filter((a) => !idSet.has(a.id)))
-    await appendLog('Delete accounts', `Removed ${ids.length} account(s)`)
-    setSelectedAccountIds(new Set())
   }, [selectedAccountIds, appendLog])
 
   const addProxy = useCallback(
@@ -268,19 +330,24 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       username: string
       password: string
     }) => {
-      const row = await apiPost<ApiProxy>('/proxies', {
-        provider: input.provider || 'SOAX',
-        host: input.host,
-        port: input.port,
-        username: input.username,
-        password: input.password,
-        status: 'Needs Check',
-      })
-      setProxies((prev) => [mapProxy(row), ...prev])
-      await appendLog(
-        'Add proxy',
-        `${row.provider} ${row.host}${row.port ? `:${row.port}` : ''}`,
-      )
+      try {
+        const row = await apiPost<ApiProxy>('/proxies', {
+          provider: input.provider || 'SOAX',
+          host: input.host,
+          port: input.port,
+          username: input.username,
+          password: input.password,
+          status: 'Needs Check',
+        })
+        setProxies((prev) => [mapProxy(row), ...prev])
+        await appendLog(
+          'Add proxy',
+          `${row.provider} ${row.host}${row.port ? `:${row.port}` : ''}`,
+        )
+      } catch (e) {
+        console.error('addProxy failed', e)
+        setLastError(formatApiFailure(e))
+      }
     },
     [appendLog],
   )
@@ -291,12 +358,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         ? selectedProxyIds
         : new Set(proxies.map((p) => p.id))
     if (ids.size === 0) return
-    for (const id of ids) {
-      await apiDelete(`/proxies/${id}`)
+    try {
+      for (const id of ids) {
+        await apiDelete(`/proxies/${id}`)
+      }
+      await refreshAll()
+      await appendLog('Delete proxies', `Removed ${ids.size} proxy row(s)`)
+      setSelectedProxyIds(new Set())
+    } catch (e) {
+      console.error('deleteSelectedProxies failed', e)
+      setLastError(formatApiFailure(e))
     }
-    await refreshAll()
-    await appendLog('Delete proxies', `Removed ${ids.size} proxy row(s)`)
-    setSelectedProxyIds(new Set())
   }, [selectedProxyIds, proxies, appendLog, refreshAll])
 
   const checkSelectedProxies = useCallback(async () => {
@@ -305,25 +377,35 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         ? selectedProxyIds
         : new Set(proxies.map((p) => p.id))
     if (targetIds.size === 0) return
-    const nextStatus: ProxyStatus = 'Active'
-    const now = new Date().toISOString()
-    for (const id of targetIds) {
-      await apiPatch(`/proxies/${id}`, { status: nextStatus, last_check: now })
+    try {
+      const nextStatus: ProxyStatus = 'Active'
+      const now = new Date().toISOString()
+      for (const id of targetIds) {
+        await apiPatch(`/proxies/${id}`, { status: nextStatus, last_check: now })
+      }
+      await refreshAll()
+      await appendLog('Check proxies', `Marked ${targetIds.size} proxy row(s) as ${nextStatus}`)
+    } catch (e) {
+      console.error('checkSelectedProxies failed', e)
+      setLastError(formatApiFailure(e))
     }
-    await refreshAll()
-    await appendLog('Check proxies', `Marked ${targetIds.size} proxy row(s) as ${nextStatus}`)
   }, [selectedProxyIds, proxies, appendLog, refreshAll])
 
   const addProfile = useCallback(
     async (input: { name: string; proxyId: string | null; status: ProfileStatus }) => {
-      const row = await apiPost<ApiProfile>('/profiles', {
-        name: input.name,
-        linked_proxy_id: input.proxyId,
-        linked_account_id: null,
-        status: input.status,
-      })
-      setProfiles((prev) => [mapProfile(row), ...prev])
-      await appendLog('Create profile', `Profile "${row.name}" (${row.status})`)
+      try {
+        const row = await apiPost<ApiProfile>('/profiles', {
+          name: input.name,
+          linked_proxy_id: input.proxyId,
+          linked_account_id: null,
+          status: input.status,
+        })
+        setProfiles((prev) => [mapProfile(row), ...prev])
+        await appendLog('Create profile', `Profile "${row.name}" (${row.status})`)
+      } catch (e) {
+        console.error('addProfile failed', e)
+        setLastError(formatApiFailure(e))
+      }
     },
     [appendLog],
   )
@@ -331,12 +413,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const deleteSelectedProfiles = useCallback(async () => {
     if (selectedProfileIds.size === 0) return
     const ids = [...selectedProfileIds]
-    for (const id of ids) {
-      await apiDelete(`/profiles/${id}`)
+    try {
+      for (const id of ids) {
+        await apiDelete(`/profiles/${id}`)
+      }
+      await refreshAll()
+      await appendLog('Delete profiles', `Removed ${ids.length} profile(s)`)
+      setSelectedProfileIds(new Set())
+    } catch (e) {
+      console.error('deleteSelectedProfiles failed', e)
+      setLastError(formatApiFailure(e))
     }
-    await refreshAll()
-    await appendLog('Delete profiles', `Removed ${ids.length} profile(s)`)
-    setSelectedProfileIds(new Set())
   }, [selectedProfileIds, appendLog, refreshAll])
 
   const startWarmupSelected = useCallback(async () => {
@@ -397,6 +484,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteSelectedProfiles,
       startWarmupSelected,
       appendLog,
+      lastError,
+      dismissLastError,
       stats,
     }),
     [
@@ -423,6 +512,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteSelectedProfiles,
       startWarmupSelected,
       appendLog,
+      lastError,
+      dismissLastError,
       stats,
     ],
   )

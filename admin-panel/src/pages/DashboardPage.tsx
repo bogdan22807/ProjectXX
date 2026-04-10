@@ -321,7 +321,7 @@ export function DashboardPage() {
           {accounts.length === 0 ? (
             <EmptyState
               title="Нет аккаунтов"
-              description="Добавьте первый аккаунт — данные хранятся только в этом браузере."
+              description="Добавьте первый аккаунт. Данные сохраняются на сервере (SQLite) и подтягиваются после перезагрузки."
               action={
                 <Button variant="primary" onClick={() => setAddOpen(true)}>
                   Добавить аккаунт
