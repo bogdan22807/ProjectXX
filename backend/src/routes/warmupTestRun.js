@@ -30,8 +30,10 @@ router.post('/', (req, res) => {
   }
 
   const targetUrl = body.targetUrl ?? body.target_url
+  const readySelector = body.readySelector ?? body.ready_selector
   void runPlaywrightTestRun(accountId, {
     targetUrl: targetUrl != null ? String(targetUrl) : undefined,
+    readySelector: readySelector != null ? String(readySelector) : undefined,
   }).catch((err) => {
     console.error('[warmup/test-run]', err)
   })
