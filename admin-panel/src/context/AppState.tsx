@@ -57,7 +57,7 @@ interface AppStateValue {
     proxyId: string | null
     profileId: string | null
     status: AccountStatus
-  }) => Promise<void>
+  }) => Promise<boolean>
   updateAccount: (id: string, patch: Partial<Omit<Account, 'id'>>) => Promise<void>
   deleteAccountById: (id: string) => Promise<void>
   startAccount: (id: string) => Promise<void>
@@ -212,7 +212,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       } catch (e) {
         console.error('addAccount failed', e)
         setLastError(formatApiFailure(e))
+        return false
       }
+      return true
     },
     [appendLog],
   )
