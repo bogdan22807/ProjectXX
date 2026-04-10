@@ -62,6 +62,8 @@ interface AppStateValue {
   deleteAccountById: (id: string) => Promise<void>
   startAccount: (id: string) => Promise<void>
   stopAccount: (id: string) => Promise<void>
+  /** Per-account warmup request: which action is in flight */
+  warmupPending: Partial<Record<string, 'start' | 'stop'>>
   deleteSelectedAccounts: () => Promise<void>
   addProxy: (input: {
     provider: string
@@ -105,6 +107,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set())
   const [selectedProxyIds, setSelectedProxyIds] = useState<Set<string>>(new Set())
   const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(new Set())
+  const [warmupPending, setWarmupPending] = useState<Partial<Record<string, 'start' | 'stop'>>>({})
 
   const refreshAll = useCallback(async () => {
     const [a, p, prof, l] = await Promise.all([
@@ -203,22 +206,46 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       const acc = accounts.find((a) => a.id === id)
       if (!acc || acc.status === 'Running') return
       if (acc.status !== 'New' && acc.status !== 'Ready') return
-      const row = await apiPatch<ApiAccount>(`/accounts/${id}`, { status: 'Running' })
-      setAccounts((prev) => prev.map((a) => (a.id === id ? mapAccount(row) : a)))
-      await appendLog('Start', `Account "${acc.name}" → Running`)
+      if (warmupPending[id]) return
+      setWarmupPending((p) => ({ ...p, [id]: 'start' }))
+      try {
+        await apiPost<{ ok?: boolean }>('/warmup/start', { accountId: id })
+        await refreshAll()
+      } catch (e) {
+        console.error('Warmup start failed', e)
+        await refreshAll()
+      } finally {
+        setWarmupPending((p) => {
+          const next = { ...p }
+          delete next[id]
+          return next
+        })
+      }
     },
-    [accounts, appendLog],
+    [accounts, warmupPending, refreshAll],
   )
 
   const stopAccount = useCallback(
     async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc || acc.status !== 'Running') return
-      const row = await apiPatch<ApiAccount>(`/accounts/${id}`, { status: 'Ready' })
-      setAccounts((prev) => prev.map((a) => (a.id === id ? mapAccount(row) : a)))
-      await appendLog('Stop', `Account "${acc.name}" → Ready`)
+      if (warmupPending[id]) return
+      setWarmupPending((p) => ({ ...p, [id]: 'stop' }))
+      try {
+        await apiPost<{ ok?: boolean }>('/warmup/stop', { accountId: id })
+        await refreshAll()
+      } catch (e) {
+        console.error('Warmup stop failed', e)
+        await refreshAll()
+      } finally {
+        setWarmupPending((p) => {
+          const next = { ...p }
+          delete next[id]
+          return next
+        })
+      }
     },
-    [accounts, appendLog],
+    [accounts, warmupPending, refreshAll],
   )
 
   const deleteSelectedAccounts = useCallback(async () => {
@@ -357,6 +384,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteAccountById,
       startAccount,
       stopAccount,
+      warmupPending,
       deleteSelectedAccounts,
       addProxy,
       deleteSelectedProxies,
@@ -382,6 +410,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteAccountById,
       startAccount,
       stopAccount,
+      warmupPending,
       deleteSelectedAccounts,
       addProxy,
       deleteSelectedProxies,

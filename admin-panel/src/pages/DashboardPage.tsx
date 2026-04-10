@@ -179,6 +179,7 @@ export function DashboardPage() {
     deleteAccountById,
     startAccount,
     stopAccount,
+    warmupPending,
   } = useAppState()
 
   const recentLogs = logs.slice(0, 8)
@@ -405,17 +406,19 @@ export function DashboardPage() {
                         <Button
                           className={tableActionButtonClass}
                           variant="primary"
+                          disabled={warmupPending[a.id] === 'start'}
                           onClick={() => startAccount(a.id)}
                         >
-                          Начать
+                          {warmupPending[a.id] === 'start' ? 'Запуск…' : 'Начать'}
                         </Button>
                       ) : null}
                       {a.status === 'Running' ? (
                         <Button
                           className={tableActionButtonClass}
+                          disabled={warmupPending[a.id] === 'stop'}
                           onClick={() => stopAccount(a.id)}
                         >
-                          Остановить
+                          {warmupPending[a.id] === 'stop' ? 'Остановка…' : 'Остановить'}
                         </Button>
                       ) : null}
                       <Button
