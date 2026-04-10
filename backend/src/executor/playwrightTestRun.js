@@ -6,7 +6,15 @@
 import { chromium } from 'playwright'
 import { getExecutionContext, logStep, updateStatus } from './runner.js'
 
-/** @typedef {{ cancelled: boolean, browser: import('playwright').Browser | null, context: import('playwright').BrowserContext | null }} PlaywrightRunState */
+/**
+ * @typedef {{
+ *   cancelled: boolean
+ *   abortedByUser: boolean
+ *   sleepWake: (() => void) | null
+ *   browser: import('playwright').Browser | null
+ *   context: import('playwright').BrowserContext | null
+ * }} PlaywrightRunState
+ */
 
 /** @type {Map<string, PlaywrightRunState>} */
 const playwrightRuns = new Map()
@@ -27,8 +35,23 @@ export function isPlaywrightTestRunActive(accountId) {
   return playwrightRuns.has(accountId)
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms))
+/**
+ * Sleep that ends early when {@link abortPlaywrightTestRun} calls `sleepWake` (browser close + cancel).
+ * @param {PlaywrightRunState} state
+ * @param {number} ms
+ */
+function interruptibleSleep(state, ms) {
+  return new Promise((resolve) => {
+    const tid = setTimeout(() => {
+      state.sleepWake = null
+      resolve()
+    }, ms)
+    state.sleepWake = () => {
+      clearTimeout(tid)
+      state.sleepWake = null
+      resolve()
+    }
+  })
 }
 
 /** Inclusive random integer in [min, max]. */
@@ -152,7 +175,13 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     throw new Error('Playwright test run already active for this account')
   }
 
-  const state = { cancelled: false, browser: null, context: null }
+  const state = {
+    cancelled: false,
+    abortedByUser: false,
+    sleepWake: null,
+    browser: null,
+    context: null,
+  }
   playwrightRuns.set(accountId, state)
 
   try {
@@ -206,14 +235,14 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
     updateStatus(accountId, 'Running')
 
-    await sleep(randomInt(2000, 5000))
+    await interruptibleSleep(state, randomInt(2000, 5000))
     if (state.cancelled) return
 
     const deltaY = randomInt(200, 800)
     await page.mouse.wheel(0, deltaY)
     if (state.cancelled) return
 
-    await sleep(randomInt(2000, 4000))
+    await interruptibleSleep(state, randomInt(2000, 4000))
     if (state.cancelled) return
 
     logStep(accountId, 'scroll completed', `${deltaY}px`)
@@ -221,6 +250,9 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     logStep(accountId, 'completed', targetUrl)
     updateStatus(accountId, 'Ready')
   } catch (err) {
+    if (state.abortedByUser) {
+      return
+    }
     const msg = err instanceof Error ? err.message : String(err)
     logStep(accountId, 'playwright error', msg)
     try {
@@ -232,6 +264,8 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
   } finally {
     const run = playwrightRuns.get(accountId)
     if (run) {
+      run.sleepWake?.()
+      run.sleepWake = null
       try {
         await run.context?.close()
       } catch {
@@ -255,6 +289,8 @@ export async function abortPlaywrightTestRun(accountId) {
   const run = playwrightRuns.get(accountId)
   if (!run) return false
   run.cancelled = true
+  run.abortedByUser = true
+  run.sleepWake?.()
   try {
     await run.context?.close()
   } catch {
@@ -265,6 +301,6 @@ export async function abortPlaywrightTestRun(accountId) {
   } catch {
     /* ignore */
   }
-  playwrightRuns.delete(accountId)
+  /* Keep entry until runPlaywrightTestRun finally runs so in-flight work can exit cleanly. */
   return true
 }

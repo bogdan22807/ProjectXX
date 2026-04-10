@@ -109,10 +109,12 @@ router.post('/stop', async (req, res) => {
     await abortPlaywrightTestRun(accountId)
   }
 
-  db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Ready', accountId)
-  insertLog(accountId, 'Остановлено пользователем', '')
-
   const stoppedSomething = wasFake || hadPlaywright
+  if (stoppedSomething) {
+    db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Ready', accountId)
+    insertLog(accountId, 'stopped by user', '')
+  }
+
   res.json({ ok: true, state: stoppedSomething ? 'stopped' : 'idle', accountId })
 })
 

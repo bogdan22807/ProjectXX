@@ -61,7 +61,7 @@ router.post('/abort', async (req, res) => {
     db.prepare(`INSERT INTO logs (id, account_id, action, details) VALUES (?, ?, ?, ?)`).run(
       id,
       accountId,
-      'playwright aborted',
+      'stopped by user',
       'test-run abort',
     )
     db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Ready', accountId)
