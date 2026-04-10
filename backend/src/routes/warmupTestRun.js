@@ -11,6 +11,7 @@ import {
   isPlaywrightTestRunActive,
   runPlaywrightTestRun,
 } from '../executor/playwrightTestRun.js'
+import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
 
@@ -18,15 +19,15 @@ router.post('/', (req, res) => {
   const body = req.body ?? {}
   const accountId = body.accountId ?? body.account_id
   if (!accountId || String(accountId).trim() === '') {
-    return res.status(400).json({ error: 'accountId is required' })
+    return sendJsonError(res, 400, 'accountId is required')
   }
 
   if (!getAccount(accountId)) {
-    return res.status(404).json({ error: 'Account not found' })
+    return sendJsonError(res, 404, 'Account not found')
   }
 
   if (isPlaywrightTestRunActive(accountId)) {
-    return res.status(409).json({ error: 'Playwright test run already active for this account' })
+    return sendJsonError(res, 409, 'Playwright test run already active for this account')
   }
 
   const targetUrl = body.targetUrl ?? body.target_url
@@ -38,8 +39,7 @@ router.post('/', (req, res) => {
     console.error('[warmup/test-run]', err)
   })
 
-  res.status(202).json({
-    ok: true,
+  return sendJsonData(res, 202, {
     mode: 'test-run',
     accountId,
     message: 'Playwright run started in background',
@@ -50,11 +50,11 @@ router.post('/abort', async (req, res) => {
   const body = req.body ?? {}
   const accountId = body.accountId ?? body.account_id
   if (!accountId || String(accountId).trim() === '') {
-    return res.status(400).json({ error: 'accountId is required' })
+    return sendJsonError(res, 400, 'accountId is required')
   }
 
   if (!getAccount(accountId)) {
-    return res.status(404).json({ error: 'Account not found' })
+    return sendJsonError(res, 404, 'Account not found')
   }
 
   const aborted = await abortPlaywrightTestRun(accountId)
@@ -68,7 +68,7 @@ router.post('/abort', async (req, res) => {
     )
     db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Ready', accountId)
   }
-  res.json({ ok: true, accountId, aborted })
+  return sendJsonData(res, 200, { accountId, aborted })
 })
 
 export default router

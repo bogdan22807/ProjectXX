@@ -1,18 +1,18 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
-import { sendJsonRow } from '../sendJson.js'
+import { sendJsonData, sendJsonError, sendJsonRow } from '../sendJson.js'
 
 const router = Router()
 
 router.get('/', (_req, res) => {
   const rows = db.prepare('SELECT * FROM logs ORDER BY created_at DESC LIMIT 500').all()
-  res.json(rows)
+  return sendJsonData(res, 200, rows)
 })
 
 router.post('/', (req, res) => {
   const { account_id = null, action, details = '' } = req.body ?? {}
   if (!action || String(action).trim() === '') {
-    return res.status(400).json({ error: 'action is required' })
+    return sendJsonError(res, 400, 'action is required')
   }
   const id = newId('log')
   db.prepare(

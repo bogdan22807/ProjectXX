@@ -3,5 +3,8 @@
   "installCommand": "cd admin-panel && npm ci",
   "buildCommand": "cd admin-panel && npm run build",
   "outputDirectory": "admin-panel/dist",
-  "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
+  "rewrites": [
+    { "source": "/api/(.*)", "destination": "/api/$1" },
+    { "source": "/(.*)", "destination": "/index.html" }
+  ]
 }
