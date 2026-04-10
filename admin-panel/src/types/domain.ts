@@ -1,4 +1,4 @@
-export type AccountStatus = 'New' | 'Ready' | 'Running' | 'Error'
+export type AccountStatus = 'New' | 'Starting' | 'Ready' | 'Running' | 'Error'
 
 export type ProxyStatus = 'Active' | 'Needs Check' | 'Dead'
 

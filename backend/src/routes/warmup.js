@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
 import {
+  abortPlaywrightTestRun,
   isPlaywrightTestRunActive,
   runPlaywrightTestRun,
 } from '../executor/playwrightTestRun.js'
@@ -90,7 +91,7 @@ router.post('/start', (req, res) => {
   res.json({ ok: true, state: 'started', accountId })
 })
 
-router.post('/stop', (req, res) => {
+router.post('/stop', async (req, res) => {
   const body = req.body ?? {}
   const accountId = body.accountId ?? body.account_id
   if (!accountId || String(accountId).trim() === '') {
@@ -102,12 +103,17 @@ router.post('/stop', (req, res) => {
     return res.status(404).json({ error: 'Account not found' })
   }
 
-  const wasRunning = clearWarmupJob(accountId)
+  const wasFake = clearWarmupJob(accountId)
+  const hadPlaywright = isPlaywrightTestRunActive(accountId)
+  if (hadPlaywright) {
+    await abortPlaywrightTestRun(accountId)
+  }
 
   db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Ready', accountId)
   insertLog(accountId, 'Остановлено пользователем', '')
 
-  res.json({ ok: true, state: wasRunning ? 'stopped' : 'idle', accountId })
+  const stoppedSomething = wasFake || hadPlaywright
+  res.json({ ok: true, state: stoppedSomething ? 'stopped' : 'idle', accountId })
 })
 
 export default router

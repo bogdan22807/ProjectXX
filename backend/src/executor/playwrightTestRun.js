@@ -27,6 +27,15 @@ export function isPlaywrightTestRunActive(accountId) {
   return playwrightRuns.has(accountId)
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Inclusive random integer in [min, max]. */
+function randomInt(min, max) {
+  return min + Math.floor(Math.random() * (max - min + 1))
+}
+
 /**
  * @param {import('./runner.js').ProxyRow | null} proxy
  * @returns {import('playwright').LaunchOptions['proxy'] | undefined}
@@ -152,7 +161,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       throw new Error(`Account not found: ${accountId}`)
     }
 
-    updateStatus(accountId, 'Running')
+    updateStatus(accountId, 'Starting')
 
     const launchOpts = {
       headless: process.env.PLAYWRIGHT_HEADED === '1' ? false : true,
@@ -194,6 +203,20 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
     const opened = page.url()
     logStep(accountId, 'page opened', opened)
+
+    updateStatus(accountId, 'Running')
+
+    await sleep(randomInt(2000, 5000))
+    if (state.cancelled) return
+
+    const deltaY = randomInt(200, 800)
+    await page.mouse.wheel(0, deltaY)
+    if (state.cancelled) return
+
+    await sleep(randomInt(2000, 4000))
+    if (state.cancelled) return
+
+    logStep(accountId, 'scroll completed', `${deltaY}px`)
 
     logStep(accountId, 'completed', targetUrl)
     updateStatus(accountId, 'Ready')
