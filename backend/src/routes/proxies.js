@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
 import { proxyCreatePayload, proxyPatchPayload } from '../requestFields.js'
+import { sendJsonRow } from '../sendJson.js'
 
 const router = Router()
 
@@ -38,7 +39,8 @@ router.post('/', (req, res) => {
     assigned_to,
     last_check,
   )
-  res.status(201).json(db.prepare('SELECT * FROM proxies WHERE id = ?').get(id))
+  const row = db.prepare('SELECT * FROM proxies WHERE id = ?').get(id)
+  return sendJsonRow(res, 201, row, 'Proxy missing after insert')
 })
 
 router.patch('/:id', (req, res) => {
@@ -66,7 +68,8 @@ router.patch('/:id', (req, res) => {
   const cols = Object.keys(updates)
   const setClause = cols.map((c) => `${c} = @${c}`).join(', ')
   db.prepare(`UPDATE proxies SET ${setClause} WHERE id = @id`).run({ ...updates, id })
-  res.json(db.prepare('SELECT * FROM proxies WHERE id = ?').get(id))
+  const updated = db.prepare('SELECT * FROM proxies WHERE id = ?').get(id)
+  return sendJsonRow(res, 200, updated, 'Proxy missing after update')
 })
 
 router.delete('/:id', (req, res) => {

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
 import { accountCreatePayload, accountPatchPayload } from '../requestFields.js'
+import { sendJsonRow } from '../sendJson.js'
 
 const router = Router()
 
@@ -38,7 +39,7 @@ router.post('/', (req, res) => {
     return res.status(500).json({ error: 'Internal server error' })
   }
   const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id)
-  res.status(201).json(row)
+  return sendJsonRow(res, 201, row, 'Account missing after insert')
 })
 
 router.patch('/:id', (req, res) => {
@@ -69,7 +70,8 @@ router.patch('/:id', (req, res) => {
     ...updates,
     id,
   })
-  res.json(db.prepare('SELECT * FROM accounts WHERE id = ?').get(id))
+  const updated = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id)
+  return sendJsonRow(res, 200, updated, 'Account missing after update')
 })
 
 router.delete('/:id', (req, res) => {
