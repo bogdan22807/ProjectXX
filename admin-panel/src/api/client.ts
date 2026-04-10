@@ -30,7 +30,9 @@ async function readErrorMessage(res: Response, path: string): Promise<string> {
 
 async function parseJsonOk<T>(res: Response, path: string): Promise<T> {
   const text = await res.text()
-  if (!text) return undefined as T
+  if (!text.trim()) {
+    throw new ApiError(`Invalid JSON response (${res.status})`, path, res.status)
+  }
   try {
     return JSON.parse(text) as T
   } catch {
@@ -43,7 +45,16 @@ export async function apiGet<T>(path: string): Promise<T> {
   if (!res.ok) {
     throw new ApiError(await readErrorMessage(res, path), path, res.status)
   }
-  return parseJsonOk<T>(res, path)
+  const text = await res.text()
+  // Some proxies/servers may return 200 with empty body; list endpoints expect an array.
+  if (!text.trim()) {
+    return [] as T
+  }
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new ApiError(`Invalid JSON response (${res.status})`, path, res.status)
+  }
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {

@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
 import { profileCreatePayload, profilePatchPayload } from '../requestFields.js'
+import { sendJsonRow } from '../sendJson.js'
 
 const router = Router()
 
@@ -16,7 +17,8 @@ router.post('/', (req, res) => {
     `INSERT INTO browser_profiles (id, name, linked_proxy_id, linked_account_id, status)
      VALUES (?, ?, ?, ?, ?)`,
   ).run(id, name, linked_proxy_id, linked_account_id, status)
-  res.status(201).json(db.prepare('SELECT * FROM browser_profiles WHERE id = ?').get(id))
+  const row = db.prepare('SELECT * FROM browser_profiles WHERE id = ?').get(id)
+  return sendJsonRow(res, 201, row, 'Browser profile missing after insert')
 })
 
 router.patch('/:id', (req, res) => {
@@ -35,7 +37,8 @@ router.patch('/:id', (req, res) => {
   const cols = Object.keys(updates)
   const setClause = cols.map((c) => `${c} = @${c}`).join(', ')
   db.prepare(`UPDATE browser_profiles SET ${setClause} WHERE id = @id`).run({ ...updates, id })
-  res.json(db.prepare('SELECT * FROM browser_profiles WHERE id = ?').get(id))
+  const updated = db.prepare('SELECT * FROM browser_profiles WHERE id = ?').get(id)
+  return sendJsonRow(res, 200, updated, 'Browser profile missing after update')
 })
 
 router.delete('/:id', (req, res) => {

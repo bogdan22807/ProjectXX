@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
+import { sendJsonRow } from '../sendJson.js'
 
 const router = Router()
 
@@ -17,7 +18,8 @@ router.post('/', (req, res) => {
   db.prepare(
     `INSERT INTO logs (id, account_id, action, details) VALUES (?, ?, ?, ?)`,
   ).run(id, account_id, action.trim(), details)
-  res.status(201).json(db.prepare('SELECT * FROM logs WHERE id = ?').get(id))
+  const row = db.prepare('SELECT * FROM logs WHERE id = ?').get(id)
+  return sendJsonRow(res, 201, row, 'Log missing after insert')
 })
 
 export default router
