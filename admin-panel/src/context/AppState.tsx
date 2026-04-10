@@ -82,6 +82,8 @@ interface AppStateValue {
   deleteSelectedProfiles: () => Promise<void>
   startWarmupSelected: () => Promise<void>
   appendLog: (action: string, details: string) => Promise<void>
+  /** Lightweight refetch for dashboard polling (accounts + logs only) */
+  refreshAccountsAndLogs: () => Promise<void>
   stats: {
     totalAccounts: number
     activeAccounts: number
@@ -119,6 +121,15 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setAccounts(a.map(mapAccount))
     setProxies(p.map(mapProxy))
     setProfiles(prof.map(mapProfile))
+    setLogs(l.map(mapLog))
+  }, [])
+
+  const refreshAccountsAndLogs = useCallback(async () => {
+    const [a, l] = await Promise.all([
+      apiGet<ApiAccount[]>('/accounts'),
+      apiGet<ApiLog[]>('/logs'),
+    ])
+    setAccounts(a.map(mapAccount))
     setLogs(l.map(mapLog))
   }, [])
 
@@ -393,6 +404,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteSelectedProfiles,
       startWarmupSelected,
       appendLog,
+      refreshAccountsAndLogs,
       stats,
     }),
     [
@@ -419,6 +431,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteSelectedProfiles,
       startWarmupSelected,
       appendLog,
+      refreshAccountsAndLogs,
       stats,
     ],
   )

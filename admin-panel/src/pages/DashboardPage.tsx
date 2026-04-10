@@ -1,4 +1,4 @@
-import { useState, type Dispatch, type SetStateAction } from 'react'
+import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { Link } from 'react-router-dom'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
@@ -32,6 +32,9 @@ const platforms: Platform[] = [
 ]
 
 const accountStatuses: AccountStatus[] = ['New', 'Ready', 'Running', 'Error']
+
+/** Poll /accounts and /logs while the dashboard is open (warmup updates server-side). */
+const DASHBOARD_POLL_MS = 2500
 
 type FormState = {
   name: string
@@ -180,7 +183,24 @@ export function DashboardPage() {
     startAccount,
     stopAccount,
     warmupPending,
+    refreshAccountsAndLogs,
   } = useAppState()
+
+  const pollInFlight = useRef(false)
+
+  useEffect(() => {
+    const tick = () => {
+      if (pollInFlight.current) return
+      pollInFlight.current = true
+      void refreshAccountsAndLogs()
+        .catch((e) => console.error('Dashboard poll failed', e))
+        .finally(() => {
+          pollInFlight.current = false
+        })
+    }
+    const id = window.setInterval(tick, DASHBOARD_POLL_MS)
+    return () => window.clearInterval(id)
+  }, [refreshAccountsAndLogs])
 
   const recentLogs = logs.slice(0, 8)
 
