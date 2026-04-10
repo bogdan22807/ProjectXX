@@ -13,6 +13,15 @@ const db = new Database(dbPath)
 db.pragma('journal_mode = WAL')
 db.pragma('foreign_keys = ON')
 
+/**
+ * Idempotent column add for existing SQLite files (CREATE TABLE IF NOT EXISTS does not add new columns).
+ */
+function ensureColumn(table, column, definition) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all()
+  if (cols.some((c) => c.name === column)) return
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS proxies (
     id TEXT PRIMARY KEY,
@@ -60,6 +69,31 @@ db.exec(`
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
   );
 `)
+
+ensureColumn('proxies', 'provider', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('proxies', 'host', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('proxies', 'port', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('proxies', 'username', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('proxies', 'password', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('proxies', 'status', "TEXT NOT NULL DEFAULT 'Needs Check'")
+ensureColumn('proxies', 'assigned_to', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('proxies', 'last_check', 'TEXT')
+ensureColumn('proxies', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))")
+
+ensureColumn('browser_profiles', 'name', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('browser_profiles', 'linked_proxy_id', 'TEXT')
+ensureColumn('browser_profiles', 'linked_account_id', 'TEXT')
+ensureColumn('browser_profiles', 'status', "TEXT NOT NULL DEFAULT 'Ready'")
+ensureColumn('browser_profiles', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))")
+
+ensureColumn('accounts', 'name', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('accounts', 'login', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('accounts', 'cookies', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('accounts', 'platform', "TEXT NOT NULL DEFAULT 'Other'")
+ensureColumn('accounts', 'proxy_id', 'TEXT')
+ensureColumn('accounts', 'browser_profile_id', 'TEXT')
+ensureColumn('accounts', 'status', "TEXT NOT NULL DEFAULT 'New'")
+ensureColumn('accounts', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))")
 
 export function newId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
+import { accountCreatePayload, accountPatchPayload } from '../requestFields.js'
 
 const router = Router()
 
@@ -10,14 +11,14 @@ router.get('/', (_req, res) => {
 
 router.post('/', (req, res) => {
   const {
-    name = 'Unnamed',
-    login = '',
-    cookies = '',
-    platform = 'Other',
-    proxy_id = null,
-    browser_profile_id = null,
-    status = 'New',
-  } = req.body ?? {}
+    name,
+    login,
+    cookies,
+    platform,
+    proxy_id,
+    browser_profile_id,
+    status,
+  } = accountCreatePayload(req.body)
   const id = newId('acc')
   db.prepare(
     `INSERT INTO accounts (id, name, login, cookies, platform, proxy_id, browser_profile_id, status)
@@ -41,10 +42,10 @@ router.patch('/:id', (req, res) => {
     'browser_profile_id',
     'status',
   ]
-  const patch = req.body ?? {}
+  const normalized = accountPatchPayload(req.body)
   const updates = {}
   for (const key of allowed) {
-    if (Object.prototype.hasOwnProperty.call(patch, key)) updates[key] = patch[key]
+    if (Object.prototype.hasOwnProperty.call(normalized, key)) updates[key] = normalized[key]
   }
   if (Object.keys(updates).length === 0) {
     return res.json(existing)
