@@ -31,7 +31,7 @@ const platforms: Platform[] = [
   'Other',
 ]
 
-const accountStatuses: AccountStatus[] = ['New', 'Ready', 'Running', 'Error']
+const accountStatuses: AccountStatus[] = ['New', 'Starting', 'Ready', 'Running', 'Error']
 
 type FormState = {
   name: string
@@ -395,6 +395,7 @@ export function DashboardPage() {
                   <td className={tableCellClass}>
                     <StatusBadge status={a.status}>
                       {a.status === 'New' && 'Новая'}
+                      {a.status === 'Starting' && 'Запуск'}
                       {a.status === 'Ready' && 'Готово'}
                       {a.status === 'Running' && 'Работает'}
                       {a.status === 'Error' && 'Ошибка'}
@@ -412,7 +413,7 @@ export function DashboardPage() {
                           {warmupPending[a.id] === 'start' ? 'Запуск…' : 'Начать'}
                         </Button>
                       ) : null}
-                      {a.status === 'Running' ? (
+                      {a.status === 'Running' || a.status === 'Starting' ? (
                         <Button
                           className={tableActionButtonClass}
                           disabled={warmupPending[a.id] === 'stop'}

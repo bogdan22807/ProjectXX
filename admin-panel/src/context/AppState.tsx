@@ -204,7 +204,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const startAccount = useCallback(
     async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
-      if (!acc || acc.status === 'Running') return
+      if (!acc || acc.status === 'Running' || acc.status === 'Starting') return
       if (acc.status !== 'New' && acc.status !== 'Ready') return
       if (warmupPending[id]) return
       setWarmupPending((p) => ({ ...p, [id]: 'start' }))
@@ -228,7 +228,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const stopAccount = useCallback(
     async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
-      if (!acc || acc.status !== 'Running') return
+      if (!acc || (acc.status !== 'Running' && acc.status !== 'Starting')) return
       if (warmupPending[id]) return
       setWarmupPending((p) => ({ ...p, [id]: 'stop' }))
       try {
@@ -352,8 +352,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   const stats = useMemo(() => {
     const totalAccounts = accounts.length
-    const activeAccounts = accounts.filter((a) => a.status === 'Ready' || a.status === 'Running').length
-    const runningAccounts = accounts.filter((a) => a.status === 'Running').length
+    const activeAccounts = accounts.filter(
+      (a) => a.status === 'Ready' || a.status === 'Running' || a.status === 'Starting',
+    ).length
+    const runningAccounts = accounts.filter(
+      (a) => a.status === 'Running' || a.status === 'Starting',
+    ).length
     const errorAccounts = accounts.filter((a) => a.status === 'Error').length
     const totalProxies = proxies.length
     return {

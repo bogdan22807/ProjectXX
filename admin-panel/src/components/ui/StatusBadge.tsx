@@ -5,6 +5,7 @@ type AnyStatus = AccountStatus | ProxyStatus | ProfileStatus
 
 const styles: Record<string, string> = {
   New: 'bg-zinc-800/90 text-zinc-300 border-zinc-600/60',
+  Starting: 'bg-violet-950/80 text-violet-300 border-violet-800/60',
   Ready: 'bg-sky-950/80 text-sky-300 border-sky-800/60',
   Running: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60',
   Error: 'bg-red-950/80 text-red-300 border-red-800/60',
