@@ -1,6 +1,5 @@
 /**
- * In-house social / test executor — data + logging + status primitives,
- * plus optional Playwright test run (see playwrightTestRun.js).
+ * Executor: DB helpers (runner.js) + Playwright flow (playwrightTestRun.js).
  */
 
 export {

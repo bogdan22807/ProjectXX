@@ -84,12 +84,23 @@ router.post('/start', (req, res) => {
     return sendJsonError(res, 409, 'Warmup already running for this account')
   }
 
+  if (isPlaywrightTestRunActive(accountId)) {
+    return sendJsonError(res, 409, 'Playwright run already active for this account')
+  }
+
   db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Running', accountId)
   insertLog(accountId, 'Запуск начат', '')
 
-  beginWarmupChain(accountId)
+  const useFakeOnly = process.env.WARMUP_FAKE_ONLY === '1'
+  if (useFakeOnly) {
+    beginWarmupChain(accountId)
+  } else {
+    void runPlaywrightTestRun(accountId).catch((err) => {
+      console.error('[warmup → playwright]', err)
+    })
+  }
 
-  return sendJsonData(res, 200, { state: 'started', accountId })
+  return sendJsonData(res, 200, { state: 'started', accountId, mode: useFakeOnly ? 'fake' : 'playwright' })
 })
 
 router.post('/stop', async (req, res) => {

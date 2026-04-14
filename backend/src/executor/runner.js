@@ -1,6 +1,6 @@
 /**
- * Minimal executor for an in-house / test social network.
- * No browser automation yet — data access, logging, and status helpers only.
+ * Minimal executor primitives: DB-backed context, logging, and in-memory session helpers.
+ * Browser automation lives in playwrightTestRun.js (invoked from warmup / warmup/test-run routes).
  */
 
 import { db, newId } from '../db.js'
