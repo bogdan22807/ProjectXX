@@ -85,9 +85,11 @@ function stateAbortedMessage(lower) {
   return lower.includes('abort') || lower.includes('cancelled')
 }
 
+const DEFAULT_TEST_PAGE_URL = 'https://example.com'
+
 export function getDefaultSocialTestUrl() {
-  const u = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL ?? ''
-  return String(u).trim()
+  const u = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL ?? DEFAULT_TEST_PAGE_URL
+  return String(u).trim() || DEFAULT_TEST_PAGE_URL
 }
 
 export function getReadySelector() {
@@ -247,10 +249,7 @@ function selectorTimeoutMs() {
  * @param {{ targetUrl?: string; readySelector?: string }} [options]
  */
 export async function runPlaywrightTestRun(accountId, options = {}) {
-  const targetUrl = String(options.targetUrl ?? getDefaultSocialTestUrl()).trim()
-  if (!targetUrl) {
-    throw new Error('Set SOCIAL_TEST_URL (or TEST_SOCIAL_URL) or pass targetUrl')
-  }
+  const targetUrl = String(options.targetUrl ?? getDefaultSocialTestUrl()).trim() || DEFAULT_TEST_PAGE_URL
 
   let pageUrl
   try {
@@ -281,7 +280,8 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       throw new Error(`Account not found: ${accountId}`)
     }
 
-    updateStatus(accountId, 'Starting')
+    updateStatus(accountId, 'Running')
+    logStep(accountId, 'executor started', targetUrl)
 
     const launchOpts = {
       headless: process.env.PLAYWRIGHT_HEADED === '1' ? false : true,
@@ -395,8 +395,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       }
     }
 
-    updateStatus(accountId, 'Running')
-
+    logStep(accountId, 'waiting', 'before scroll (2–5s)')
     await interruptibleSleep(state, randomInt(2000, 5000))
     if (state.cancelled) return
 
@@ -411,6 +410,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       return
     }
 
+    logStep(accountId, 'waiting', 'after scroll (2–4s)')
     await interruptibleSleep(state, randomInt(2000, 4000))
     if (state.cancelled) return
 
