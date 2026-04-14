@@ -55,21 +55,42 @@ async function readErrorMessage(res: Response, path: string): Promise<string> {
   return `${path} ${res.status}: ${trimmed}`
 }
 
+function hintForNonApiBody(text: string): string {
+  const t = text.trim()
+  if (!t) return 'Empty response body.'
+  if (t.startsWith('<') || /<!doctype html/i.test(t)) {
+    return 'Received HTML instead of JSON — the request likely hit the static app (e.g. `vite preview` without API proxy, or wrong VITE_API_URL). Ensure the backend is running and `/api` is proxied to it.'
+  }
+  return 'Response is not JSON with { success: ... } — check that VITE_API_URL points at the API and the backend uses the unified envelope.'
+}
+
 async function parseJsonOk<T>(res: Response, path: string): Promise<T> {
   const text = await res.text()
   if (!text.trim()) {
-    throw new ApiError(`Invalid JSON response (${res.status})`, path, res.status)
+    throw new ApiError(
+      `Invalid API response (${res.status}): ${hintForNonApiBody(text)}`,
+      path,
+      res.status,
+    )
   }
 
   let parsed: ApiEnvelope<T>
   try {
     parsed = JSON.parse(text) as ApiEnvelope<T>
   } catch {
-    throw new ApiError(`Invalid JSON response (${res.status})`, path, res.status)
+    throw new ApiError(
+      `Invalid API response (${res.status}): ${hintForNonApiBody(text)}`,
+      path,
+      res.status,
+    )
   }
 
   if (!parsed || typeof parsed !== 'object' || !('success' in parsed)) {
-    throw new ApiError(`Invalid JSON response (${res.status})`, path, res.status)
+    throw new ApiError(
+      `Invalid API response (${res.status}): ${hintForNonApiBody(text)}`,
+      path,
+      res.status,
+    )
   }
 
   if (!parsed.success) {
