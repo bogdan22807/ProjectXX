@@ -25,20 +25,17 @@ router.post('/', (req, res) => {
     return sendJsonError(res, 400, 'host is required')
   }
   const id = newId('px')
+  const h = String(host).trim()
+  const p = port != null ? String(port).trim() : ''
+  const prov = provider != null ? String(provider).trim() : ''
+  const u = username != null ? String(username).trim() : ''
+  const pw = password != null ? String(password).trim() : ''
+  const st = status != null ? String(status).trim() : 'Needs Check'
+  const assigned = assigned_to != null ? String(assigned_to).trim() : ''
   db.prepare(
     `INSERT INTO proxies (id, provider, host, port, username, password, status, assigned_to, last_check)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    id,
-    provider,
-    host.trim(),
-    port,
-    username,
-    password,
-    status,
-    assigned_to,
-    last_check,
-  )
+  ).run(id, prov, h, p, u, pw, st, assigned, last_check ?? null)
   const row = db.prepare('SELECT * FROM proxies WHERE id = ?').get(id)
   return sendJsonRow(res, 201, row, 'Proxy missing after insert')
 })
@@ -65,6 +62,22 @@ router.patch('/:id', (req, res) => {
   }
   if (Object.keys(updates).length === 0) return sendJsonData(res, 200, existing)
 
+  const stringCols = new Set([
+    'provider',
+    'host',
+    'port',
+    'username',
+    'password',
+    'status',
+    'assigned_to',
+    'last_check',
+  ])
+  for (const key of Object.keys(updates)) {
+    const v = updates[key]
+    if (stringCols.has(key) && v != null && typeof v !== 'number') {
+      updates[key] = String(v).trim()
+    }
+  }
   const cols = Object.keys(updates)
   const setClause = cols.map((c) => `${c} = @${c}`).join(', ')
   db.prepare(`UPDATE proxies SET ${setClause} WHERE id = @id`).run({ ...updates, id })

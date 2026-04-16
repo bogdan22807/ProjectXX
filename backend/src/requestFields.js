@@ -42,21 +42,26 @@ export function accountPatchPayload(body) {
   return accountFieldsFromBody(body)
 }
 
+function trimStr(v) {
+  if (v == null) return v
+  return String(v).trim()
+}
+
 /** @param {Record<string, unknown> | null | undefined} body */
 export function proxyFieldsFromBody(body) {
   const b = body ?? {}
   /** @type {Record<string, unknown>} */
   const out = {}
-  if (has(b, 'provider')) out.provider = b.provider
-  if (has(b, 'host')) out.host = b.host
-  if (has(b, 'port')) out.port = b.port
-  if (has(b, 'username')) out.username = b.username
-  if (has(b, 'password')) out.password = b.password
-  if (has(b, 'status')) out.status = b.status
-  if (has(b, 'assigned_to')) out.assigned_to = b.assigned_to
-  else if (has(b, 'assignedTo')) out.assigned_to = b.assignedTo
-  if (has(b, 'last_check')) out.last_check = b.last_check
-  else if (has(b, 'lastCheck')) out.last_check = b.lastCheck
+  if (has(b, 'provider')) out.provider = trimStr(b.provider)
+  if (has(b, 'host')) out.host = trimStr(b.host)
+  if (has(b, 'port')) out.port = trimStr(b.port)
+  if (has(b, 'username')) out.username = trimStr(b.username)
+  if (has(b, 'password')) out.password = trimStr(b.password)
+  if (has(b, 'status')) out.status = trimStr(b.status)
+  if (has(b, 'assigned_to')) out.assigned_to = trimStr(b.assigned_to)
+  else if (has(b, 'assignedTo')) out.assigned_to = trimStr(b.assignedTo)
+  if (has(b, 'last_check')) out.last_check = b.last_check == null ? b.last_check : trimStr(b.last_check)
+  else if (has(b, 'lastCheck')) out.last_check = b.lastCheck == null ? b.lastCheck : trimStr(b.lastCheck)
   return out
 }
 
@@ -72,7 +77,7 @@ export function proxyCreatePayload(body) {
   }
   const fromBody = proxyFieldsFromBody(body)
   const b = body ?? {}
-  const host = has(b, 'host') ? b.host : fromBody.host
+  const host = trimStr(has(b, 'host') ? b.host : fromBody.host)
   return { ...defaults, ...fromBody, host }
 }
 

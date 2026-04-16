@@ -4,6 +4,7 @@
  */
 
 import { chromium } from 'playwright'
+import { buildPlaywrightProxyConfig, describeProxyForLog } from './proxyConfig.js'
 import { getExecutionContext, logStep, updateStatus } from './runner.js'
 
 /**
@@ -119,19 +120,8 @@ function randomInt(min, max) {
   return min + Math.floor(Math.random() * (max - min + 1))
 }
 
-function proxyLaunchOptions(proxy) {
-  if (!proxy) return undefined
-  const host = String(proxy.host ?? '').trim()
-  if (!host) return undefined
-  const port = String(proxy.port ?? '').trim()
-  const server = port ? `http://${host}:${port}` : `http://${host}`
-  const username = String(proxy.username ?? '').trim()
-  const password = String(proxy.password ?? '').trim()
-  if (username || password) {
-    return { server, username: username || undefined, password: password || undefined }
-  }
-  return { server }
-}
+/** @see ./proxyConfig.js */
+const IPIFY_URL = 'https://api.ipify.org/?format=json'
 
 /**
  * Parse cookies for addCookies. If user supplied non-empty cookie data that cannot be used → invalid.
@@ -283,9 +273,19 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     updateStatus(accountId, 'Running')
     logStep(accountId, 'executor started', targetUrl)
 
+    const launchProxy = buildPlaywrightProxyConfig(ctx.proxy)
+    const proxyLogLine = describeProxyForLog(ctx.proxy, launchProxy)
+    logStep(accountId, 'playwright launch prep', [
+      `headless=${process.env.PLAYWRIGHT_HEADED === '1' ? '0' : '1'}`,
+      `targetUrl=${targetUrl}`,
+      `cookiesLen=${String(ctx.account.cookies ?? '').trim().length}`,
+      proxyLogLine,
+      `provider=${String(ctx.proxy?.provider ?? '').trim() || '(none)'}`,
+    ].join(' | '))
+
     const launchOpts = {
       headless: process.env.PLAYWRIGHT_HEADED === '1' ? false : true,
-      proxy: proxyLaunchOptions(ctx.proxy),
+      proxy: launchProxy,
       args: process.env.PLAYWRIGHT_CHROMIUM_ARGS
         ? process.env.PLAYWRIGHT_CHROMIUM_ARGS.split(/\s+/).filter(Boolean)
         : [],
@@ -323,7 +323,11 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     }
 
     state.context = context
-    logStep(accountId, 'browser started', ctx.proxy?.host ? 'with proxy' : 'no proxy')
+    logStep(
+      accountId,
+      'browser started',
+      launchProxy ? `with proxy | ${proxyLogLine}` : 'no proxy',
+    )
 
     const rawCookies = String(ctx.account.cookies ?? '').trim()
     const parsed = parseCookiesForUrlStrict(rawCookies, pageUrl)
@@ -345,6 +349,45 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     }
 
     if (state.cancelled) return
+
+    if (launchProxy) {
+      const ipifyMs = Math.min(
+        30_000,
+        Math.max(5_000, Math.floor(gotoTimeoutMs() * 0.5)),
+      )
+      let ipPage
+      try {
+        ipPage = await context.newPage()
+        const ipResp = await ipPage.goto(IPIFY_URL, {
+          waitUntil: 'domcontentloaded',
+          timeout: ipifyMs,
+        })
+        const text = (await ipPage.textContent('body').catch(() => '')) ?? ''
+        const snippet = String(text).replace(/\s+/g, ' ').trim().slice(0, 500)
+        logStep(
+          accountId,
+          'proxy connectivity (ipify)',
+          `HTTP ${ipResp?.status() ?? '?'} body=${snippet || '(empty)'}`,
+        )
+      } catch (err) {
+        if (state.abortedByUser) return
+        const { action, details, treatAsUserStop } = classifyError(err, { phase: 'goto' })
+        if (treatAsUserStop) return
+        failRun(
+          accountId,
+          state,
+          action === 'page load timeout' ? 'proxy connectivity failed (ipify)' : action,
+          `${details} — if credentials/host/port are correct, the proxy is likely unreachable, wrong scheme (try PLAYWRIGHT_PROXY_SCHEME=socks5), or blocked.`,
+        )
+        return
+      } finally {
+        try {
+          await ipPage?.close()
+        } catch {
+          /* ignore */
+        }
+      }
+    }
 
     let page
     try {
