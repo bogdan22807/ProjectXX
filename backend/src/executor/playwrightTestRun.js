@@ -362,12 +362,22 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           waitUntil: 'domcontentloaded',
           timeout: ipifyMs,
         })
+        const ipStatus = ipResp?.status() ?? null
+        if (ipStatus === 407) {
+          failRun(
+            accountId,
+            state,
+            'proxy authentication rejected',
+            'HTTP 407 from proxy on HTTPS request — Chromium did not get a valid authenticated tunnel. Fix credentials/session (SOAX sub-user, whitelist IP) or proxy product type; not a page.goto URL bug.',
+          )
+          return
+        }
         const text = (await ipPage.textContent('body').catch(() => '')) ?? ''
         const snippet = String(text).replace(/\s+/g, ' ').trim().slice(0, 500)
         logStep(
           accountId,
           'proxy connectivity (ipify)',
-          `HTTP ${ipResp?.status() ?? '?'} body=${snippet || '(empty)'}`,
+          `HTTP ${ipStatus ?? '?'} body=${snippet || '(empty)'}`,
         )
       } catch (err) {
         if (state.abortedByUser) return
@@ -414,10 +424,20 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
     if (state.cancelled) return
 
+    const status = response?.status() ?? null
+    if (status === 407) {
+      failRun(
+        accountId,
+        state,
+        'proxy authentication rejected',
+        `HTTP 407 for ${targetUrl} — proxy refused auth on this request (same class of failure as CONNECT auth).`,
+      )
+      return
+    }
     const ok = response === null || response.ok()
     if (!ok) {
-      const status = response?.status() ?? 'unknown'
-      failRun(accountId, state, 'page load timeout', `HTTP ${status} for ${targetUrl}`)
+      const st = status ?? 'unknown'
+      failRun(accountId, state, 'page load timeout', `HTTP ${st} for ${targetUrl}`)
       return
     }
 
