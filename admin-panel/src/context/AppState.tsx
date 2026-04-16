@@ -331,16 +331,23 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       port: string
       username: string
       password: string
+      proxyLine?: string
+      credentialOrder?: 'pass_user' | 'user_pass'
     }) => {
       try {
-        const row = await apiPost<ApiProxy>('/proxies', {
+        const body: Record<string, unknown> = {
           provider: input.provider || 'SOAX',
           host: input.host,
           port: input.port,
           username: input.username,
           password: input.password,
           status: 'Needs Check',
-        })
+        }
+        if (input.proxyLine?.trim()) {
+          body.proxy_line = input.proxyLine.trim()
+          body.credential_order = input.credentialOrder ?? 'pass_user'
+        }
+        const row = await apiPost<ApiProxy>('/proxies', body)
         setProxies((prev) => [mapProxy(row), ...prev])
         await appendLog(
           'Add proxy',
