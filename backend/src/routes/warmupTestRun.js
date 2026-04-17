@@ -32,9 +32,16 @@ router.post('/', (req, res) => {
 
   const targetUrl = body.targetUrl ?? body.target_url
   const readySelector = body.readySelector ?? body.ready_selector
+  const debugRaw = body.debugCheckProxy ?? body.debug_check_proxy
+  const debugCheckProxy =
+    debugRaw === true ||
+    debugRaw === 1 ||
+    String(debugRaw ?? '').toLowerCase() === 'true' ||
+    String(debugRaw ?? '').trim() === '1'
   void runPlaywrightTestRun(accountId, {
     targetUrl: targetUrl != null ? String(targetUrl) : undefined,
     readySelector: readySelector != null ? String(readySelector) : undefined,
+    debugCheckProxy: debugCheckProxy || undefined,
   }).catch((err) => {
     console.error('[warmup/test-run]', err)
   })

@@ -43,6 +43,7 @@ function proxyFromEnv() {
  *   selectors: { clickTarget?: string }
  *   timeouts: { pageLoad: number }
  *   readySelector: string | null
+ *   debugCheckProxy?: boolean
  * }} ExecutorRunConfig
  */
 
@@ -56,6 +57,7 @@ export function getDefaultExecutorRunConfig() {
     selectors: {},
     timeouts: { pageLoad: envPageLoadMs() },
     readySelector: null,
+    debugCheckProxy: false,
   }
 }
 
@@ -79,7 +81,7 @@ export function mergeExecutorRunConfig(base, patch) {
 /**
  * Build config from DB account + linked proxy (proxy slot filled here for future use).
  * @param {{ account: Record<string, unknown>, proxy: Record<string, unknown> | null }} ctx
- * @param {{ targetUrl?: string, readySelector?: string, clickTarget?: string }} [routeOptions]
+ * @param {{ targetUrl?: string, readySelector?: string, clickTarget?: string, debugCheckProxy?: boolean }} [routeOptions]
  * @returns {ExecutorRunConfig}
  */
 export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
@@ -95,6 +97,10 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
   const fromDb = buildPlaywrightProxyConfig(ctx.proxy)
   const launchProxy = fromDb ?? proxyFromEnv()
 
+  const debugCheckProxy =
+    routeOptions.debugCheckProxy === true ||
+    String(process.env.PLAYWRIGHT_DEBUG_PROXY_IP_CHECK ?? '').trim() === '1'
+
   return {
     startUrl,
     headless: envHeadless(),
@@ -103,5 +109,6 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
     selectors: clickTarget ? { clickTarget } : {},
     timeouts: { pageLoad: envPageLoadMs() },
     readySelector,
+    debugCheckProxy,
   }
 }

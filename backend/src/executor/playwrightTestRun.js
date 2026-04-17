@@ -124,9 +124,11 @@ function gotoWaitUntil() {
   return 'commit'
 }
 
+const DEBUG_PROXY_IP_URL = 'https://httpbin.org/ip'
+
 /**
  * @param {string} accountId
- * @param {{ targetUrl?: string; readySelector?: string }} [options]
+ * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean }} [options]
  */
 export async function runPlaywrightTestRun(accountId, options = {}) {
   const targetUrl = String(options.targetUrl ?? getDefaultSocialTestUrl()).trim() || DEFAULT_TEST_PAGE_URL
@@ -156,6 +158,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     const runConfig = buildExecutorRunConfigFromContext(ctx, {
       targetUrl,
       readySelector,
+      debugCheckProxy: options.debugCheckProxy === true,
     })
 
     let pageUrl
@@ -270,6 +273,35 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         } catch {
           /* ignore */
         }
+      }
+    }
+
+    if (runConfig.debugCheckProxy) {
+      try {
+        const dbgResp = await page.goto(DEBUG_PROXY_IP_URL, {
+          waitUntil: gotoWaitUntil(),
+          timeout: gotoTimeoutMs(),
+        })
+        const dbgStatus = dbgResp?.status() ?? null
+        const dbgBody = (await page.textContent('body').catch(() => null)) ?? ''
+        const snippet = String(dbgBody).replace(/\s+/g, ' ').trim().slice(0, 2000)
+        console.log(`[playwright executor ${accountId}] PROXY_IP_CHECK: ${snippet}`)
+        logStep(accountId, 'PROXY_IP_CHECK', snippet || '(empty)')
+        if (dbgStatus === 407) {
+          logStep(accountId, 'PROXY_IP_CHECK_ERROR', 'type=proxy HTTP 407 Proxy Authentication Required')
+        } else if (dbgStatus != null && dbgStatus >= 400) {
+          logStep(accountId, 'PROXY_IP_CHECK_ERROR', `type=network HTTP ${dbgStatus}`)
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        const lower = msg.toLowerCase()
+        let errType = 'network'
+        if (lower.includes('timeout')) errType = 'timeout'
+        else if (lower.includes('407') || lower.includes('proxy') || lower.includes('tunnel')) {
+          errType = 'proxy'
+        }
+        console.error(`[playwright executor ${accountId}] PROXY_IP_CHECK_ERROR type=${errType}`, msg)
+        logStep(accountId, 'PROXY_IP_CHECK_ERROR', `type=${errType} ${msg}`)
       }
     }
 
