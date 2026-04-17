@@ -4,7 +4,7 @@
  */
 
 import { buildPlaywrightProxyConfig, describeProxyForLog } from './proxyConfig.js'
-import { parseCookiesForUrl, parseCookiesForUrlStrict } from './cookieParse.js'
+import { parseCookiesForUrlStrict } from './cookieParse.js'
 import { createBrowserSession } from './createBrowserSession.js'
 import { getExecutionContext, logStep, updateStatus } from './runner.js'
 
