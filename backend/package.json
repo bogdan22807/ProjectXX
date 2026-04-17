@@ -10,6 +10,7 @@
     "proxy:diag": "node scripts/proxyPlaywrightDiagnostics.mjs",
     "proxy:scan-ports": "node scripts/proxyPortScan.mjs",
     "proxy:httpbin-test": "node scripts/playwrightProxyHttpbinTest.mjs",
+    "proxy:chromium-diagnostic": "node scripts/playwrightProxyChromiumDiagnostic.mjs",
     "playwright:install": "playwright install chromium"
   },
   "dependencies": {
