@@ -20,7 +20,11 @@ function humanReason(msg) {
   if (lower.includes('407')) {
     return 'Likely cause: proxy rejected credentials (wrong user/password or IP not whitelisted).'
   }
-  if (lower.includes('tunnel') || lower.includes('proxy')) {
+  if (
+    lower.includes('tunnel') ||
+    lower.includes('proxy failed') ||
+    (lower.includes('proxy') && lower.includes('fail'))
+  ) {
     return 'Likely cause: proxy CONNECT / tunnel failed (wrong server, port, or proxy type).'
   }
   if (lower.includes('timeout')) {
