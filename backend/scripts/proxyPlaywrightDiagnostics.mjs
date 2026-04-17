@@ -52,8 +52,10 @@ async function runCase(name, launchOptions, url) {
   const context = await browser.newContext()
   const page = await context.newPage()
   try {
+    const waitUntil =
+      String(process.env.PROXY_DIAG_WAIT_UNTIL ?? 'commit').trim() || 'commit'
     const resp = await page.goto(url, {
-      waitUntil: 'domcontentloaded',
+      waitUntil,
       timeout: timeoutMs,
     })
     const status = resp?.status() ?? null
