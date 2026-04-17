@@ -229,6 +229,15 @@ function gotoTimeoutMs() {
   return Number.isFinite(n) && n > 0 ? n : 60_000
 }
 
+/** Slow proxies often never fire `domcontentloaded` in time → spurious goto timeout. Default `commit` finishes after navigation is committed. */
+function gotoWaitUntil() {
+  const w = String(process.env.PLAYWRIGHT_GOTO_WAIT_UNTIL ?? '').trim().toLowerCase()
+  if (w === 'domcontentloaded' || w === 'load' || w === 'networkidle' || w === 'commit') {
+    return /** @type {'commit' | 'domcontentloaded' | 'load' | 'networkidle'} */ (w)
+  }
+  return 'commit'
+}
+
 function selectorTimeoutMs() {
   const n = Number(process.env.PLAYWRIGHT_SELECTOR_TIMEOUT_MS)
   return Number.isFinite(n) && n > 0 ? n : 15_000
@@ -359,7 +368,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       try {
         ipPage = await context.newPage()
         const ipResp = await ipPage.goto(IPIFY_URL, {
-          waitUntil: 'domcontentloaded',
+          waitUntil: gotoWaitUntil(),
           timeout: ipifyMs,
         })
         const ipStatus = ipResp?.status() ?? null
@@ -411,7 +420,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     let response
     try {
       response = await page.goto(targetUrl, {
-        waitUntil: 'domcontentloaded',
+        waitUntil: gotoWaitUntil(),
         timeout: gotoTimeoutMs(),
       })
     } catch (err) {
