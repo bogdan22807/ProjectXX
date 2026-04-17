@@ -145,15 +145,17 @@ async function main() {
     'https://api.ipify.org/?format=json',
   )
 
-  const socksProxy = {
-    server: `socks5://${host}:${port}`,
-    ...(username ? { username } : {}),
-    ...(password ? { password } : {}),
-  }
+  const socksProxyCfg = buildPlaywrightProxyConfig({
+    proxy_scheme: 'socks5',
+    host,
+    port,
+    username,
+    password,
+  })
 
   const r4 = await runCase(
     'TEST_4_SOCKS5_HTTPS_SITE',
-    { context: { proxy: socksProxy } },
+    { context: { proxy: socksProxyCfg } },
     'https://api.ipify.org/?format=json',
   )
 
@@ -161,7 +163,7 @@ async function main() {
   const okAll = r1.ok && r2.ok && r3.ok && r4.ok
   if (r4 && r4.phase === 'launch' && String(r4.err?.message ?? '').includes('socks5 proxy authentication')) {
     console.log(
-      '\n[TEST_4] Chromium/Playwright: authenticated SOCKS5 at launch is not supported — use HTTP proxy or a local SOCKS forwarder.',
+      '\n[TEST_4] Chromium rejected SOCKS5 auth fields — app uses user:pass inside socks5:// URL instead.',
     )
   }
   const exitOk = r1.ok && r2.ok && r3.ok
