@@ -28,8 +28,8 @@ export function ProxiesPage() {
   })
   /** Paste SOAX export: IP:port:password:username (one or many lines) */
   const [pasteLine, setPasteLine] = useState('')
-  /** Default: 3rd=login 4th=pass; pass_user = 3rd=pass 4th=login (some SOAX lists) */
-  const [credentialOrder, setCredentialOrder] = useState<'pass_user' | 'user_pass'>('user_pass')
+  /** Default SOAX list: 3rd=password 4th=username */
+  const [credentialOrder, setCredentialOrder] = useState<'pass_user' | 'user_pass'>('pass_user')
 
   const [deleteOpen, setDeleteOpen] = useState(false)
 
@@ -262,11 +262,10 @@ export function ProxiesPage() {
       >
         <div className="space-y-3">
           <div className="rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-100/90">
-            По умолчанию строка{' '}
-            <code className="rounded bg-zinc-950 px-1">IP:порт:логин:пароль</code> (3-я часть — username, 4-я —
-            password). Если у тебя в файле наоборот{' '}
-            <code className="rounded bg-zinc-950 px-1">IP:порт:пароль:логин</code> — выбери второй вариант ниже.
-            При <strong className="text-amber-200">407</strong> проверь whitelist IP у провайдера.
+            По умолчанию: <code className="rounded bg-zinc-950 px-1">IP:порт:пароль:логин</code> (например{' '}
+            <code className="text-zinc-500">dont1</code> — пароль, <code className="text-zinc-500">takeit32</code> —
+            логин). Другой порядок — второй пункт ниже. При <strong className="text-amber-200">407</strong> —
+            whitelist IP у провайдера.
           </div>
           <label className="block text-xs font-medium text-zinc-400">
             Вставить строку прокси <span className="font-normal text-zinc-500">(опционально)</span>
@@ -284,19 +283,19 @@ export function ProxiesPage() {
               <input
                 type="radio"
                 name="credOrder"
-                checked={credentialOrder === 'user_pass'}
-                onChange={() => setCredentialOrder('user_pass')}
+                checked={credentialOrder === 'pass_user'}
+                onChange={() => setCredentialOrder('pass_user')}
               />
-              По умолчанию: <code className="text-zinc-500">host:port:username:password</code>
+              SOAX-список: <code className="text-zinc-500">host:port:password:username</code>
             </label>
             <label className="flex cursor-pointer items-center gap-2">
               <input
                 type="radio"
                 name="credOrder"
-                checked={credentialOrder === 'pass_user'}
-                onChange={() => setCredentialOrder('pass_user')}
+                checked={credentialOrder === 'user_pass'}
+                onChange={() => setCredentialOrder('user_pass')}
               />
-              Альтернатива: <code className="text-zinc-500">host:port:password:username</code>
+              Иначе: <code className="text-zinc-500">host:port:username:password</code>
             </label>
           </fieldset>
           <label className="block text-xs font-medium text-zinc-400">

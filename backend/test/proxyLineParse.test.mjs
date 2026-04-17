@@ -22,21 +22,21 @@ test('standard order: host:port:username:password', () => {
   })
 })
 
-test('default order: 3rd=username 4th=password', () => {
+test('default order: 3rd=password 4th=username (SOAX list)', () => {
   const p = parseProxyFourPartLine('91.246.222.146:50100:dont1:takeit32')
   assert.deepEqual(p, {
     host: '91.246.222.146',
     port: '50100',
-    username: 'dont1',
-    password: 'takeit32',
+    username: 'takeit32',
+    password: 'dont1',
   })
 })
 
 test('first line only when multiline paste', () => {
   const p = parseProxyFourPartLine('95.134.185.60:50100:dont1:takeit32\n91.210.30.79:50100:dont1:takeit32')
   assert.equal(p?.host, '95.134.185.60')
-  assert.equal(p?.username, 'dont1')
-  assert.equal(p?.password, 'takeit32')
+  assert.equal(p?.username, 'takeit32')
+  assert.equal(p?.password, 'dont1')
 })
 
 test('reject non-ipv4', () => {

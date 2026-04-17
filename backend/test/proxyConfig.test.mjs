@@ -7,10 +7,10 @@ test('plain host + port → http embeds user:pass in server URL by default', () 
     provider: 'SOAX',
     host: '  91.246.222.146  ',
     port: '50100',
-    username: ' dont1 ',
-    password: ' takeit32 ',
+    username: ' takeit32 ',
+    password: ' dont1 ',
   })
-  assert.equal(p?.server, 'http://dont1:takeit32@91.246.222.146:50100')
+  assert.equal(p?.server, 'http://takeit32:dont1@91.246.222.146:50100')
   assert.equal(p?.username, undefined)
   assert.equal(p?.password, undefined)
 })
@@ -22,12 +22,12 @@ test('PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL=0 uses separate username/password', () 
     const p = buildPlaywrightProxyConfig({
       host: '91.246.222.146',
       port: '50100',
-      username: 'dont1',
-      password: 'takeit32',
+      username: 'takeit32',
+      password: 'dont1',
     })
     assert.equal(p?.server, 'http://91.246.222.146:50100')
-    assert.equal(p?.username, 'dont1')
-    assert.equal(p?.password, 'takeit32')
+    assert.equal(p?.username, 'takeit32')
+    assert.equal(p?.password, 'dont1')
   } finally {
     if (prev === undefined) delete process.env.PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL
     else process.env.PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL = prev
