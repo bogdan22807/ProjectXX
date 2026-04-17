@@ -28,8 +28,8 @@ export function ProxiesPage() {
   })
   /** Paste SOAX export: IP:port:password:username (one or many lines) */
   const [pasteLine, setPasteLine] = useState('')
-  /** SOAX list = pass before user; many tools use user before pass */
-  const [credentialOrder, setCredentialOrder] = useState<'pass_user' | 'user_pass'>('pass_user')
+  /** Default: 3rd=login 4th=pass; pass_user = 3rd=pass 4th=login (some SOAX lists) */
+  const [credentialOrder, setCredentialOrder] = useState<'pass_user' | 'user_pass'>('user_pass')
 
   const [deleteOpen, setDeleteOpen] = useState(false)
 
@@ -262,11 +262,11 @@ export function ProxiesPage() {
       >
         <div className="space-y-3">
           <div className="rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-100/90">
-            <strong className="text-amber-200">SOAX из списка:</strong> формат{' '}
-            <code className="rounded bg-zinc-950 px-1">IP:порт:пароль:логин</code>. Вставь строку — сервер сам
-            разберёт. Если в логах <strong className="text-amber-200">407</strong> — в кабинете SOAX добавь{' '}
-            <strong className="text-amber-200">whitelist IP</strong> сервера, где запущен backend (без этого прокси
-            часто отклоняет Chromium, хотя другой инструмент с другого IP работает).
+            По умолчанию строка{' '}
+            <code className="rounded bg-zinc-950 px-1">IP:порт:логин:пароль</code> (3-я часть — username, 4-я —
+            password). Если у тебя в файле наоборот{' '}
+            <code className="rounded bg-zinc-950 px-1">IP:порт:пароль:логин</code> — выбери второй вариант ниже.
+            При <strong className="text-amber-200">407</strong> проверь whitelist IP у провайдера.
           </div>
           <label className="block text-xs font-medium text-zinc-400">
             Вставить строку прокси <span className="font-normal text-zinc-500">(опционально)</span>
@@ -279,16 +279,7 @@ export function ProxiesPage() {
             />
           </label>
           <fieldset className="space-y-1 text-xs text-zinc-400">
-            <legend className="font-medium text-zinc-400">Порядок логина и пароля в строке</legend>
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="radio"
-                name="credOrder"
-                checked={credentialOrder === 'pass_user'}
-                onChange={() => setCredentialOrder('pass_user')}
-              />
-              SOAX: <code className="text-zinc-500">host:port:password:username</code>
-            </label>
+            <legend className="font-medium text-zinc-400">Порядок в строке из 4 частей</legend>
             <label className="flex cursor-pointer items-center gap-2">
               <input
                 type="radio"
@@ -296,7 +287,16 @@ export function ProxiesPage() {
                 checked={credentialOrder === 'user_pass'}
                 onChange={() => setCredentialOrder('user_pass')}
               />
-              Обычный: <code className="text-zinc-500">host:port:username:password</code>
+              По умолчанию: <code className="text-zinc-500">host:port:username:password</code>
+            </label>
+            <label className="flex cursor-pointer items-center gap-2">
+              <input
+                type="radio"
+                name="credOrder"
+                checked={credentialOrder === 'pass_user'}
+                onChange={() => setCredentialOrder('pass_user')}
+              />
+              Альтернатива: <code className="text-zinc-500">host:port:password:username</code>
             </label>
           </fieldset>
           <label className="block text-xs font-medium text-zinc-400">

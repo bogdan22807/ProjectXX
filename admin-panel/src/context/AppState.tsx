@@ -345,7 +345,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         }
         if (input.proxyLine?.trim()) {
           body.proxy_line = input.proxyLine.trim()
-          body.credential_order = input.credentialOrder ?? 'pass_user'
+          body.credential_order = input.credentialOrder ?? 'user_pass'
         }
         const row = await apiPost<ApiProxy>('/proxies', body)
         setProxies((prev) => [mapProxy(row), ...prev])

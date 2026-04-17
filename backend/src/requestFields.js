@@ -90,7 +90,7 @@ export function proxyCreatePayload(body) {
 
   const line = trimStr(fromBody.proxy_line ?? '')
   const orderRaw = trimStr(fromBody.credential_order ?? '').toLowerCase()
-  const order = orderRaw === 'user_pass' ? 'user_pass' : 'pass_user'
+  const order = orderRaw === 'pass_user' ? 'pass_user' : 'user_pass'
 
   if (line) {
     const p = parseProxyFourPartLine(line, order)

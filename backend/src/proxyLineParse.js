@@ -1,8 +1,7 @@
 /**
- * Parse pasted proxy lines like:
- * - host:port:username:password (standard)
- * - host:port:password:username (SOAX list export)
- * IPv4 + numeric port only (4 colon-separated segments).
+ * Parse pasted proxy lines (IPv4 + numeric port, 4 colon-separated segments).
+ * - user_pass (default): host:port:username:password
+ * - pass_user: host:port:password:username (some SOAX exports)
  */
 
 /** @param {string} s */
@@ -16,10 +15,10 @@ function firstNonEmptyLine(s) {
 
 /**
  * @param {string} raw
- * @param {'user_pass' | 'pass_user'} order - user_pass = host:port:user:pass; pass_user = host:port:pass:user (SOAX)
+ * @param {'user_pass' | 'pass_user'} order
  * @returns {{ host: string, port: string, username: string, password: string } | null}
  */
-export function parseProxyFourPartLine(raw, order = 'pass_user') {
+export function parseProxyFourPartLine(raw, order = 'user_pass') {
   const line = firstNonEmptyLine(raw)
   if (!line) return null
 
