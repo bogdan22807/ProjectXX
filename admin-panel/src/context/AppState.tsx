@@ -71,6 +71,9 @@ interface AppStateValue {
     port: string
     username: string
     password: string
+    proxyScheme?: string
+    proxyLine?: string
+    credentialOrder?: 'pass_user' | 'user_pass'
   }) => Promise<void>
   deleteSelectedProxies: () => Promise<void>
   checkSelectedProxies: () => Promise<void>
