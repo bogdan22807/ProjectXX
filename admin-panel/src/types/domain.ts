@@ -30,6 +30,8 @@ export interface Proxy {
   port: string
   username: string
   password: string
+  /** http | https | socks5 | socks4 — empty = http */
+  proxyScheme: string
   status: ProxyStatus
 }
 

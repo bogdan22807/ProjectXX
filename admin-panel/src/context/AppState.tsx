@@ -331,6 +331,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       port: string
       username: string
       password: string
+      proxyScheme?: string
       proxyLine?: string
       credentialOrder?: 'pass_user' | 'user_pass'
     }) => {
@@ -342,6 +343,9 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           username: input.username,
           password: input.password,
           status: 'Needs Check',
+        }
+        if (input.proxyScheme?.trim()) {
+          body.proxy_scheme = input.proxyScheme.trim().toLowerCase()
         }
         if (input.proxyLine?.trim()) {
           body.proxy_line = input.proxyLine.trim()

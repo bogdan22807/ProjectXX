@@ -59,6 +59,8 @@ export function proxyFieldsFromBody(body) {
   if (has(b, 'port')) out.port = trimStr(b.port)
   if (has(b, 'username')) out.username = trimStr(b.username)
   if (has(b, 'password')) out.password = trimStr(b.password)
+  if (has(b, 'proxy_scheme')) out.proxy_scheme = trimStr(b.proxy_scheme)
+  else if (has(b, 'proxyScheme')) out.proxy_scheme = trimStr(b.proxyScheme)
   if (has(b, 'proxy_line')) out.proxy_line = trimStr(b.proxy_line)
   else if (has(b, 'proxyLine')) out.proxy_line = trimStr(b.proxyLine)
   if (has(b, 'credential_order')) out.credential_order = trimStr(b.credential_order)
@@ -77,6 +79,7 @@ export function proxyCreatePayload(body) {
     port: '',
     username: '',
     password: '',
+    proxy_scheme: '',
     status: 'Needs Check',
     assigned_to: '',
     last_check: null,
@@ -110,7 +113,8 @@ export function proxyCreatePayload(body) {
     }
   }
 
-  return { ...defaults, ...fromBody, host, port, username, password }
+  const proxy_scheme = trimStr(fromBody.proxy_scheme ?? '') ?? ''
+  return { ...defaults, ...fromBody, host, port, username, password, proxy_scheme }
 }
 
 export function proxyPatchPayload(body) {

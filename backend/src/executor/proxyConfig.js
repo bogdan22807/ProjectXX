@@ -1,22 +1,29 @@
 /**
  * Normalize DB proxy rows into Playwright launch `proxy` option.
- * @typedef {{ host?: unknown, port?: unknown, username?: unknown, password?: unknown, provider?: unknown }} ProxyLike
+ * @typedef {{ host?: unknown, port?: unknown, username?: unknown, password?: unknown, provider?: unknown, proxy_scheme?: unknown }} ProxyLike
  */
 
 const PLAYWRIGHT_SCHEMES = new Set(['http', 'https', 'socks4', 'socks5'])
 
-/**
- * Scheme for proxy server when host has no explicit scheme.
- * SOAX often uses HTTP CONNECT; override with PLAYWRIGHT_PROXY_SCHEME=socks5 if needed.
- */
-function defaultSchemeForProvider(provider) {
+function schemeFromRow(proxy) {
+  const fromCol = String(proxy?.proxy_scheme ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+  if (fromCol === 'socks5' || fromCol === 'socks4' || fromCol === 'http' || fromCol === 'https') {
+    return fromCol
+  }
   const fromEnv = String(process.env.PLAYWRIGHT_PROXY_SCHEME ?? '').trim().toLowerCase()
   if (fromEnv && PLAYWRIGHT_SCHEMES.has(fromEnv)) return fromEnv
-  void provider
+  const prov = String(proxy?.provider ?? '').toLowerCase()
+  if (prov.includes('socks')) return 'socks5'
   return 'http'
 }
 
-/** Many HTTP proxies expect auth in the proxy URL; separate username/password can yield 407 in Chromium. */
+/**
+ * Embed user:pass in proxy server URL (HTTP/HTTPS/SOCKS).
+ * Chromium often rejects SOCKS5 username/password fields — URL form is more reliable.
+ */
 function embedAuthInServerUrl() {
   const v = String(process.env.PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL ?? '1').trim().toLowerCase()
   return v !== '0' && v !== 'false' && v !== 'off' && v !== 'no'
@@ -44,8 +51,6 @@ export function buildPlaywrightProxyConfig(proxy) {
   const rawPort = String(proxy.port ?? '').trim()
   let username = String(proxy.username ?? '').trim()
   let password = String(proxy.password ?? '').trim()
-  const provider = String(proxy.provider ?? '').trim()
-
   if (!rawHost) return undefined
 
   let explicitScheme = ''
@@ -85,7 +90,7 @@ export function buildPlaywrightProxyConfig(proxy) {
 
   const scheme = explicitScheme && PLAYWRIGHT_SCHEMES.has(explicitScheme)
     ? explicitScheme
-    : defaultSchemeForProvider(provider.toLowerCase())
+    : schemeFromRow(proxy)
 
   const hostPart = hostForProxyServerUrl(hostname)
   let server = port ? `${scheme}://${hostPart}:${port}` : `${scheme}://${hostPart}`
@@ -96,7 +101,7 @@ export function buildPlaywrightProxyConfig(proxy) {
     embedAuthInServerUrl() &&
     username &&
     password &&
-    (scheme === 'http' || scheme === 'https')
+    (scheme === 'http' || scheme === 'https' || scheme === 'socks5' || scheme === 'socks4')
 
   if (canEmbed) {
     const u = encodeURIComponent(username)

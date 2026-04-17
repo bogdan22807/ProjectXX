@@ -8,6 +8,7 @@
     "dev": "node --watch src/server.js",
     "test": "node --test",
     "proxy:diag": "node scripts/proxyPlaywrightDiagnostics.mjs",
+    "proxy:scan-ports": "node scripts/proxyPortScan.mjs",
     "playwright:install": "playwright install chromium"
   },
   "dependencies": {

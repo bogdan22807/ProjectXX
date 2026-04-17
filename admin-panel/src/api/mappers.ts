@@ -19,6 +19,7 @@ export type ApiProxy = {
   port: string
   username: string
   password: string
+  proxy_scheme?: string
   status: Proxy['status']
   assigned_to?: string
   last_check?: string | null
@@ -76,6 +77,7 @@ export function mapProxy(row: ApiProxy): Proxy {
     port: row.port ?? '',
     username: row.username ?? '',
     password: row.password ?? '',
+    proxyScheme: row.proxy_scheme ?? '',
     status: row.status,
   }
 }

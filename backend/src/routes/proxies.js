@@ -17,6 +17,7 @@ router.post('/', (req, res) => {
     port,
     username,
     password,
+    proxy_scheme,
     status,
     assigned_to,
     last_check,
@@ -32,10 +33,11 @@ router.post('/', (req, res) => {
   const pw = password != null ? String(password).trim() : ''
   const st = status != null ? String(status).trim() : 'Needs Check'
   const assigned = assigned_to != null ? String(assigned_to).trim() : ''
+  const scheme = proxy_scheme != null ? String(proxy_scheme).trim().toLowerCase() : ''
   db.prepare(
-    `INSERT INTO proxies (id, provider, host, port, username, password, status, assigned_to, last_check)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, prov, h, p, u, pw, st, assigned, last_check ?? null)
+    `INSERT INTO proxies (id, provider, host, port, username, password, proxy_scheme, status, assigned_to, last_check)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, prov, h, p, u, pw, scheme, st, assigned, last_check ?? null)
   const row = db.prepare('SELECT * FROM proxies WHERE id = ?').get(id)
   return sendJsonRow(res, 201, row, 'Proxy missing after insert')
 })
@@ -51,6 +53,7 @@ router.patch('/:id', (req, res) => {
     'port',
     'username',
     'password',
+    'proxy_scheme',
     'status',
     'assigned_to',
     'last_check',
@@ -68,6 +71,7 @@ router.patch('/:id', (req, res) => {
     'port',
     'username',
     'password',
+    'proxy_scheme',
     'status',
     'assigned_to',
     'last_check',

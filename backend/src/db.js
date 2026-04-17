@@ -78,6 +78,7 @@ ensureColumn('proxies', 'password', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('proxies', 'status', "TEXT NOT NULL DEFAULT 'Needs Check'")
 ensureColumn('proxies', 'assigned_to', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('proxies', 'last_check', 'TEXT')
+ensureColumn('proxies', 'proxy_scheme', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('proxies', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))")
 
 ensureColumn('browser_profiles', 'name', "TEXT NOT NULL DEFAULT ''")

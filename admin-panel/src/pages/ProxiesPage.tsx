@@ -25,6 +25,7 @@ export function ProxiesPage() {
     port: '',
     username: '',
     password: '',
+    proxyScheme: 'http' as 'http' | 'socks5',
   })
   /** Paste SOAX export: IP:port:password:username (one or many lines) */
   const [pasteLine, setPasteLine] = useState('')
@@ -80,6 +81,7 @@ export function ProxiesPage() {
         port: '',
         username: '',
         password: '',
+        proxyScheme: form.proxyScheme,
         proxyLine: line,
         credentialOrder,
       })
@@ -90,12 +92,13 @@ export function ProxiesPage() {
         port: form.port.trim(),
         username: form.username.trim(),
         password: form.password.trim(),
+        proxyScheme: form.proxyScheme,
       })
     } else {
       return
     }
     closeAddModal()
-    setForm({ provider: 'SOAX', host: '', port: '', username: '', password: '' })
+    setForm({ provider: 'SOAX', host: '', port: '', username: '', password: '', proxyScheme: 'http' })
     setPasteLine('')
   }
 
@@ -112,12 +115,13 @@ export function ProxiesPage() {
         port: '',
         username: '',
         password: '',
+        proxyScheme: form.proxyScheme,
         proxyLine: line,
         credentialOrder,
       })
     }
     closeAddModal()
-    setForm({ provider: 'SOAX', host: '', port: '', username: '', password: '' })
+    setForm({ provider: 'SOAX', host: '', port: '', username: '', password: '', proxyScheme: 'http' })
     setPasteLine('')
   }
 
@@ -167,6 +171,7 @@ export function ProxiesPage() {
                 <th className="px-4 py-3">ID</th>
                 <th className="px-4 py-3">Provider</th>
                 <th className="px-4 py-3">Host</th>
+                <th className="px-4 py-3">Scheme</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Assigned To</th>
               </tr>
@@ -193,6 +198,9 @@ export function ProxiesPage() {
                     {p.port ? (
                       <span className="text-zinc-500">:{p.port}</span>
                     ) : null}
+                  </td>
+                  <td className="px-4 py-3 font-mono text-xs uppercase text-zinc-400">
+                    {p.proxyScheme?.trim() || 'http'}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge status={p.status} />
@@ -298,6 +306,19 @@ export function ProxiesPage() {
               Иначе: <code className="text-zinc-500">host:port:username:password</code>
             </label>
           </fieldset>
+          <label className="block text-xs font-medium text-zinc-400">
+            Тип прокси (схема)
+            <select
+              className={fieldClass}
+              value={form.proxyScheme}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, proxyScheme: e.target.value as 'http' | 'socks5' }))
+              }
+            >
+              <option value="http">HTTP (порт как у SOAX / обычный прокси)</option>
+              <option value="socks5">SOCKS5 (если провайдер выдал именно SOCKS)</option>
+            </select>
+          </label>
           <label className="block text-xs font-medium text-zinc-400">
             Provider
             <input

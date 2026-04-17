@@ -66,6 +66,18 @@ test('socks5 scheme preserved', () => {
   assert.equal(p?.server, 'socks5://127.0.0.1:1080')
 })
 
+test('proxy_scheme socks5 embeds auth in URL', () => {
+  const p = buildPlaywrightProxyConfig({
+    proxy_scheme: 'socks5',
+    host: '91.246.222.146',
+    port: '50100',
+    username: 'takeit32',
+    password: 'dont1',
+  })
+  assert.equal(p?.server, 'socks5://takeit32:dont1@91.246.222.146:50100')
+  assert.equal(p?.username, undefined)
+})
+
 test('PLAYWRIGHT_PROXY_SCHEME overrides default', () => {
   const prev = process.env.PLAYWRIGHT_PROXY_SCHEME
   process.env.PLAYWRIGHT_PROXY_SCHEME = 'socks5'
