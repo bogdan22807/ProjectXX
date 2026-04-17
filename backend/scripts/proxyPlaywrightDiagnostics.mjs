@@ -9,6 +9,7 @@
  */
 
 import { chromium } from 'playwright'
+import { buildPlaywrightProxyConfig } from '../src/executor/proxyConfig.js'
 
 const timeoutMs = (() => {
   const n = Number(process.env.PROXY_DIAG_TIMEOUT_MS)
@@ -26,14 +27,31 @@ function log(section, msg, extra) {
   else console.log(line)
 }
 
+/** @param {unknown} o */
+function redactProxyInJson(o) {
+  try {
+    const s = JSON.parse(JSON.stringify(o))
+    if (s?.proxy?.server && typeof s.proxy.server === 'string') {
+      s.proxy.server = s.proxy.server.replace(/\/\/([^:@/]+):([^@/]+)@/, '//***:***@')
+    }
+    if (s?.proxy?.password) s.proxy.password = '***'
+    return s
+  } catch {
+    return o
+  }
+}
+
 /**
  * @param {string} name
- * @param {import('playwright').LaunchOptions | undefined} launchOptions
+ * @param {{ launch?: import('playwright').LaunchOptions; context?: import('playwright').BrowserContextOptions }} opts
  * @param {string} url
  */
-async function runCase(name, launchOptions, url) {
+async function runCase(name, opts, url) {
+  const launchOptions = opts.launch ?? {}
+  const contextOptions = opts.context ?? {}
   log(name, '---')
-  log(name, `chromium.launch options: ${JSON.stringify(launchOptions ?? {}, null, 2)}`)
+  log(name, `chromium.launch: ${JSON.stringify(launchOptions, null, 2)}`)
+  log(name, `browser.newContext: ${JSON.stringify(redactProxyInJson(contextOptions), null, 2)}`)
   log(name, `page.goto URL: ${url}`)
   log(name, `timeout: ${timeoutMs}ms`)
 
@@ -49,7 +67,7 @@ async function runCase(name, launchOptions, url) {
     return { ok: false, phase: 'launch', err }
   }
 
-  const context = await browser.newContext()
+  const context = await browser.newContext(contextOptions)
   const page = await context.newPage()
   try {
     const waitUntil =
@@ -66,7 +84,7 @@ async function runCase(name, launchOptions, url) {
     if (status === 407) {
       log(
         name,
-        'NOTE: HTTP 407 = proxy rejected credentials (or wrong auth method). Playwright passed username/password; server still says Proxy Authentication Required.',
+        'NOTE: HTTP 407 = proxy rejected credentials (or whitelist IP / wrong sub-user).',
       )
     }
     await context.close()
@@ -99,11 +117,7 @@ async function main() {
   console.log(`Node ${process.version} | PLAYWRIGHT_BROWSERS_PATH=${process.env.PLAYWRIGHT_BROWSERS_PATH ?? '(default)'}`)
   console.log('='.repeat(72))
 
-  const r1 = await runCase(
-    'TEST_1_NO_PROXY',
-    {},
-    'https://api.ipify.org/?format=json',
-  )
+  const r1 = await runCase('TEST_1_NO_PROXY', {}, 'https://api.ipify.org/?format=json')
 
   if (!host || !port) {
     console.log('\n[SKIP] TEST_2 / TEST_3 / SOCKS5: set PROXY_DIAG_HOST and PROXY_DIAG_PORT (and user/pass if needed)')
@@ -111,27 +125,37 @@ async function main() {
     process.exit(r1.ok ? 0 : 1)
   }
 
-  const httpProxy = {
-    proxy: {
-      server: `http://${host}:${port}`,
-      ...(username ? { username } : {}),
-      ...(password ? { password } : {}),
-    },
-  }
+  const httpProxyCfg = buildPlaywrightProxyConfig({
+    provider: 'SOAX',
+    host,
+    port,
+    username,
+    password,
+  })
 
-  const r2 = await runCase('TEST_2_HTTP_PROXY_HTTP_SITE', httpProxy, 'http://example.com/')
+  const r2 = await runCase(
+    'TEST_2_HTTP_PROXY_HTTP_SITE',
+    { context: { proxy: httpProxyCfg } },
+    'http://example.com/',
+  )
 
-  const r3 = await runCase('TEST_3_HTTP_PROXY_HTTPS_SITE', httpProxy, 'https://api.ipify.org/?format=json')
+  const r3 = await runCase(
+    'TEST_3_HTTP_PROXY_HTTPS_SITE',
+    { context: { proxy: httpProxyCfg } },
+    'https://api.ipify.org/?format=json',
+  )
 
   const socksProxy = {
-    proxy: {
-      server: `socks5://${host}:${port}`,
-      ...(username ? { username } : {}),
-      ...(password ? { password } : {}),
-    },
+    server: `socks5://${host}:${port}`,
+    ...(username ? { username } : {}),
+    ...(password ? { password } : {}),
   }
 
-  const r4 = await runCase('TEST_4_SOCKS5_HTTPS_SITE', socksProxy, 'https://api.ipify.org/?format=json')
+  const r4 = await runCase(
+    'TEST_4_SOCKS5_HTTPS_SITE',
+    { context: { proxy: socksProxy } },
+    'https://api.ipify.org/?format=json',
+  )
 
   summarize(r1, r2, r3, r4)
   const okAll = r1.ok && r2.ok && r3.ok && r4.ok

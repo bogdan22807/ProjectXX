@@ -292,9 +292,9 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       `provider=${String(ctx.proxy?.provider ?? '').trim() || '(none)'}`,
     ].join(' | '))
 
+    /** Proxy on browser context (not launch) — avoids some HTTP 407 cases with authenticated HTTP proxies. */
     const launchOpts = {
       headless: process.env.PLAYWRIGHT_HEADED === '1' ? false : true,
-      proxy: launchProxy,
       args: process.env.PLAYWRIGHT_CHROMIUM_ARGS
         ? process.env.PLAYWRIGHT_CHROMIUM_ARGS.split(/\s+/).filter(Boolean)
         : [],
@@ -324,6 +324,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     try {
       context = await browser.newContext({
         ignoreHTTPSErrors: process.env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS === '1',
+        ...(launchProxy ? { proxy: launchProxy } : {}),
       })
     } catch (err) {
       const { action, details } = classifyError(err, { phase: 'launch' })

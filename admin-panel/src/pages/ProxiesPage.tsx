@@ -262,9 +262,11 @@ export function ProxiesPage() {
       >
         <div className="space-y-3">
           <div className="rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-100/90">
-            <strong className="text-amber-200">SOAX из списка:</strong> формат строки{' '}
-            <code className="rounded bg-zinc-950 px-1">IP:порт:пароль:логин</code> (сначала пароль, потом логин).
-            Выбери порядок ниже или вставь строку целиком — поля заполнятся на сервере.
+            <strong className="text-amber-200">SOAX из списка:</strong> формат{' '}
+            <code className="rounded bg-zinc-950 px-1">IP:порт:пароль:логин</code>. Вставь строку — сервер сам
+            разберёт. Если в логах <strong className="text-amber-200">407</strong> — в кабинете SOAX добавь{' '}
+            <strong className="text-amber-200">whitelist IP</strong> сервера, где запущен backend (без этого прокси
+            часто отклоняет Chromium, хотя другой инструмент с другого IP работает).
           </div>
           <label className="block text-xs font-medium text-zinc-400">
             Вставить строку прокси <span className="font-normal text-zinc-500">(опционально)</span>

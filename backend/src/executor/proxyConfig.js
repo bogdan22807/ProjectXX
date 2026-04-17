@@ -16,6 +16,12 @@ function defaultSchemeForProvider(provider) {
   return 'http'
 }
 
+/** Many HTTP proxies expect auth in the proxy URL; separate username/password can yield 407 in Chromium. */
+function embedAuthInServerUrl() {
+  const v = String(process.env.PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL ?? '1').trim().toLowerCase()
+  return v !== '0' && v !== 'false' && v !== 'off' && v !== 'no'
+}
+
 /**
  * Hostname may be IPv6 (::). URL.hostname returns IPv6 without brackets.
  * @param {string} hostname
@@ -82,10 +88,26 @@ export function buildPlaywrightProxyConfig(proxy) {
     : defaultSchemeForProvider(provider.toLowerCase())
 
   const hostPart = hostForProxyServerUrl(hostname)
-  const server = port ? `${scheme}://${hostPart}:${port}` : `${scheme}://${hostPart}`
+  let server = port ? `${scheme}://${hostPart}:${port}` : `${scheme}://${hostPart}`
 
   /** @type {import('playwright').LaunchOptions['proxy']} */
   const out = { server }
+  const canEmbed =
+    embedAuthInServerUrl() &&
+    username &&
+    password &&
+    (scheme === 'http' || scheme === 'https')
+
+  if (canEmbed) {
+    const u = encodeURIComponent(username)
+    const pw = encodeURIComponent(password)
+    server = port
+      ? `${scheme}://${u}:${pw}@${hostPart}:${port}`
+      : `${scheme}://${u}:${pw}@${hostPart}`
+    out.server = server
+    return out
+  }
+
   if (username || password) {
     if (username) out.username = username
     if (password) out.password = password
@@ -105,5 +127,20 @@ export function describeProxyForLog(proxy, launchProxy) {
   const u = String(proxy.username ?? '').trim()
   const hasUser = Boolean(u)
   const hasPass = Boolean(String(proxy.password ?? '').trim())
-  return `proxy server=${launchProxy.server} auth=${hasUser ? `user=${u}` : 'none'}${hasPass ? ' password=***' : ''}`
+  let serverForLog = launchProxy.server
+  try {
+    const parsed = new URL(serverForLog)
+    if (parsed.username || parsed.password) {
+      parsed.username = ''
+      parsed.password = ''
+      serverForLog = parsed.toString().replace(/\/$/, '')
+    }
+  } catch {
+    /* keep raw */
+  }
+  const mode =
+    hasUser && hasPass && !launchProxy.username && !launchProxy.password
+      ? 'credentials embedded in server URL'
+      : 'username/password fields'
+  return `proxy server=${serverForLog} auth=${hasUser ? `user=${u}` : 'none'}${hasPass ? ' password=***' : ''} (${mode})`
 }
