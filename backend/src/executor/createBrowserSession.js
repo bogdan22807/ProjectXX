@@ -1,5 +1,6 @@
 /**
- * Single place: launch Chromium → context (proxy, UA) → optional cookies → first page.
+ * Single place: launch Chromium → context (UA) → optional cookies → first page.
+ * When `config.proxy` is set, it is passed to `chromium.launch({ proxy })` (same as isolated diagnostic).
  * Does not replace runPlaywrightTestRun orchestration — used by it and available for future scenarios.
  */
 
@@ -37,6 +38,10 @@ export async function createBrowserSession(config = {}) {
       ? process.env.PLAYWRIGHT_CHROMIUM_ARGS.split(/\s+/).filter(Boolean)
       : [],
   }
+  /** Same shape as isolated diagnostic: proxy on launch (not only on context). */
+  if (config.proxy) {
+    launchOpts.proxy = config.proxy
+  }
 
   let launchTimeoutId
   const timeoutPromise = new Promise((_, reject) => {
@@ -56,9 +61,6 @@ export async function createBrowserSession(config = {}) {
     /** @type {import('playwright').BrowserContextOptions} */
     const contextOpts = {
       ignoreHTTPSErrors: process.env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS === '1',
-    }
-    if (config.proxy) {
-      contextOpts.proxy = config.proxy
     }
     if (config.userAgent && String(config.userAgent).trim()) {
       contextOpts.userAgent = String(config.userAgent).trim()

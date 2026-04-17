@@ -21,6 +21,19 @@ function envPageLoadMs() {
   return Number.isFinite(n) && n > 0 ? n : 60_000
 }
 
+/** Optional default proxy from env when account has no linked proxy row. */
+function proxyFromEnv() {
+  const server = String(process.env.PLAYWRIGHT_PROXY_SERVER ?? '').trim()
+  if (!server) return null
+  const username = String(process.env.PLAYWRIGHT_PROXY_USERNAME ?? '').trim()
+  const password = String(process.env.PLAYWRIGHT_PROXY_PASSWORD ?? '').trim()
+  /** @type {import('playwright').BrowserContextOptions['proxy']} */
+  const out = { server }
+  if (username) out.username = username
+  if (password) out.password = password
+  return out
+}
+
 /**
  * @typedef {{
  *   startUrl: string
@@ -79,7 +92,8 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
   const clickTarget =
     clickRaw != null && String(clickRaw).trim() !== '' ? String(clickRaw).trim() : undefined
 
-  const launchProxy = buildPlaywrightProxyConfig(ctx.proxy)
+  const fromDb = buildPlaywrightProxyConfig(ctx.proxy)
+  const launchProxy = fromDb ?? proxyFromEnv()
 
   return {
     startUrl,
