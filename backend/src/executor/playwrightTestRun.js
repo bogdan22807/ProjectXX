@@ -3,7 +3,8 @@
  * Stable single-account flow: launch → proxy → cookies → page → optional ready selector → scroll → done.
  */
 
-import { buildPlaywrightProxyConfig, describeProxyForLog } from './proxyConfig.js'
+import { describeProxyForLog } from './proxyConfig.js'
+import { buildExecutorRunConfigFromContext } from './executorRunConfig.js'
 import { parseCookiesForUrlStrict } from './cookieParse.js'
 import { createBrowserSession } from './createBrowserSession.js'
 import { getExecutionContext, logStep, updateStatus } from './runner.js'
@@ -130,13 +131,6 @@ function gotoWaitUntil() {
 export async function runPlaywrightTestRun(accountId, options = {}) {
   const targetUrl = String(options.targetUrl ?? getDefaultSocialTestUrl()).trim() || DEFAULT_TEST_PAGE_URL
 
-  let pageUrl
-  try {
-    pageUrl = new URL(targetUrl)
-  } catch {
-    throw new Error(`Invalid target URL: ${targetUrl}`)
-  }
-
   if (playwrightRuns.has(accountId)) {
     throw new Error('Playwright test run already active for this account')
   }
@@ -150,29 +144,41 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
   }
   playwrightRuns.set(accountId, state)
 
-  const readySelector =
-    String(options.readySelector ?? getReadySelector()).trim() || null
-
   try {
     const ctx = getExecutionContext(accountId)
     if (!ctx) {
       throw new Error(`Account not found: ${accountId}`)
     }
 
-    updateStatus(accountId, 'Running')
-    logStep(accountId, 'EXECUTOR_STARTED', targetUrl)
+    const readySelector =
+      String(options.readySelector ?? getReadySelector()).trim() || null
 
-    const launchProxy = buildPlaywrightProxyConfig(ctx.proxy)
+    const runConfig = buildExecutorRunConfigFromContext(ctx, {
+      targetUrl,
+      readySelector,
+    })
+
+    let pageUrl
+    try {
+      pageUrl = new URL(runConfig.startUrl)
+    } catch {
+      throw new Error(`Invalid target URL: ${runConfig.startUrl}`)
+    }
+
+    updateStatus(accountId, 'Running')
+    logStep(accountId, 'EXECUTOR_STARTED', runConfig.startUrl)
+
+    const launchProxy = runConfig.proxy ?? undefined
     const proxyLogLine = describeProxyForLog(ctx.proxy, launchProxy)
     logStep(accountId, 'playwright launch prep', [
-      `headless=${process.env.PLAYWRIGHT_HEADED === '1' ? '0' : '1'}`,
-      `targetUrl=${targetUrl}`,
-      `cookiesLen=${String(ctx.account.cookies ?? '').trim().length}`,
+      `headless=${runConfig.headless ? '1' : '0'}`,
+      `targetUrl=${runConfig.startUrl}`,
+      `cookiesLen=${String(runConfig.cookies ?? '').trim().length}`,
       proxyLogLine,
       `provider=${String(ctx.proxy?.provider ?? '').trim() || '(none)'}`,
     ].join(' | '))
 
-    const rawCookies = String(ctx.account.cookies ?? '').trim()
+    const rawCookies = String(runConfig.cookies ?? '').trim()
     const parsed = parseCookiesForUrlStrict(rawCookies, pageUrl)
     if (parsed.invalid) {
       failRun(accountId, state, 'cookies invalid', parsed.invalid)
@@ -184,10 +190,10 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     let page
     try {
       ;({ browser, context, page } = await createBrowserSession({
-        headless: process.env.PLAYWRIGHT_HEADED !== '1',
-        proxy: launchProxy ?? undefined,
+        headless: runConfig.headless,
+        proxy: launchProxy,
         cookies: rawCookies || undefined,
-        cookieUrl: targetUrl,
+        cookieUrl: runConfig.startUrl,
       }))
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -272,9 +278,10 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         page,
         (action, details) => logStep(accountId, action, details ?? ''),
         {
-          startUrl: targetUrl,
-          readySelector,
-          selectors: {},
+          startUrl: runConfig.startUrl,
+          readySelector: runConfig.readySelector,
+          selectors: runConfig.selectors,
+          timeouts: runConfig.timeouts,
         },
       )
     } catch (err) {
@@ -288,8 +295,8 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
     if (state.cancelled) return
 
-    logStep(accountId, 'EXECUTOR_FINISHED', targetUrl)
-    logStep(accountId, 'completed', targetUrl)
+    logStep(accountId, 'EXECUTOR_FINISHED', runConfig.startUrl)
+    logStep(accountId, 'completed', runConfig.startUrl)
     updateStatus(accountId, 'Ready')
   } catch (err) {
     if (state.abortedByUser) {

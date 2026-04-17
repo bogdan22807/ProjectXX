@@ -7,11 +7,6 @@ import { sleepRandom } from '../asyncUtils.js'
 import { safeClick } from '../safeClick.js'
 import { smoothScrollPage } from '../smoothScrollPage.js'
 
-function gotoTimeoutMs() {
-  const n = Number(process.env.PLAYWRIGHT_GOTO_TIMEOUT_MS)
-  return Number.isFinite(n) && n > 0 ? n : 60_000
-}
-
 function gotoWaitUntil() {
   const w = String(process.env.PLAYWRIGHT_GOTO_WAIT_UNTIL ?? '').trim().toLowerCase()
   if (w === 'domcontentloaded' || w === 'load' || w === 'networkidle' || w === 'commit') {
@@ -30,6 +25,7 @@ function selectorTimeoutMs() {
  *   startUrl: string
  *   readySelector?: string | null
  *   selectors?: { clickTarget?: string }
+ *   timeouts?: { pageLoad?: number }
  *   smoothScroll?: import('../smoothScrollPage.js').SmoothScrollPageOptions
  * }} ViewAndScrollScenarioConfig
  */
@@ -46,9 +42,14 @@ export async function runViewAndScrollScenario(page, logger, config) {
     throw new Error('runViewAndScrollScenario: startUrl is required')
   }
 
+  const pageLoadMs = (() => {
+    const n = Number(config.timeouts?.pageLoad)
+    return Number.isFinite(n) && n > 0 ? n : 60_000
+  })()
+
   const response = await page.goto(startUrl, {
     waitUntil: gotoWaitUntil(),
-    timeout: gotoTimeoutMs(),
+    timeout: pageLoadMs,
   })
 
   const status = response?.status() ?? null
