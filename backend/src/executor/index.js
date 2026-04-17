@@ -3,6 +3,7 @@
  */
 
 export { sleep, randomInt, sleepRandom } from './asyncUtils.js'
+export { smoothScrollPage } from './smoothScrollPage.js'
 
 export {
   getAccount,
