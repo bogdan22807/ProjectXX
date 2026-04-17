@@ -6,6 +6,7 @@ export { sleep, randomInt, sleepRandom } from './asyncUtils.js'
 export { smoothScrollPage } from './smoothScrollPage.js'
 export { safeClick } from './safeClick.js'
 export { createBrowserSession } from './createBrowserSession.js'
+export { runViewAndScrollScenario } from './scenarios/viewAndScrollScenario.js'
 
 export {
   getAccount,
