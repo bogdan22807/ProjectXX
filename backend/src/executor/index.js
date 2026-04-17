@@ -2,6 +2,8 @@
  * Executor: DB helpers (runner.js) + Playwright flow (playwrightTestRun.js).
  */
 
+export { sleep, randomInt, sleepRandom } from './asyncUtils.js'
+
 export {
   getAccount,
   getProxy,
