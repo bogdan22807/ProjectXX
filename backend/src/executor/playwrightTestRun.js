@@ -7,6 +7,7 @@ import { buildPlaywrightProxyConfig, describeProxyForLog } from './proxyConfig.j
 import { parseCookiesForUrlStrict } from './cookieParse.js'
 import { createBrowserSession } from './createBrowserSession.js'
 import { getExecutionContext, logStep, updateStatus } from './runner.js'
+import { runViewAndScrollScenario } from './scenarios/viewAndScrollScenario.js'
 
 /**
  * @typedef {{
@@ -103,24 +104,6 @@ export function isPlaywrightTestRunActive(accountId) {
   return playwrightRuns.has(accountId)
 }
 
-function interruptibleSleep(state, ms) {
-  return new Promise((resolve) => {
-    const tid = setTimeout(() => {
-      state.sleepWake = null
-      resolve()
-    }, ms)
-    state.sleepWake = () => {
-      clearTimeout(tid)
-      state.sleepWake = null
-      resolve()
-    }
-  })
-}
-
-function randomInt(min, max) {
-  return min + Math.floor(Math.random() * (max - min + 1))
-}
-
 /** @see ./proxyConfig.js */
 const IPIFY_URL = 'https://api.ipify.org/?format=json'
 
@@ -138,11 +121,6 @@ function gotoWaitUntil() {
     return /** @type {'commit' | 'domcontentloaded' | 'load' | 'networkidle'} */ (w)
   }
   return 'commit'
-}
-
-function selectorTimeoutMs() {
-  const n = Number(process.env.PLAYWRIGHT_SELECTOR_TIMEOUT_MS)
-  return Number.isFinite(n) && n > 0 ? n : 15_000
 }
 
 /**
@@ -182,7 +160,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     }
 
     updateStatus(accountId, 'Running')
-    logStep(accountId, 'executor started', targetUrl)
+    logStep(accountId, 'EXECUTOR_STARTED', targetUrl)
 
     const launchProxy = buildPlaywrightProxyConfig(ctx.proxy)
     const proxyLogLine = describeProxyForLog(ctx.proxy, launchProxy)
@@ -228,7 +206,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
     logStep(
       accountId,
-      'browser started',
+      'BROWSER_STARTED',
       launchProxy ? `with proxy | ${proxyLogLine}` : 'no proxy',
     )
 
@@ -289,76 +267,28 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       }
     }
 
-    let response
     try {
-      response = await page.goto(targetUrl, {
-        waitUntil: gotoWaitUntil(),
-        timeout: gotoTimeoutMs(),
-      })
-    } catch (err) {
-      if (state.abortedByUser) return
-      const { action, details, treatAsUserStop } = classifyError(err, { phase: 'goto' })
-      if (treatAsUserStop) return
-      failRun(accountId, state, action, details)
-      return
-    }
-
-    if (state.cancelled) return
-
-    const status = response?.status() ?? null
-    if (status === 407) {
-      failRun(
-        accountId,
-        state,
-        'proxy authentication rejected',
-        `HTTP 407 for ${targetUrl} — proxy refused auth on this request (same class of failure as CONNECT auth).`,
+      await runViewAndScrollScenario(
+        page,
+        (action, details) => logStep(accountId, action, details ?? ''),
+        {
+          startUrl: targetUrl,
+          readySelector,
+          selectors: {},
+        },
       )
-      return
-    }
-    const ok = response === null || response.ok()
-    if (!ok) {
-      const st = status ?? 'unknown'
-      failRun(accountId, state, 'page load timeout', `HTTP ${st} for ${targetUrl}`)
-      return
-    }
-
-    logStep(accountId, 'page opened', page.url())
-
-    if (readySelector) {
-      try {
-        await page.waitForSelector(readySelector, {
-          state: 'attached',
-          timeout: selectorTimeoutMs(),
-        })
-      } catch (err) {
-        if (state.abortedByUser) return
-        const { action, details, treatAsUserStop } = classifyError(err, { phase: 'selector' })
-        if (treatAsUserStop) return
-        failRun(accountId, state, action, details)
-        return
-      }
-    }
-
-    logStep(accountId, 'waiting', 'before scroll (2–5s)')
-    await interruptibleSleep(state, randomInt(2000, 5000))
-    if (state.cancelled) return
-
-    const deltaY = randomInt(200, 800)
-    try {
-      await page.mouse.wheel(0, deltaY)
     } catch (err) {
       if (state.abortedByUser) return
-      const { action, details, treatAsUserStop } = classifyError(err, { phase: 'scroll' })
+      const { treatAsUserStop } = classifyError(err, { phase: 'goto' })
       if (treatAsUserStop) return
-      failRun(accountId, state, action, details)
+      const msg = err instanceof Error ? err.message : String(err)
+      failRun(accountId, state, 'EXECUTOR_FAILED', msg)
       return
     }
 
-    logStep(accountId, 'waiting', 'after scroll (2–4s)')
-    await interruptibleSleep(state, randomInt(2000, 4000))
     if (state.cancelled) return
 
-    logStep(accountId, 'scroll completed', `${deltaY}px`)
+    logStep(accountId, 'EXECUTOR_FINISHED', targetUrl)
     logStep(accountId, 'completed', targetUrl)
     updateStatus(accountId, 'Ready')
   } catch (err) {

@@ -1,6 +1,6 @@
 /**
- * One stable flow: open URL → pause → smooth scroll → optional click → pause → done.
- * Does not own browser lifecycle — pass an existing page + logger.
+ * One stable flow: open URL → waits → smooth scroll → optional click → waits → done.
+ * Uses project logStep-style logger (action string + details).
  */
 
 import { sleepRandom } from '../asyncUtils.js'
@@ -20,9 +20,15 @@ function gotoWaitUntil() {
   return 'commit'
 }
 
+function selectorTimeoutMs() {
+  const n = Number(process.env.PLAYWRIGHT_SELECTOR_TIMEOUT_MS)
+  return Number.isFinite(n) && n > 0 ? n : 15_000
+}
+
 /**
  * @typedef {{
  *   startUrl: string
+ *   readySelector?: string | null
  *   selectors?: { clickTarget?: string }
  *   smoothScroll?: import('../smoothScrollPage.js').SmoothScrollPageOptions
  * }} ViewAndScrollScenarioConfig
@@ -40,23 +46,51 @@ export async function runViewAndScrollScenario(page, logger, config) {
     throw new Error('runViewAndScrollScenario: startUrl is required')
   }
 
-  log('scenario view_and_scroll started', startUrl)
-
-  await page.goto(startUrl, {
+  const response = await page.goto(startUrl, {
     waitUntil: gotoWaitUntil(),
     timeout: gotoTimeoutMs(),
   })
 
+  const status = response?.status() ?? null
+  if (status === 407) {
+    throw new Error(`HTTP 407 for ${startUrl}`)
+  }
+  const ok = response === null || response.ok()
+  if (!ok) {
+    throw new Error(`HTTP ${status ?? '?'} for ${startUrl}`)
+  }
+
+  log('PAGE_OPENED', page.url())
+
+  const ready = String(config.readySelector ?? '').trim()
+  if (ready) {
+    await page.waitForSelector(ready, {
+      state: 'attached',
+      timeout: selectorTimeoutMs(),
+    })
+  }
+
+  log('WAITING', 'after page open 2000–5000ms')
   await sleepRandom(2000, 5000)
 
-  await smoothScrollPage(page, log, config.smoothScroll ?? {})
+  await smoothScrollPage(page, log, {
+    ...(config.smoothScroll ?? {}),
+    scrollLog: {
+      started: 'SCROLL_STARTED',
+      completed: 'SCROLL_COMPLETED',
+      waitBetweenSteps: 'WAITING',
+    },
+  })
 
   const clickSel = String(config.selectors?.clickTarget ?? '').trim()
   if (clickSel) {
     await safeClick(page, clickSel, log)
+  } else {
+    log('CLICK_SKIPPED', 'no clickTarget selector')
   }
 
+  log('WAITING', 'after scroll 3000–6000ms')
   await sleepRandom(3000, 6000)
 
-  log('scenario view_and_scroll completed', `url=${startUrl}`)
+  log('SCENARIO_COMPLETED', startUrl)
 }
