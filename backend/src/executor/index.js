@@ -5,6 +5,7 @@
 export { sleep, randomInt, sleepRandom } from './asyncUtils.js'
 export { smoothScrollPage } from './smoothScrollPage.js'
 export { safeClick } from './safeClick.js'
+export { createBrowserSession } from './createBrowserSession.js'
 
 export {
   getAccount,
@@ -24,6 +25,9 @@ export {
   getReadySelector,
   parseCookiesForUrl,
   parseCookiesForUrlStrict,
+} from './cookieParse.js'
+
+export {
   runPlaywrightTestRun,
   abortPlaywrightTestRun,
   isPlaywrightTestRunActive,

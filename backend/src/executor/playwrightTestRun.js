@@ -3,8 +3,9 @@
  * Stable single-account flow: launch → proxy → cookies → page → optional ready selector → scroll → done.
  */
 
-import { chromium } from 'playwright'
 import { buildPlaywrightProxyConfig, describeProxyForLog } from './proxyConfig.js'
+import { parseCookiesForUrl, parseCookiesForUrlStrict } from './cookieParse.js'
+import { createBrowserSession } from './createBrowserSession.js'
 import { getExecutionContext, logStep, updateStatus } from './runner.js'
 
 /**
@@ -123,106 +124,7 @@ function randomInt(min, max) {
 /** @see ./proxyConfig.js */
 const IPIFY_URL = 'https://api.ipify.org/?format=json'
 
-/**
- * Parse cookies for addCookies. If user supplied non-empty cookie data that cannot be used → invalid.
- * @returns {{ cookies: import('playwright').Cookie[], invalid?: string }}
- */
-export function parseCookiesForUrlStrict(raw, pageUrl) {
-  const s = String(raw ?? '').trim()
-  if (!s) {
-    return { cookies: [] }
-  }
-
-  const origin = pageUrl.origin
-  const host = pageUrl.hostname
-
-  const trimmed = s.trim()
-  if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-    try {
-      const parsed = JSON.parse(trimmed)
-      if (Array.isArray(parsed)) {
-        const cookies = normalizeCookieList(parsed, pageUrl)
-        if (cookies.length === 0) {
-          return { cookies: [], invalid: 'JSON array parsed but no valid cookie entries' }
-        }
-        return { cookies }
-      }
-      if (parsed && typeof parsed === 'object' && Array.isArray(parsed.cookies)) {
-        const cookies = normalizeCookieList(parsed.cookies, pageUrl)
-        if (cookies.length === 0) {
-          return { cookies: [], invalid: 'storageState.cookies empty or invalid' }
-        }
-        return { cookies }
-      }
-      return { cookies: [], invalid: 'JSON is not a cookie array or storageState' }
-    } catch (e) {
-      const m = e instanceof Error ? e.message : String(e)
-      return { cookies: [], invalid: `invalid JSON: ${m}` }
-    }
-  }
-
-  const headerCookies = []
-  for (const part of s.split(';')) {
-    const p = part.trim()
-    if (!p) continue
-    const eq = p.indexOf('=')
-    if (eq <= 0) continue
-    const name = p.slice(0, eq).trim()
-    const value = p.slice(eq + 1).trim()
-    if (!name) continue
-    headerCookies.push({ name, value, url: origin })
-  }
-
-  if (headerCookies.length === 0) {
-    return {
-      cookies: [],
-      invalid: 'cookie string is not valid JSON and has no name=value pairs',
-    }
-  }
-  return { cookies: headerCookies }
-}
-
-function normalizeCookieList(list, pageUrl) {
-  const host = pageUrl.hostname
-  /** @type {import('playwright').Cookie[]} */
-  const out = []
-  for (const item of list) {
-    if (!item || typeof item !== 'object') continue
-    const o = /** @type {Record<string, unknown>} */ (item)
-    const name = o.name != null ? String(o.name) : ''
-    if (!name) continue
-    const value = o.value != null ? String(o.value) : ''
-    const path = o.path != null ? String(o.path) : '/'
-    let domain = o.domain != null ? String(o.domain) : host
-    if (!domain) domain = host
-    /** @type {import('playwright').Cookie} */
-    const c =
-      o.url != null
-        ? { name, value, url: String(o.url) }
-        : { name, value, domain, path }
-    if (o.expires != null && Number.isFinite(Number(o.expires))) {
-      c.expires = Number(o.expires)
-    }
-    if (o.httpOnly === true) c.httpOnly = true
-    if (o.secure === true) c.secure = true
-    if (o.sameSite === 'Strict' || o.sameSite === 'Lax' || o.sameSite === 'None') {
-      c.sameSite = o.sameSite
-    }
-    out.push(c)
-  }
-  return out
-}
-
-/** Re-export loose parser name for tests importing parseCookiesForUrl */
-export function parseCookiesForUrl(raw, pageUrl) {
-  const r = parseCookiesForUrlStrict(raw, pageUrl)
-  return r.cookies
-}
-
-function launchTimeoutMs() {
-  const n = Number(process.env.PLAYWRIGHT_LAUNCH_TIMEOUT_MS)
-  return Number.isFinite(n) && n > 0 ? n : 60_000
-}
+export { parseCookiesForUrl, parseCookiesForUrlStrict } from './cookieParse.js'
 
 function gotoTimeoutMs() {
   const n = Number(process.env.PLAYWRIGHT_GOTO_TIMEOUT_MS)
@@ -292,67 +194,45 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       `provider=${String(ctx.proxy?.provider ?? '').trim() || '(none)'}`,
     ].join(' | '))
 
-    /** Proxy on browser context (not launch) — avoids some HTTP 407 cases with authenticated HTTP proxies. */
-    const launchOpts = {
-      headless: process.env.PLAYWRIGHT_HEADED === '1' ? false : true,
-      args: process.env.PLAYWRIGHT_CHROMIUM_ARGS
-        ? process.env.PLAYWRIGHT_CHROMIUM_ARGS.split(/\s+/).filter(Boolean)
-        : [],
-    }
-
-    let browser
-    try {
-      let launchTimeoutId
-      const timeoutPromise = new Promise((_, reject) => {
-        launchTimeoutId = setTimeout(() => reject(new Error('Launch timed out')), launchTimeoutMs())
-      })
-      try {
-        browser = await Promise.race([chromium.launch(launchOpts), timeoutPromise])
-      } finally {
-        if (launchTimeoutId) clearTimeout(launchTimeoutId)
-      }
-    } catch (err) {
-      const { action, details } = classifyError(err, { phase: 'launch' })
-      failRun(accountId, state, action, details)
-      return
-    }
-
-    state.browser = browser
-    if (state.cancelled) return
-
-    let context
-    try {
-      context = await browser.newContext({
-        ignoreHTTPSErrors: process.env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS === '1',
-        ...(launchProxy ? { proxy: launchProxy } : {}),
-      })
-    } catch (err) {
-      const { action, details } = classifyError(err, { phase: 'launch' })
-      failRun(accountId, state, action, details)
-      return
-    }
-
-    state.context = context
-    logStep(
-      accountId,
-      'browser started',
-      launchProxy ? `with proxy | ${proxyLogLine}` : 'no proxy',
-    )
-
     const rawCookies = String(ctx.account.cookies ?? '').trim()
     const parsed = parseCookiesForUrlStrict(rawCookies, pageUrl)
     if (parsed.invalid) {
       failRun(accountId, state, 'cookies invalid', parsed.invalid)
       return
     }
-    if (parsed.cookies.length > 0) {
-      try {
-        await context.addCookies(parsed.cookies)
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
+
+    let browser
+    let context
+    let page
+    try {
+      ;({ browser, context, page } = await createBrowserSession({
+        headless: process.env.PLAYWRIGHT_HEADED !== '1',
+        proxy: launchProxy ?? undefined,
+        cookies: rawCookies || undefined,
+        cookieUrl: targetUrl,
+      }))
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (parsed.cookies.length > 0 || rawCookies) {
         failRun(accountId, state, 'cookies invalid', msg)
-        return
+      } else {
+        const { action, details } = classifyError(err, { phase: 'launch' })
+        failRun(accountId, state, action, details)
       }
+      return
+    }
+
+    state.browser = browser
+    state.context = context
+    if (state.cancelled) return
+
+    logStep(
+      accountId,
+      'browser started',
+      launchProxy ? `with proxy | ${proxyLogLine}` : 'no proxy',
+    )
+
+    if (parsed.cookies.length > 0) {
       logStep(accountId, 'cookies loaded', `${parsed.cookies.length} cookie(s)`)
     } else {
       logStep(accountId, 'cookies loaded', 'none')
@@ -407,15 +287,6 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           /* ignore */
         }
       }
-    }
-
-    let page
-    try {
-      page = await context.newPage()
-    } catch (err) {
-      const { action, details } = classifyError(err, { phase: 'launch' })
-      failRun(accountId, state, action, details)
-      return
     }
 
     let response
