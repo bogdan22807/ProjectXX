@@ -71,7 +71,7 @@ export async function createBrowserSession(config = {}) {
     const rawCookies = String(config.cookies ?? '').trim()
     if (rawCookies) {
       const base =
-        String(config.cookieUrl ?? '').trim() || 'https://example.com/'
+        String(config.cookieUrl ?? '').trim() || 'https://www.tiktok.com/'
       let pageUrl
       try {
         pageUrl = new URL(base)

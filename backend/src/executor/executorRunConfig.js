@@ -5,12 +5,11 @@
 
 import { buildPlaywrightProxyConfig } from './proxyConfig.js'
 
-const DEFAULT_START = 'https://example.com'
 const TIKTOK_START = 'https://www.tiktok.com/'
 
 function envStartUrl() {
-  const u = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL ?? DEFAULT_START
-  return String(u).trim() || DEFAULT_START
+  const u = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL ?? TIKTOK_START
+  return String(u).trim() || TIKTOK_START
 }
 
 function envHeadless() {

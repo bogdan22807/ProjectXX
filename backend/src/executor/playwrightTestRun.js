@@ -92,7 +92,7 @@ function stateAbortedMessage(lower) {
   return lower.includes('abort') || lower.includes('cancelled')
 }
 
-const DEFAULT_TEST_PAGE_URL = 'https://example.com'
+const DEFAULT_TEST_PAGE_URL = 'https://www.tiktok.com/'
 
 export function getDefaultSocialTestUrl() {
   const u = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL ?? DEFAULT_TEST_PAGE_URL
