@@ -7,9 +7,18 @@ import { buildPlaywrightProxyConfig } from './proxyConfig.js'
 
 const TIKTOK_START = 'https://www.tiktok.com/'
 
-function envStartUrl() {
-  const u = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL ?? TIKTOK_START
-  return String(u).trim() || TIKTOK_START
+/** Env test URL only if set and not example.com (never use example.com as fallback). */
+function readEnvSocialUrl() {
+  const raw = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL
+  if (raw == null) return null
+  const s = String(raw).trim()
+  if (!s) return null
+  try {
+    if (new URL(s).hostname === 'example.com') return null
+  } catch {
+    return null
+  }
+  return s
 }
 
 function envHeadless() {
@@ -46,13 +55,14 @@ function proxyFromEnv() {
  *   debugCheckProxy?: boolean
  *   proxySource: 'none' | 'database' | 'env'
  *   platform: string
+ *   startUrlSource: 'platform' | 'env' | 'override' | 'default'
  * }} ExecutorRunConfig
  */
 
 /** Defaults for docs / overrides (`proxy: null` until you pass a built proxy). */
 export function getDefaultExecutorRunConfig() {
   return {
-    startUrl: envStartUrl(),
+    startUrl: TIKTOK_START,
     headless: envHeadless(),
     proxy: null,
     cookies: '',
@@ -62,6 +72,7 @@ export function getDefaultExecutorRunConfig() {
     debugCheckProxy: false,
     proxySource: 'none',
     platform: 'TikTok',
+    startUrlSource: 'default',
   }
 }
 
@@ -81,6 +92,7 @@ export function mergeExecutorRunConfig(base, patch) {
     timeouts: { ...b.timeouts, ...(p.timeouts ?? {}) },
     proxySource: p.proxySource ?? b.proxySource,
     platform: p.platform ?? b.platform,
+    startUrlSource: p.startUrlSource ?? b.startUrlSource,
   }
 }
 
@@ -95,11 +107,36 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
 
   const explicitTarget =
     routeOptions.targetUrl != null && String(routeOptions.targetUrl).trim() !== ''
-  const startUrl = explicitTarget
-    ? String(routeOptions.targetUrl).trim()
-    : platform === 'TikTok'
-      ? TIKTOK_START
-      : envStartUrl()
+
+  /** Platform wins over env: TikTok → fixed URL; never example.com as fallback. */
+  let startUrl = TIKTOK_START
+  /** @type {'platform' | 'env' | 'override' | 'default'} */
+  let startUrlSource = 'platform'
+
+  if (explicitTarget) {
+    startUrl = String(routeOptions.targetUrl).trim()
+    startUrlSource = 'override'
+    try {
+      if (new URL(startUrl).hostname === 'example.com') {
+        startUrl = TIKTOK_START
+        startUrlSource = 'platform'
+      }
+    } catch {
+      /* keep startUrl; validation elsewhere */
+    }
+  } else if (platform === 'TikTok') {
+    startUrl = TIKTOK_START
+    startUrlSource = 'platform'
+  } else {
+    const fromEnv = readEnvSocialUrl()
+    if (fromEnv) {
+      startUrl = fromEnv
+      startUrlSource = 'env'
+    } else {
+      startUrl = TIKTOK_START
+      startUrlSource = 'default'
+    }
+  }
 
   const readyRaw = routeOptions.readySelector
   const readySelector =
@@ -136,5 +173,6 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
     debugCheckProxy,
     proxySource,
     platform,
+    startUrlSource,
   }
 }

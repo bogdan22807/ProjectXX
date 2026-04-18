@@ -95,8 +95,16 @@ function stateAbortedMessage(lower) {
 const DEFAULT_TEST_PAGE_URL = 'https://www.tiktok.com/'
 
 export function getDefaultSocialTestUrl() {
-  const u = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL ?? DEFAULT_TEST_PAGE_URL
-  return String(u).trim() || DEFAULT_TEST_PAGE_URL
+  const raw = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL
+  const fallback = DEFAULT_TEST_PAGE_URL
+  if (raw == null || String(raw).trim() === '') return fallback
+  const u = String(raw).trim()
+  try {
+    if (new URL(u).hostname === 'example.com') return fallback
+  } catch {
+    return fallback
+  }
+  return u
 }
 
 export function getReadySelector() {
@@ -235,6 +243,13 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       proxyLogLine,
       `provider=${String(ctx.proxy?.provider ?? '').trim() || '(none)'}`,
     ].join(' | '))
+
+    logStep(accountId, 'START_URL_SELECTED', runConfig.startUrl)
+    logStep(
+      accountId,
+      'START_URL_SOURCE',
+      String(runConfig.startUrlSource ?? 'default'),
+    )
 
     try {
       ;({ browser, context, page } = await createBrowserSession({
