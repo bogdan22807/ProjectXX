@@ -3,3 +3,4 @@ data/app.db-journal
 data/app.db-wal
 data/app.db-shm
 node_modules/
+playwright-debug/

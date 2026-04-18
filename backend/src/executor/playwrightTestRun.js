@@ -128,7 +128,7 @@ const DEBUG_PROXY_IP_URL = 'https://httpbin.org/ip'
 
 /**
  * @param {string} accountId
- * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean }} [options]
+ * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean }} [options]
  */
 export async function runPlaywrightTestRun(accountId, options = {}) {
   const targetUrl = String(options.targetUrl ?? getDefaultSocialTestUrl()).trim() || DEFAULT_TEST_PAGE_URL
@@ -201,7 +201,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           ? describeLaunchProxySafe(launchProxy, { provider: 'env' })
           : 'proxy: none'
     logStep(accountId, 'playwright launch prep', [
-      `headless=${runConfig.headless ? '1' : '0'}`,
+      `headless=${headlessForSession ? '1' : '0'}`,
       `targetUrl=${runConfig.startUrl}`,
       `cookiesLen=${String(runConfig.cookies ?? '').trim().length}`,
       proxyLogLine,
@@ -218,9 +218,23 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     let browser
     let context
     let page
+    /** Default visible browser for real-site debug unless overridden. */
+    const headlessForSession =
+      options.headless === true
+        ? true
+        : options.headless === false
+          ? false
+          : String(process.env.PLAYWRIGHT_HEADLESS ?? '').trim() === '1'
+            ? true
+            : false
+
+    const debugScreenshots =
+      options.debugScreenshots === true ||
+      String(process.env.PLAYWRIGHT_DEBUG_SCREENSHOTS ?? '').trim() === '1'
+
     try {
       ;({ browser, context, page } = await createBrowserSession({
-        headless: runConfig.headless,
+        headless: headlessForSession,
         proxy: launchProxy,
         cookies: rawCookies || undefined,
         cookieUrl: runConfig.startUrl,
@@ -339,6 +353,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           readySelector: runConfig.readySelector,
           selectors: runConfig.selectors,
           timeouts: runConfig.timeouts,
+          debugScreenshots,
         },
       )
     } catch (err) {

@@ -15,7 +15,7 @@ import { randomInt, sleepRandom } from './asyncUtils.js'
  *   maxPause?: number
  *   scrollBackMin?: number
  *   scrollBackMax?: number
- *   scrollLog?: { started?: string; completed?: string; waitBetweenSteps?: string }
+ *   scrollLog?: { started?: string; completed?: string; waitBetweenSteps?: string; step?: string }
  * }} SmoothScrollPageOptions
  */
 
@@ -41,6 +41,7 @@ export async function smoothScrollPage(page, logger, options = {}) {
   const startAction = scrollLog.started ?? 'smooth scroll started'
   const completeAction = scrollLog.completed ?? 'smooth scroll completed'
   const waitAction = scrollLog.waitBetweenSteps ?? 'WAITING'
+  const stepAction = scrollLog.step ?? 'SCROLL_STEP'
 
   const log =
     typeof logger === 'function'
@@ -60,6 +61,7 @@ export async function smoothScrollPage(page, logger, options = {}) {
   for (let i = 0; i < steps; i++) {
     const dy = randomInt(o.minDistance, o.maxDistance)
     await page.mouse.wheel(0, dy)
+    log(stepAction, `dy=${dy}px`)
     log(waitAction, `between scroll steps ${o.minPause}-${o.maxPause}ms`)
     await sleepRandom(o.minPause, o.maxPause)
   }

@@ -3,6 +3,8 @@
  * Uses project logStep-style logger (action string + details).
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
 import { sleepRandom } from '../asyncUtils.js'
 import { safeClick } from '../safeClick.js'
 import { smoothScrollPage } from '../smoothScrollPage.js'
@@ -27,8 +29,22 @@ function selectorTimeoutMs() {
  *   selectors?: { clickTarget?: string }
  *   timeouts?: { pageLoad?: number }
  *   smoothScroll?: import('../smoothScrollPage.js').SmoothScrollPageOptions
+ *   debugScreenshots?: boolean
+ *   screenshotDir?: string
  * }} ViewAndScrollScenarioConfig
  */
+
+function defaultScreenshotDir() {
+  return path.join(process.cwd(), 'playwright-debug')
+}
+
+async function maybeScreenshot(page, enabled, dir, filename) {
+  if (!enabled) return
+  const d = dir || defaultScreenshotDir()
+  fs.mkdirSync(d, { recursive: true })
+  const fp = path.join(d, filename)
+  await page.screenshot({ path: fp, fullPage: false }).catch(() => {})
+}
 
 /**
  * @param {import('playwright').Page} page
@@ -61,7 +77,12 @@ export async function runViewAndScrollScenario(page, logger, config) {
     throw new Error(`HTTP ${status ?? '?'} for ${startUrl}`)
   }
 
-  log('PAGE_OPENED', page.url())
+  const shotDir = String(config.screenshotDir ?? '').trim() || defaultScreenshotDir()
+  const shots = Boolean(config.debugScreenshots)
+
+  const titleAfterOpen = (await page.title().catch(() => '')) ?? ''
+  log('PAGE_OPENED', `url=${page.url()} | title=${titleAfterOpen}`)
+  await maybeScreenshot(page, shots, shotDir, 'debug-opened.png')
 
   const ready = String(config.readySelector ?? '').trim()
   if (ready) {
@@ -80,12 +101,15 @@ export async function runViewAndScrollScenario(page, logger, config) {
       started: 'SCROLL_STARTED',
       completed: 'SCROLL_COMPLETED',
       waitBetweenSteps: 'WAITING',
+      step: 'SCROLL_STEP',
     },
   })
+  await maybeScreenshot(page, shots, shotDir, 'debug-scrolled.png')
 
   const clickSel = String(config.selectors?.clickTarget ?? '').trim()
   if (clickSel) {
     await safeClick(page, clickSel, log)
+    await maybeScreenshot(page, shots, shotDir, 'debug-clicked.png')
   } else {
     log('CLICK_SKIPPED', 'no clickTarget selector')
   }
@@ -93,5 +117,6 @@ export async function runViewAndScrollScenario(page, logger, config) {
   log('WAITING', 'after scroll 3000–6000ms')
   await sleepRandom(3000, 6000)
 
-  log('SCENARIO_COMPLETED', startUrl)
+  const titleDone = (await page.title().catch(() => '')) ?? ''
+  log('SCENARIO_COMPLETED', `url=${page.url()} | title=${titleDone}`)
 }

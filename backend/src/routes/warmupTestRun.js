@@ -38,10 +38,27 @@ router.post('/', (req, res) => {
     debugRaw === 1 ||
     String(debugRaw ?? '').toLowerCase() === 'true' ||
     String(debugRaw ?? '').trim() === '1'
+  const shotsRaw = body.debugScreenshots ?? body.debug_screenshots
+  const debugScreenshots =
+    shotsRaw === true ||
+    shotsRaw === 1 ||
+    String(shotsRaw ?? '').toLowerCase() === 'true' ||
+    String(shotsRaw ?? '').trim() === '1'
+  const headlessRaw = body.headless
+  const headless =
+    headlessRaw === true || headlessRaw === 1 || String(headlessRaw ?? '').toLowerCase() === 'true'
+      ? true
+      : headlessRaw === false ||
+          headlessRaw === 0 ||
+          String(headlessRaw ?? '').toLowerCase() === 'false'
+        ? false
+        : undefined
   void runPlaywrightTestRun(accountId, {
     targetUrl: targetUrl != null ? String(targetUrl) : undefined,
     readySelector: readySelector != null ? String(readySelector) : undefined,
     debugCheckProxy: debugCheckProxy || undefined,
+    debugScreenshots: debugScreenshots || undefined,
+    headless,
   }).catch((err) => {
     console.error('[warmup/test-run]', err)
   })
