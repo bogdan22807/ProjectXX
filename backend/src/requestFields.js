@@ -27,21 +27,28 @@ export function accountFieldsFromBody(body) {
 
 /** Defaults for POST /accounts */
 export function accountCreatePayload(body) {
+  const raw = accountFieldsFromBody(body)
   const defaults = {
     name: 'Unnamed',
     login: '',
     cookies: '',
-    platform: 'Other',
+    platform: 'TikTok',
     proxy_id: null,
     browser_profile_id: null,
     status: 'New',
   }
-  return { ...defaults, ...accountFieldsFromBody(body) }
+  const merged = { ...defaults, ...raw }
+  merged.platform = 'TikTok'
+  return merged
 }
 
 /** @param {Record<string, unknown> | null | undefined} body */
 export function accountPatchPayload(body) {
-  return accountFieldsFromBody(body)
+  const p = accountFieldsFromBody(body)
+  if (Object.prototype.hasOwnProperty.call(p, 'platform')) {
+    p.platform = 'TikTok'
+  }
+  return p
 }
 
 function trimStr(v) {

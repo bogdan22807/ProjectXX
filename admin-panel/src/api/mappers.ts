@@ -43,17 +43,8 @@ export type ApiLog = {
   created_at: string
 }
 
-const platforms: Platform[] = [
-  'Twitter',
-  'Instagram',
-  'Facebook',
-  'TikTok',
-  'LinkedIn',
-  'Other',
-]
-
-function asPlatform(p: string): Platform {
-  return platforms.includes(p as Platform) ? (p as Platform) : 'Other'
+function asPlatform(_p: string): Platform {
+  return 'TikTok'
 }
 
 export function mapAccount(row: ApiAccount): Account {

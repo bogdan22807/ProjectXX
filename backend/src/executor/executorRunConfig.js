@@ -62,7 +62,7 @@ export function getDefaultExecutorRunConfig() {
     readySelector: null,
     debugCheckProxy: false,
     proxySource: 'none',
-    platform: 'Other',
+    platform: 'TikTok',
   }
 }
 
@@ -92,7 +92,7 @@ export function mergeExecutorRunConfig(base, patch) {
  * @returns {ExecutorRunConfig}
  */
 export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
-  const platform = String(ctx.account.platform ?? '').trim() || 'Other'
+  const platform = 'TikTok'
 
   const explicitTarget =
     routeOptions.targetUrl != null && String(routeOptions.targetUrl).trim() !== ''

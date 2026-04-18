@@ -22,15 +22,6 @@ import { useAppState } from '../context/AppState'
 import { formatTime } from '../utils/format'
 import type { Account, AccountStatus, Platform } from '../types/domain'
 
-const platforms: Platform[] = [
-  'Twitter',
-  'Instagram',
-  'Facebook',
-  'TikTok',
-  'LinkedIn',
-  'Other',
-]
-
 const accountStatuses: AccountStatus[] = ['New', 'Starting', 'Ready', 'Running', 'Error']
 
 type FormState = {
@@ -47,7 +38,7 @@ const emptyForm = (): FormState => ({
   name: '',
   login: '',
   cookies: '',
-  platform: 'Twitter',
+  platform: 'TikTok',
   proxyId: '',
   profileId: '',
   status: 'New',
@@ -104,20 +95,9 @@ function AccountFields({
           placeholder="Paste cookie string (local only)"
         />
       </label>
-      <label className="block text-xs font-medium text-zinc-400">
-        Platform
-        <select
-          className={fieldClass}
-          value={form.platform}
-          onChange={(e) => setForm((f) => ({ ...f, platform: e.target.value as Platform }))}
-        >
-          {platforms.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="text-xs text-zinc-400">
+        Platform: <span className="text-zinc-200">TikTok</span>
+      </div>
       <label className="block text-xs font-medium text-zinc-400">
         Proxy
         <select

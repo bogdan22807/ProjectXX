@@ -4,13 +4,7 @@ export type ProxyStatus = 'Active' | 'Needs Check' | 'Dead'
 
 export type ProfileStatus = 'Ready' | 'In Use' | 'Error'
 
-export type Platform =
-  | 'Twitter'
-  | 'Instagram'
-  | 'Facebook'
-  | 'TikTok'
-  | 'LinkedIn'
-  | 'Other'
+export type Platform = 'TikTok'
 
 export interface Account {
   id: string
