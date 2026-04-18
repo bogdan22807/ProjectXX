@@ -44,6 +44,7 @@ function proxyFromEnv() {
  *   timeouts: { pageLoad: number }
  *   readySelector: string | null
  *   debugCheckProxy?: boolean
+ *   proxySource: 'none' | 'database' | 'env'
  * }} ExecutorRunConfig
  */
 
@@ -58,6 +59,7 @@ export function getDefaultExecutorRunConfig() {
     timeouts: { pageLoad: envPageLoadMs() },
     readySelector: null,
     debugCheckProxy: false,
+    proxySource: 'none',
   }
 }
 
@@ -75,6 +77,7 @@ export function mergeExecutorRunConfig(base, patch) {
     ...p,
     selectors: { ...b.selectors, ...(p.selectors ?? {}) },
     timeouts: { ...b.timeouts, ...(p.timeouts ?? {}) },
+    proxySource: p.proxySource ?? b.proxySource,
   }
 }
 
@@ -95,11 +98,21 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
     clickRaw != null && String(clickRaw).trim() !== '' ? String(clickRaw).trim() : undefined
 
   const fromDb = buildPlaywrightProxyConfig(ctx.proxy)
-  const launchProxy = fromDb ?? proxyFromEnv()
+  const fromEnv = proxyFromEnv()
+  const launchProxy = fromDb ?? fromEnv
+
+  /** `database` if built from linked proxy row; `env` only if env filled the gap. */
+  let proxySource = /** @type {'none' | 'database' | 'env'} */ ('none')
+  if (fromDb) {
+    proxySource = 'database'
+  } else if (fromEnv) {
+    proxySource = 'env'
+  }
 
   const debugCheckProxy =
     routeOptions.debugCheckProxy === true ||
-    String(process.env.PLAYWRIGHT_DEBUG_PROXY_IP_CHECK ?? '').trim() === '1'
+    String(process.env.PLAYWRIGHT_DEBUG_PROXY_IP_CHECK ?? '').trim() === '1' ||
+    true
 
   return {
     startUrl,
@@ -110,5 +123,6 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
     timeouts: { pageLoad: envPageLoadMs() },
     readySelector,
     debugCheckProxy,
+    proxySource,
   }
 }

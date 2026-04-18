@@ -125,6 +125,46 @@ export function buildPlaywrightProxyConfig(proxy) {
  * @param {ProxyLike | null | undefined} proxy
  * @param {import('playwright').LaunchOptions['proxy'] | undefined} launchProxy
  */
+/**
+ * Mask username for logs (never log password).
+ * @param {string | undefined} username
+ */
+export function maskProxyUsernameForLog(username) {
+  const u = String(username ?? '').trim()
+  if (!u) return '(omitted)'
+  if (u.length <= 2) return '***'
+  return `${u.slice(0, 2)}***${u.slice(-1)}`
+}
+
+/**
+ * Safe one-line description of the Playwright `proxy` object passed to launch (no password).
+ * @param {import('playwright').LaunchOptions['proxy'] | null | undefined} launchProxy
+ * @param {{ provider?: string }} [meta]
+ */
+export function describeLaunchProxySafe(launchProxy, meta = {}) {
+  const provider = String(meta.provider ?? '').trim() || '(none)'
+  if (!launchProxy?.server) {
+    return `provider=${provider} server=(none) user=(omitted)`
+  }
+  let serverForLog = launchProxy.server
+  try {
+    const parsed = new URL(serverForLog)
+    if (parsed.username || parsed.password) {
+      parsed.username = ''
+      parsed.password = ''
+      serverForLog = parsed.toString().replace(/\/$/, '')
+    }
+  } catch {
+    /* keep raw server string */
+  }
+  const userField = launchProxy.username
+  const userSafe =
+    userField != null && String(userField).trim()
+      ? `user=${maskProxyUsernameForLog(String(userField))}`
+      : 'user=(embedded-in-server-url-or-omitted)'
+  return `provider=${provider} server=${serverForLog} ${userSafe}`
+}
+
 export function describeProxyForLog(proxy, launchProxy) {
   if (!proxy || !launchProxy?.server) {
     return 'proxy: none'
