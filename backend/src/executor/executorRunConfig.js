@@ -6,6 +6,7 @@
 import { buildPlaywrightProxyConfig } from './proxyConfig.js'
 
 const DEFAULT_START = 'https://example.com'
+const TIKTOK_START = 'https://www.tiktok.com/'
 
 function envStartUrl() {
   const u = process.env.SOCIAL_TEST_URL ?? process.env.TEST_SOCIAL_URL ?? DEFAULT_START
@@ -45,6 +46,7 @@ function proxyFromEnv() {
  *   readySelector: string | null
  *   debugCheckProxy?: boolean
  *   proxySource: 'none' | 'database' | 'env'
+ *   platform: string
  * }} ExecutorRunConfig
  */
 
@@ -60,6 +62,7 @@ export function getDefaultExecutorRunConfig() {
     readySelector: null,
     debugCheckProxy: false,
     proxySource: 'none',
+    platform: 'Other',
   }
 }
 
@@ -78,6 +81,7 @@ export function mergeExecutorRunConfig(base, patch) {
     selectors: { ...b.selectors, ...(p.selectors ?? {}) },
     timeouts: { ...b.timeouts, ...(p.timeouts ?? {}) },
     proxySource: p.proxySource ?? b.proxySource,
+    platform: p.platform ?? b.platform,
   }
 }
 
@@ -88,8 +92,16 @@ export function mergeExecutorRunConfig(base, patch) {
  * @returns {ExecutorRunConfig}
  */
 export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
-  const startUrl =
-    String(routeOptions.targetUrl ?? envStartUrl()).trim() || envStartUrl()
+  const platform = String(ctx.account.platform ?? '').trim() || 'Other'
+
+  const explicitTarget =
+    routeOptions.targetUrl != null && String(routeOptions.targetUrl).trim() !== ''
+  const startUrl = explicitTarget
+    ? String(routeOptions.targetUrl).trim()
+    : platform === 'TikTok'
+      ? TIKTOK_START
+      : envStartUrl()
+
   const readyRaw = routeOptions.readySelector
   const readySelector =
     readyRaw != null && String(readyRaw).trim() !== '' ? String(readyRaw).trim() : null
@@ -124,5 +136,6 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
     readySelector,
     debugCheckProxy,
     proxySource,
+    platform,
   }
 }

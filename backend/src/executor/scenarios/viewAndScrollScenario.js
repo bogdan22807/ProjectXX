@@ -31,6 +31,8 @@ function selectorTimeoutMs() {
  *   smoothScroll?: import('../smoothScrollPage.js').SmoothScrollPageOptions
  *   debugScreenshots?: boolean
  *   screenshotDir?: string
+ *   skipInitialNavigation?: boolean
+ *   platform?: string
  * }} ViewAndScrollScenarioConfig
  */
 
@@ -44,6 +46,27 @@ async function maybeScreenshot(page, enabled, dir, filename) {
   fs.mkdirSync(d, { recursive: true })
   const fp = path.join(d, filename)
   await page.screenshot({ path: fp, fullPage: false }).catch(() => {})
+}
+
+/**
+ * @param {string} platform
+ * @param {string} url
+ * @param {string} title
+ */
+export function inferTikTokAuthState(platform, url, title) {
+  if (String(platform).trim() !== 'TikTok') return 'unknown'
+  const u = String(url).toLowerCase()
+  const t = String(title).toLowerCase()
+  if (u.includes('/login') || u.includes('signup') || (t.includes('log in') && t.includes('tiktok'))) {
+    return 'redirected_to_login'
+  }
+  if (u.includes('verify') || u.includes('captcha') || u.includes('challenge')) {
+    return 'redirected_to_login'
+  }
+  if (u.includes('tiktok.com') && !u.includes('/login')) {
+    return 'logged_in'
+  }
+  return 'unknown'
 }
 
 /**
@@ -63,26 +86,37 @@ export async function runViewAndScrollScenario(page, logger, config) {
     return Number.isFinite(n) && n > 0 ? n : 60_000
   })()
 
-  const response = await page.goto(startUrl, {
-    waitUntil: gotoWaitUntil(),
-    timeout: pageLoadMs,
-  })
-
-  const status = response?.status() ?? null
-  if (status === 407) {
-    throw new Error(`HTTP 407 for ${startUrl}`)
-  }
-  const ok = response === null || response.ok()
-  if (!ok) {
-    throw new Error(`HTTP ${status ?? '?'} for ${startUrl}`)
-  }
-
+  const platform = String(config.platform ?? '').trim() || 'Other'
   const shotDir = String(config.screenshotDir ?? '').trim() || defaultScreenshotDir()
   const shots = Boolean(config.debugScreenshots)
 
-  const titleAfterOpen = (await page.title().catch(() => '')) ?? ''
-  log('PAGE_OPENED', `url=${page.url()} | title=${titleAfterOpen}`)
-  await maybeScreenshot(page, shots, shotDir, 'debug-opened.png')
+  if (!config.skipInitialNavigation) {
+    const response = await page.goto(startUrl, {
+      waitUntil: gotoWaitUntil(),
+      timeout: pageLoadMs,
+    })
+
+    const status = response?.status() ?? null
+    if (status === 407) {
+      throw new Error(`HTTP 407 for ${startUrl}`)
+    }
+    const ok = response === null || response.ok()
+    if (!ok) {
+      throw new Error(`HTTP ${status ?? '?'} for ${startUrl}`)
+    }
+
+    const curUrl = page.url()
+    const titleAfterOpen = (await page.title().catch(() => '')) ?? ''
+    log('CURRENT_URL', curUrl)
+    log('PAGE_TITLE', titleAfterOpen || '(empty)')
+    const auth = inferTikTokAuthState(platform, curUrl, titleAfterOpen)
+    log('AUTH_STATE', auth)
+    if (auth === 'redirected_to_login') {
+      log('TIKTOK_AUTH_REDIRECT', 'cookies invalid or session expired — login/verify/captcha flow detected')
+    }
+    log('PAGE_OPENED', `url=${curUrl} | title=${titleAfterOpen}`)
+    await maybeScreenshot(page, shots, shotDir, 'debug-opened.png')
+  }
 
   const ready = String(config.readySelector ?? '').trim()
   if (ready) {
@@ -117,6 +151,10 @@ export async function runViewAndScrollScenario(page, logger, config) {
   log('WAITING', 'after scroll 3000–6000ms')
   await sleepRandom(3000, 6000)
 
+  const finalUrl = page.url()
   const titleDone = (await page.title().catch(() => '')) ?? ''
-  log('SCENARIO_COMPLETED', `url=${page.url()} | title=${titleDone}`)
+  log('CURRENT_URL', finalUrl)
+  log('PAGE_TITLE', titleDone || '(empty)')
+  log('AUTH_STATE', inferTikTokAuthState(platform, finalUrl, titleDone))
+  log('SCENARIO_COMPLETED', `url=${finalUrl} | title=${titleDone}`)
 }

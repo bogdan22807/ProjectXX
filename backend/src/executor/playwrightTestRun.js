@@ -8,7 +8,10 @@ import { buildExecutorRunConfigFromContext } from './executorRunConfig.js'
 import { parseCookiesForUrlStrict } from './cookieParse.js'
 import { createBrowserSession } from './createBrowserSession.js'
 import { getExecutionContext, logStep, updateStatus } from './runner.js'
-import { runViewAndScrollScenario } from './scenarios/viewAndScrollScenario.js'
+import {
+  inferTikTokAuthState,
+  runViewAndScrollScenario,
+} from './scenarios/viewAndScrollScenario.js'
 
 /**
  * @typedef {{
@@ -131,8 +134,6 @@ const DEBUG_PROXY_IP_URL = 'https://httpbin.org/ip'
  * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean }} [options]
  */
 export async function runPlaywrightTestRun(accountId, options = {}) {
-  const targetUrl = String(options.targetUrl ?? getDefaultSocialTestUrl()).trim() || DEFAULT_TEST_PAGE_URL
-
   if (playwrightRuns.has(accountId)) {
     throw new Error('Playwright test run already active for this account')
   }
@@ -155,8 +156,10 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     const readySelector =
       String(options.readySelector ?? getReadySelector()).trim() || null
 
+    const explicitTargetOverride =
+      options.targetUrl != null && String(options.targetUrl).trim() !== ''
     const runConfig = buildExecutorRunConfigFromContext(ctx, {
-      targetUrl,
+      ...(explicitTargetOverride ? { targetUrl: String(options.targetUrl).trim() } : {}),
       readySelector,
       debugCheckProxy: options.debugCheckProxy === true,
     })
@@ -200,14 +203,6 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         : launchProxy
           ? describeLaunchProxySafe(launchProxy, { provider: 'env' })
           : 'proxy: none'
-    logStep(accountId, 'playwright launch prep', [
-      `headless=${headlessForSession ? '1' : '0'}`,
-      `targetUrl=${runConfig.startUrl}`,
-      `cookiesLen=${String(runConfig.cookies ?? '').trim().length}`,
-      proxyLogLine,
-      `provider=${String(ctx.proxy?.provider ?? '').trim() || '(none)'}`,
-    ].join(' | '))
-
     const rawCookies = String(runConfig.cookies ?? '').trim()
     const parsed = parseCookiesForUrlStrict(rawCookies, pageUrl)
     if (parsed.invalid) {
@@ -231,6 +226,15 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     const debugScreenshots =
       options.debugScreenshots === true ||
       String(process.env.PLAYWRIGHT_DEBUG_SCREENSHOTS ?? '').trim() === '1'
+
+    logStep(accountId, 'playwright launch prep', [
+      `headless=${headlessForSession ? '1' : '0'}`,
+      `targetUrl=${runConfig.startUrl}`,
+      `platform=${runConfig.platform}`,
+      `cookiesLen=${String(runConfig.cookies ?? '').trim().length}`,
+      proxyLogLine,
+      `provider=${String(ctx.proxy?.provider ?? '').trim() || '(none)'}`,
+    ].join(' | '))
 
     try {
       ;({ browser, context, page } = await createBrowserSession({
@@ -344,6 +348,43 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       logStep(accountId, 'PROXY_IP_CHECK_ERROR', `type=${errType} ${msg}`)
     }
 
+    if (runConfig.platform === 'TikTok') {
+      try {
+        const nav = await page.goto(runConfig.startUrl, {
+          waitUntil: gotoWaitUntil(),
+          timeout: gotoTimeoutMs(),
+        })
+        const st = nav?.status() ?? null
+        if (st === 407) {
+          logStep(accountId, 'TIKTOK_OPEN_ERROR', 'HTTP 407')
+        } else if (st != null && st >= 400) {
+          logStep(accountId, 'TIKTOK_OPEN_ERROR', `HTTP ${st}`)
+        }
+        const u = page.url()
+        const ti = (await page.title().catch(() => '')) ?? ''
+        logStep(accountId, 'CURRENT_URL', u)
+        logStep(accountId, 'PAGE_TITLE', ti || '(empty)')
+        const auth0 = inferTikTokAuthState('TikTok', u, ti)
+        logStep(accountId, 'AUTH_STATE', auth0)
+        if (auth0 === 'redirected_to_login') {
+          logStep(
+            accountId,
+            'TIKTOK_AUTH_REDIRECT',
+            'cookies invalid or session expired — login/verify/captcha flow detected',
+          )
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        const lower = msg.toLowerCase()
+        let errType = 'network'
+        if (lower.includes('timeout')) errType = 'timeout'
+        else if (lower.includes('407') || lower.includes('proxy') || lower.includes('tunnel')) {
+          errType = 'proxy'
+        }
+        logStep(accountId, 'TIKTOK_OPEN_ERROR', `type=${errType} ${msg}`)
+      }
+    }
+
     try {
       await runViewAndScrollScenario(
         page,
@@ -354,6 +395,8 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           selectors: runConfig.selectors,
           timeouts: runConfig.timeouts,
           debugScreenshots,
+          platform: runConfig.platform,
+          skipInitialNavigation: runConfig.platform === 'TikTok',
         },
       )
     } catch (err) {
