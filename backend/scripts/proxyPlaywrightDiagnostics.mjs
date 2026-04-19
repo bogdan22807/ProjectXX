@@ -135,13 +135,13 @@ async function main() {
 
   const r2 = await runCase(
     'TEST_2_HTTP_PROXY_HTTP_SITE',
-    { context: { proxy: httpProxyCfg } },
+    { launch: { proxy: httpProxyCfg } },
     'http://example.com/',
   )
 
   const r3 = await runCase(
     'TEST_3_HTTP_PROXY_HTTPS_SITE',
-    { context: { proxy: httpProxyCfg } },
+    { launch: { proxy: httpProxyCfg } },
     'https://api.ipify.org/?format=json',
   )
 
@@ -155,15 +155,14 @@ async function main() {
 
   const r4 = await runCase(
     'TEST_4_SOCKS5_HTTPS_SITE',
-    { context: { proxy: socksProxyCfg } },
+    { launch: { proxy: socksProxyCfg } },
     'https://api.ipify.org/?format=json',
   )
 
   summarize(r1, r2, r3, r4)
-  const okAll = r1.ok && r2.ok && r3.ok && r4.ok
   if (r4 && r4.phase === 'launch' && String(r4.err?.message ?? '').includes('socks5 proxy authentication')) {
     console.log(
-      '\n[TEST_4] Chromium rejected SOCKS5 auth fields — app uses user:pass inside socks5:// URL instead.',
+      '\n[TEST_4] Chromium reported SOCKS5 proxy authentication failure — check credentials or SOCKS support on this port.',
     )
   }
   const exitOk = r1.ok && r2.ok && r3.ok
