@@ -34,12 +34,12 @@ async function tryPort(port, scheme) {
 
   let browser
   try {
-    browser = await chromium.launch({ headless: true })
+    browser = await chromium.launch({ headless: true, proxy })
   } catch (e) {
     return { ok: false, phase: 'launch', err: String(e?.message ?? e) }
   }
   try {
-    const ctx = await browser.newContext({ proxy })
+    const ctx = await browser.newContext()
     const page = await ctx.newPage()
     const resp = await page.goto(testUrl, { waitUntil: 'commit', timeout: timeoutMs })
     const status = resp?.status() ?? null

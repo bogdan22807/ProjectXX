@@ -3,7 +3,12 @@
  * Stable single-account flow: launch → proxy → cookies → page → optional ready selector → scroll → done.
  */
 
-import { describeLaunchProxySafe, describeProxyForLog } from './proxyConfig.js'
+import {
+  describeLaunchProxySafe,
+  describeProxyForLog,
+  formatProxyDiagnosticDetail,
+  proxySchemeForDiagnostics,
+} from './proxyConfig.js'
 import { buildExecutorRunConfigFromContext } from './executorRunConfig.js'
 import { parseCookiesForUrlStrict } from './cookieParse.js'
 import { createBrowserSession } from './createBrowserSession.js'
@@ -90,6 +95,34 @@ function classifyError(err, ctx) {
 
 function stateAbortedMessage(lower) {
   return lower.includes('abort') || lower.includes('cancelled')
+}
+
+/**
+ * @param {string} msg
+ * @param {string} [phase]
+ */
+function classifyProxyConnectivityFailure(msg, phase = '') {
+  const lower = msg.toLowerCase()
+  const p = phase.toLowerCase()
+  if (lower.includes('407') || lower.includes('proxy authentication')) {
+    return 'invalid_auth'
+  }
+  if (lower.includes('net::err_invalid_auth_credentials')) {
+    return 'invalid_auth'
+  }
+  if (lower.includes('econnrefused') || lower.includes('enotfound') || lower.includes('eaddrnotavail')) {
+    return 'network'
+  }
+  if (lower.includes('err_proxy') || lower.includes('tunnel') || lower.includes('proxy connection')) {
+    return 'proxy'
+  }
+  if (lower.includes('timeout') || p.includes('timeout')) {
+    return 'timeout'
+  }
+  if (lower.includes('proxy')) {
+    return 'proxy'
+  }
+  return 'unknown'
 }
 
 const DEFAULT_TEST_PAGE_URL = 'https://www.tiktok.com/'
@@ -190,7 +223,23 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         : runConfig.proxySource === 'env'
           ? 'env'
           : 'none'
+    const schemeLabel = launchProxy
+      ? proxySchemeForDiagnostics(ctx.proxy, launchProxy)
+      : 'none'
+    const hasLaunchUser =
+      launchProxy?.username != null && String(launchProxy.username).trim() !== ''
+    const hasLaunchPass =
+      launchProxy?.password != null && String(launchProxy.password).trim() !== ''
+    const authMode =
+      hasLaunchUser && hasLaunchPass ? 'username_password' : 'none'
+    const proxyDetailFormatted = launchProxy
+      ? formatProxyDiagnosticDetail(launchProxy)
+      : 'server=(none) user=(omitted)'
+
     logStep(accountId, 'PROXY_SOURCE', sourceLabel)
+    logStep(accountId, 'PROXY_SCHEME', schemeLabel)
+    logStep(accountId, 'PROXY_AUTH_MODE', authMode)
+    logStep(accountId, 'PROXY_DETAIL', proxyDetailFormatted)
 
     const proxyDetail =
       runConfig.proxySource === 'database' && launchProxy
@@ -203,7 +252,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
                   : String(ctx.proxy?.provider ?? '').trim() || '(none)',
             })
           : 'provider=(none) server=(none) user=(omitted)'
-    logStep(accountId, 'PROXY_DETAIL', proxyDetail)
+    logStep(accountId, 'PROXY_DETAIL_VERBOSE', proxyDetail)
 
     const proxyLogLine =
       runConfig.proxySource === 'database'
@@ -292,15 +341,21 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         30_000,
         Math.max(5_000, Math.floor(gotoTimeoutMs() * 0.5)),
       )
-      let ipPage
+      let diagPage
       try {
-        ipPage = await context.newPage()
-        const ipResp = await ipPage.goto(IPIFY_URL, {
+        diagPage = await context.newPage()
+        const ipResp = await diagPage.goto(IPIFY_URL, {
           waitUntil: gotoWaitUntil(),
           timeout: ipifyMs,
         })
         const ipStatus = ipResp?.status() ?? null
         if (ipStatus === 407) {
+          const errType = 'invalid_auth'
+          logStep(
+            accountId,
+            'PROXY_CONNECTIVITY_FAILED',
+            `phase=ipify type=${errType} HTTP 407`,
+          )
           failRun(
             accountId,
             state,
@@ -309,58 +364,63 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           )
           return
         }
-        const text = (await ipPage.textContent('body').catch(() => '')) ?? ''
-        const snippet = String(text).replace(/\s+/g, ' ').trim().slice(0, 500)
+        const ipText = (await diagPage.textContent('body').catch(() => '')) ?? ''
+        const ipSnippet = String(ipText).replace(/\s+/g, ' ').trim().slice(0, 500)
         logStep(
           accountId,
-          'proxy connectivity (ipify)',
-          `HTTP ${ipStatus ?? '?'} body=${snippet || '(empty)'}`,
+          'PROXY_IP_CHECK',
+          `url=${IPIFY_URL} HTTP ${ipStatus ?? '?'} body=${ipSnippet || '(empty)'}`,
         )
+
+        const hbResp = await diagPage.goto(DEBUG_PROXY_IP_URL, {
+          waitUntil: gotoWaitUntil(),
+          timeout: gotoTimeoutMs(),
+        })
+        const hbStatus = hbResp?.status() ?? null
+        if (hbStatus === 407) {
+          const errType = 'invalid_auth'
+          logStep(
+            accountId,
+            'PROXY_CONNECTIVITY_FAILED',
+            `phase=httpbin type=${errType} HTTP 407`,
+          )
+          failRun(
+            accountId,
+            state,
+            'proxy authentication rejected',
+            'HTTP 407 from proxy on HTTPS request (httpbin) — check credentials or whitelist.',
+          )
+          return
+        }
+        const hbBody = (await diagPage.textContent('body').catch(() => null)) ?? ''
+        const hbSnippet = String(hbBody).replace(/\s+/g, ' ').trim().slice(0, 2000)
+        logStep(
+          accountId,
+          'PROXY_IP_CHECK',
+          `url=${DEBUG_PROXY_IP_URL} HTTP ${hbStatus ?? '?'} body=${hbSnippet || '(empty)'}`,
+        )
+        logStep(accountId, 'PROXY_CONNECTIVITY_OK', 'ipify_then_httpbin')
       } catch (err) {
         if (state.abortedByUser) return
+        const msg = err instanceof Error ? err.message : String(err)
+        const errType = classifyProxyConnectivityFailure(msg, 'goto')
+        logStep(accountId, 'PROXY_CONNECTIVITY_FAILED', `phase=ipify_or_httpbin type=${errType} ${msg}`)
         const { action, details, treatAsUserStop } = classifyError(err, { phase: 'goto' })
         if (treatAsUserStop) return
         failRun(
           accountId,
           state,
-          action === 'page load timeout' ? 'proxy connectivity failed (ipify)' : action,
+          action === 'page load timeout' ? 'proxy connectivity failed (ipify/httpbin)' : action,
           `${details} — if credentials/host/port are correct, the proxy is likely unreachable, wrong scheme (try PLAYWRIGHT_PROXY_SCHEME=socks5), or blocked.`,
         )
         return
       } finally {
         try {
-          await ipPage?.close()
+          await diagPage?.close()
         } catch {
           /* ignore */
         }
       }
-    }
-
-    try {
-      const dbgResp = await page.goto(DEBUG_PROXY_IP_URL, {
-        waitUntil: gotoWaitUntil(),
-        timeout: gotoTimeoutMs(),
-      })
-      const dbgStatus = dbgResp?.status() ?? null
-      const dbgBody = (await page.textContent('body').catch(() => null)) ?? ''
-      const snippet = String(dbgBody).replace(/\s+/g, ' ').trim().slice(0, 2000)
-      console.log(`[playwright executor ${accountId}] PROXY_IP_CHECK: ${snippet}`)
-      logStep(accountId, 'PROXY_IP_CHECK', snippet || '(empty)')
-      if (dbgStatus === 407) {
-        logStep(accountId, 'PROXY_IP_CHECK_ERROR', 'type=proxy HTTP 407 Proxy Authentication Required')
-      } else if (dbgStatus != null && dbgStatus >= 400) {
-        logStep(accountId, 'PROXY_IP_CHECK_ERROR', `type=network HTTP ${dbgStatus}`)
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      const lower = msg.toLowerCase()
-      let errType = 'network'
-      if (lower.includes('timeout')) errType = 'timeout'
-      else if (lower.includes('407') || lower.includes('proxy') || lower.includes('tunnel')) {
-        errType = 'proxy'
-      }
-      console.error(`[playwright executor ${accountId}] PROXY_IP_CHECK_ERROR type=${errType}`, msg)
-      logStep(accountId, 'PROXY_IP_CHECK_ERROR', `type=${errType} ${msg}`)
     }
 
     if (runConfig.platform === 'TikTok') {

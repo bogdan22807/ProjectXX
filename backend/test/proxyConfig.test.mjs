@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { buildPlaywrightProxyConfig, describeProxyForLog } from '../src/executor/proxyConfig.js'
+import {
+  buildPlaywrightProxyConfig,
+  describeProxyForLog,
+  formatProxyDiagnosticDetail,
+} from '../src/executor/proxyConfig.js'
 
-test('plain host + port → http embeds user:pass in server URL by default', () => {
+test('plain host + port + credentials → server without auth, separate username/password', () => {
   const p = buildPlaywrightProxyConfig({
     provider: 'SOAX',
     host: '  91.246.222.146  ',
@@ -10,14 +14,14 @@ test('plain host + port → http embeds user:pass in server URL by default', () 
     username: ' takeit32 ',
     password: ' dont1 ',
   })
-  assert.equal(p?.server, 'http://takeit32:dont1@91.246.222.146:50100')
-  assert.equal(p?.username, undefined)
-  assert.equal(p?.password, undefined)
+  assert.equal(p?.server, 'http://91.246.222.146:50100')
+  assert.equal(p?.username, 'takeit32')
+  assert.equal(p?.password, 'dont1')
 })
 
-test('PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL=0 uses separate username/password', () => {
+test('PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL is ignored (credentials never in server URL)', () => {
   const prev = process.env.PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL
-  process.env.PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL = '0'
+  process.env.PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL = '1'
   try {
     const p = buildPlaywrightProxyConfig({
       host: '91.246.222.146',
@@ -41,19 +45,21 @@ test('host already includes http:// and port in separate field', () => {
     username: 'u',
     password: 'p',
   })
-  assert.equal(p?.server, 'http://u:p@proxy.example.com:9000')
+  assert.equal(p?.server, 'http://proxy.example.com:9000')
+  assert.equal(p?.username, 'u')
+  assert.equal(p?.password, 'p')
 })
 
-test('credentials only in URL host field', () => {
+test('credentials only in URL host field → split to server + username/password', () => {
   const p = buildPlaywrightProxyConfig({
     host: 'http://user:secret@10.0.0.1:8080',
     port: '',
     username: '',
     password: '',
   })
-  assert.match(p?.server ?? '', /^http:\/\/user:secret@10\.0\.0\.1:8080$/)
-  assert.equal(p?.username, undefined)
-  assert.equal(p?.password, undefined)
+  assert.equal(p?.server, 'http://10.0.0.1:8080')
+  assert.equal(p?.username, 'user')
+  assert.equal(p?.password, 'secret')
 })
 
 test('socks5 scheme preserved', () => {
@@ -66,7 +72,7 @@ test('socks5 scheme preserved', () => {
   assert.equal(p?.server, 'socks5://127.0.0.1:1080')
 })
 
-test('proxy_scheme socks5 embeds auth in URL', () => {
+test('proxy_scheme socks5 uses separate username/password (not in server URL)', () => {
   const p = buildPlaywrightProxyConfig({
     proxy_scheme: 'socks5',
     host: '91.246.222.146',
@@ -74,8 +80,9 @@ test('proxy_scheme socks5 embeds auth in URL', () => {
     username: 'takeit32',
     password: 'dont1',
   })
-  assert.equal(p?.server, 'socks5://takeit32:dont1@91.246.222.146:50100')
-  assert.equal(p?.username, undefined)
+  assert.equal(p?.server, 'socks5://91.246.222.146:50100')
+  assert.equal(p?.username, 'takeit32')
+  assert.equal(p?.password, 'dont1')
 })
 
 test('PLAYWRIGHT_PROXY_SCHEME overrides default', () => {
@@ -106,6 +113,20 @@ test('describeProxyForLog never includes password', () => {
   assert.ok(!line.includes('secret'))
   assert.ok(line.includes('password=***'))
   assert.ok(!line.includes('u:secret'))
+})
+
+test('formatProxyDiagnosticDetail masks username, never password', () => {
+  const cfg = buildPlaywrightProxyConfig({
+    host: '1.2.3.4',
+    port: '80',
+    username: 'alice',
+    password: 'secret',
+  })
+  const d = formatProxyDiagnosticDetail(cfg)
+  assert.ok(d.includes('server=http://1.2.3.4:80'))
+  assert.ok(d.includes('user='))
+  assert.ok(!d.includes('secret'))
+  assert.ok(!d.includes('alice'))
 })
 
 test('empty host → undefined', () => {

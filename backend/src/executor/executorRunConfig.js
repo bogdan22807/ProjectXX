@@ -32,10 +32,22 @@ function envPageLoadMs() {
 
 /** Optional default proxy from env when account has no linked proxy row. */
 function proxyFromEnv() {
-  const server = String(process.env.PLAYWRIGHT_PROXY_SERVER ?? '').trim()
+  let server = String(process.env.PLAYWRIGHT_PROXY_SERVER ?? '').trim()
   if (!server) return null
-  const username = String(process.env.PLAYWRIGHT_PROXY_USERNAME ?? '').trim()
-  const password = String(process.env.PLAYWRIGHT_PROXY_PASSWORD ?? '').trim()
+  let username = String(process.env.PLAYWRIGHT_PROXY_USERNAME ?? '').trim()
+  let password = String(process.env.PLAYWRIGHT_PROXY_PASSWORD ?? '').trim()
+  if (server.includes('@')) {
+    try {
+      const u = new URL(server)
+      if (!username && u.username) username = decodeURIComponent(u.username)
+      if (!password && u.password) password = decodeURIComponent(u.password)
+      u.username = ''
+      u.password = ''
+      server = u.toString().replace(/\/$/, '')
+    } catch {
+      /* keep raw server */
+    }
+  }
   /** @type {import('playwright').BrowserContextOptions['proxy']} */
   const out = { server }
   if (username) out.username = username

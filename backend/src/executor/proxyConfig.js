@@ -5,6 +5,32 @@
 
 const PLAYWRIGHT_SCHEMES = new Set(['http', 'https', 'socks4', 'socks5'])
 
+/** Resolved Playwright proxy scheme (http / socks5 / …) for logs and diagnostics. */
+export function resolvePlaywrightProxyScheme(proxy) {
+  return schemeFromRow(proxy)
+}
+
+/**
+ * Scheme label for logs: DB row when present, otherwise parsed from `launchProxy.server`.
+ * @param {ProxyLike | null | undefined} proxyRow
+ * @param {import('playwright').LaunchOptions['proxy'] | null | undefined} launchProxy
+ */
+export function proxySchemeForDiagnostics(proxyRow, launchProxy) {
+  if (proxyRow && String(proxyRow.host ?? '').trim()) {
+    return resolvePlaywrightProxyScheme(proxyRow)
+  }
+  const server = String(launchProxy?.server ?? '').trim()
+  if (!server) return 'http'
+  try {
+    const u = new URL(server)
+    const p = u.protocol.replace(':', '').toLowerCase()
+    if (PLAYWRIGHT_SCHEMES.has(p)) return p
+  } catch {
+    /* ignore */
+  }
+  return 'http'
+}
+
 function schemeFromRow(proxy) {
   const fromCol = String(proxy?.proxy_scheme ?? '')
     .trim()
@@ -18,15 +44,6 @@ function schemeFromRow(proxy) {
   const prov = String(proxy?.provider ?? '').toLowerCase()
   if (prov.includes('socks')) return 'socks5'
   return 'http'
-}
-
-/**
- * Embed user:pass in proxy server URL (HTTP/HTTPS/SOCKS).
- * Chromium often rejects SOCKS5 username/password fields — URL form is more reliable.
- */
-function embedAuthInServerUrl() {
-  const v = String(process.env.PLAYWRIGHT_PROXY_EMBED_AUTH_IN_URL ?? '1').trim().toLowerCase()
-  return v !== '0' && v !== 'false' && v !== 'off' && v !== 'no'
 }
 
 /**
@@ -93,26 +110,10 @@ export function buildPlaywrightProxyConfig(proxy) {
     : schemeFromRow(proxy)
 
   const hostPart = hostForProxyServerUrl(hostname)
-  let server = port ? `${scheme}://${hostPart}:${port}` : `${scheme}://${hostPart}`
+  const server = port ? `${scheme}://${hostPart}:${port}` : `${scheme}://${hostPart}`
 
   /** @type {import('playwright').LaunchOptions['proxy']} */
   const out = { server }
-  const canEmbed =
-    embedAuthInServerUrl() &&
-    username &&
-    password &&
-    (scheme === 'http' || scheme === 'https' || scheme === 'socks5' || scheme === 'socks4')
-
-  if (canEmbed) {
-    const u = encodeURIComponent(username)
-    const pw = encodeURIComponent(password)
-    server = port
-      ? `${scheme}://${u}:${pw}@${hostPart}:${port}`
-      : `${scheme}://${u}:${pw}@${hostPart}`
-    out.server = server
-    return out
-  }
-
   if (username || password) {
     if (username) out.username = username
     if (password) out.password = password
@@ -161,17 +162,41 @@ export function describeLaunchProxySafe(launchProxy, meta = {}) {
   const userSafe =
     userField != null && String(userField).trim()
       ? `user=${maskProxyUsernameForLog(String(userField))}`
-      : 'user=(embedded-in-server-url-or-omitted)'
+      : 'user=(omitted)'
   return `provider=${provider} server=${serverForLog} ${userSafe}`
+}
+
+/**
+ * One-line diagnostic for logs (no password): `server=http://host:port user=ma***ed`
+ * @param {import('playwright').LaunchOptions['proxy'] | null | undefined} launchProxy
+ */
+export function formatProxyDiagnosticDetail(launchProxy) {
+  if (!launchProxy?.server) {
+    return 'server=(none) user=(omitted)'
+  }
+  let serverForLog = launchProxy.server
+  try {
+    const parsed = new URL(serverForLog)
+    if (parsed.username || parsed.password) {
+      parsed.username = ''
+      parsed.password = ''
+      serverForLog = parsed.toString().replace(/\/$/, '')
+    }
+  } catch {
+    /* keep */
+  }
+  const u = launchProxy.username != null ? String(launchProxy.username).trim() : ''
+  const userPart = u ? `user=${maskProxyUsernameForLog(u)}` : 'user=(omitted)'
+  return `server=${serverForLog} ${userPart}`
 }
 
 export function describeProxyForLog(proxy, launchProxy) {
   if (!proxy || !launchProxy?.server) {
     return 'proxy: none'
   }
-  const u = String(proxy.username ?? '').trim()
+  const u = String(launchProxy.username ?? proxy.username ?? '').trim()
   const hasUser = Boolean(u)
-  const hasPass = Boolean(String(proxy.password ?? '').trim())
+  const hasPass = Boolean(String(launchProxy.password ?? proxy.password ?? '').trim())
   let serverForLog = launchProxy.server
   try {
     const parsed = new URL(serverForLog)
@@ -184,8 +209,8 @@ export function describeProxyForLog(proxy, launchProxy) {
     /* keep raw */
   }
   const mode =
-    hasUser && hasPass && !launchProxy.username && !launchProxy.password
-      ? 'credentials embedded in server URL'
-      : 'username/password fields'
+    launchProxy.username || launchProxy.password
+      ? 'username/password fields'
+      : 'no auth'
   return `proxy server=${serverForLog} auth=${hasUser ? `user=${u}` : 'none'}${hasPass ? ' password=***' : ''} (${mode})`
 }
