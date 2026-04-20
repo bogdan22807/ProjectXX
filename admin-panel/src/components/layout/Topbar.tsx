@@ -1,11 +1,10 @@
 import { useLocation } from 'react-router-dom'
 
 const titles: Record<string, string> = {
-  '/': 'Dashboard',
-  '/proxies': 'Proxies',
-  '/profiles': 'Browser Profiles',
-  '/logs': 'Logs',
-  '/settings': 'Settings',
+  '/': 'Аккаунты',
+  '/proxies': 'Прокси',
+  '/profiles': 'Профили браузера',
+  '/logs': 'Журнал',
 }
 
 export function Topbar() {

@@ -7,6 +7,7 @@ import { Modal } from '../components/ui/Modal'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
 
+/** Поля POST /api/proxies: provider, host, port, username, password, proxy_scheme, proxy_line, credential_order */
 export function ProxiesPage() {
   const {
     proxies,
@@ -20,16 +21,14 @@ export function ProxiesPage() {
 
   const [userAddOpen, setUserAddOpen] = useState(false)
   const [form, setForm] = useState({
-    provider: 'SOAX',
+    provider: '',
     host: '',
     port: '',
     username: '',
     password: '',
-    proxyScheme: 'http' as 'http' | 'socks5',
+    proxyScheme: 'http' as 'http' | 'socks5' | '',
   })
-  /** Paste SOAX export: IP:port:password:username (one or many lines) */
   const [pasteLine, setPasteLine] = useState('')
-  /** Default SOAX list: 3rd=password 4th=username */
   const [credentialOrder, setCredentialOrder] = useState<'pass_user' | 'user_pass'>('pass_user')
 
   const [deleteOpen, setDeleteOpen] = useState(false)
@@ -72,33 +71,35 @@ export function ProxiesPage() {
     }
   }
 
-  function submitAdd() {
+  const schemeForApi = form.proxyScheme === 'socks5' ? 'socks5' : form.proxyScheme === 'http' ? 'http' : ''
+
+  async function submitAdd() {
     const line = pasteLine.trim()
     if (line) {
-      addProxy({
-        provider: form.provider.trim() || 'SOAX',
+      await addProxy({
+        provider: form.provider.trim(),
         host: '',
         port: '',
         username: '',
         password: '',
-        proxyScheme: form.proxyScheme,
+        proxyScheme: schemeForApi || undefined,
         proxyLine: line,
         credentialOrder,
       })
     } else if (form.host.trim()) {
-      addProxy({
-        provider: form.provider.trim() || 'SOAX',
+      await addProxy({
+        provider: form.provider.trim(),
         host: form.host.trim(),
         port: form.port.trim(),
         username: form.username.trim(),
         password: form.password.trim(),
-        proxyScheme: form.proxyScheme,
+        proxyScheme: schemeForApi || undefined,
       })
     } else {
       return
     }
     closeAddModal()
-    setForm({ provider: 'SOAX', host: '', port: '', username: '', password: '', proxyScheme: 'http' })
+    setForm({ provider: '', host: '', port: '', username: '', password: '', proxyScheme: 'http' })
     setPasteLine('')
   }
 
@@ -110,18 +111,18 @@ export function ProxiesPage() {
     if (lines.length === 0) return
     for (const line of lines) {
       await addProxy({
-        provider: form.provider.trim() || 'SOAX',
+        provider: form.provider.trim(),
         host: '',
         port: '',
         username: '',
         password: '',
-        proxyScheme: form.proxyScheme,
+        proxyScheme: schemeForApi || undefined,
         proxyLine: line,
         credentialOrder,
       })
     }
     closeAddModal()
-    setForm({ provider: 'SOAX', host: '', port: '', username: '', password: '', proxyScheme: 'http' })
+    setForm({ provider: '', host: '', port: '', username: '', password: '', proxyScheme: 'http' })
     setPasteLine('')
   }
 
@@ -129,17 +130,17 @@ export function ProxiesPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" onClick={openAddModal}>
-          Add Proxy
+          Добавить прокси
         </Button>
         <Button disabled={proxies.length === 0} onClick={checkSelectedProxies}>
-          Check
+          Отметить проверенными
         </Button>
         <Button
           variant="danger"
           disabled={proxies.length === 0}
           onClick={() => setDeleteOpen(true)}
         >
-          Delete
+          Удалить
         </Button>
       </div>
 
@@ -148,7 +149,7 @@ export function ProxiesPage() {
           {proxies.length === 0 ? (
             <EmptyState
               title="Нет прокси"
-              description="Добавьте прокси или импортируйте список позже."
+              description="Добавьте запись: host, port, опционально логин/пароль или строка host:port:…:…"
               action={
                 <Button variant="primary" onClick={openAddModal}>
                   Добавить прокси
@@ -156,60 +157,58 @@ export function ProxiesPage() {
               }
             />
           ) : (
-          <table className="w-full min-w-[720px] text-left text-sm">
-            <thead>
-              <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs uppercase tracking-wide text-zinc-500">
-                <th className="w-10 px-4 py-3">
-                  <input
-                    type="checkbox"
-                    className={checkboxClass}
-                    checked={proxies.length > 0 && selectedProxyIds.size === proxies.length}
-                    onChange={toggleAll}
-                    aria-label="Select all"
-                  />
-                </th>
-                <th className="px-4 py-3">ID</th>
-                <th className="px-4 py-3">Provider</th>
-                <th className="px-4 py-3">Host</th>
-                <th className="px-4 py-3">Scheme</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Assigned To</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-800/80">
-              {proxies.map((p) => (
-                <tr
-                  key={p.id}
-                  className="transition-[background-color] duration-200 ease-out hover:bg-zinc-900/40"
-                >
-                  <td className="px-4 py-3">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-zinc-800 bg-zinc-950/50 text-xs uppercase tracking-wide text-zinc-500">
+                  <th className="w-10 px-4 py-3">
                     <input
                       type="checkbox"
                       className={checkboxClass}
-                      checked={selectedProxyIds.has(p.id)}
-                      onChange={() => toggleRow(p.id)}
-                      aria-label={`Select ${p.host}`}
+                      checked={proxies.length > 0 && selectedProxyIds.size === proxies.length}
+                      onChange={toggleAll}
+                      aria-label="Выбрать все"
                     />
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs text-zinc-500">{p.id}</td>
-                  <td className="px-4 py-3 text-zinc-200">{p.provider}</td>
-                  <td className="px-4 py-3">
-                    <span className="text-zinc-300">{p.host}</span>
-                    {p.port ? (
-                      <span className="text-zinc-500">:{p.port}</span>
-                    ) : null}
-                  </td>
-                  <td className="px-4 py-3 font-mono text-xs uppercase text-zinc-400">
-                    {p.proxyScheme?.trim() || 'http'}
-                  </td>
-                  <td className="px-4 py-3">
-                    <StatusBadge status={p.status} />
-                  </td>
-                  <td className="px-4 py-3 text-zinc-400">{assignedTo(p.id)}</td>
+                  </th>
+                  <th className="px-4 py-3">ID</th>
+                  <th className="px-4 py-3">Провайдер</th>
+                  <th className="px-4 py-3">Хост:порт</th>
+                  <th className="px-4 py-3">Схема</th>
+                  <th className="px-4 py-3">Статус</th>
+                  <th className="px-4 py-3">Аккаунт</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-zinc-800/80">
+                {proxies.map((p) => (
+                  <tr
+                    key={p.id}
+                    className="transition-[background-color] duration-200 ease-out hover:bg-zinc-900/40"
+                  >
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        className={checkboxClass}
+                        checked={selectedProxyIds.has(p.id)}
+                        onChange={() => toggleRow(p.id)}
+                        aria-label={`Выбрать ${p.host}`}
+                      />
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs text-zinc-500">{p.id}</td>
+                    <td className="px-4 py-3 text-zinc-200">{p.provider || '—'}</td>
+                    <td className="px-4 py-3">
+                      <span className="text-zinc-300">{p.host}</span>
+                      {p.port ? <span className="text-zinc-500">:{p.port}</span> : null}
+                    </td>
+                    <td className="px-4 py-3 font-mono text-xs uppercase text-zinc-400">
+                      {p.proxyScheme?.trim() || 'http'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <StatusBadge status={p.status} />
+                    </td>
+                    <td className="px-4 py-3 text-zinc-400">{assignedTo(p.id)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
         </div>
       </div>
@@ -237,56 +236,55 @@ export function ProxiesPage() {
       >
         <p className="text-sm text-zinc-400">
           {selectedProxyIds.size > 0
-            ? `Будет удалено выбранных строк: ${selectedProxyIds.size}. Связи с аккаунтами и профилями будут сброшены.`
-            : 'Будут удалены все прокси в списке. Связи с аккаунтами и профилями будут сброшены.'}
+            ? `Удалить выбранные: ${selectedProxyIds.size}. Связи аккаунтов и профилей сбросятся.`
+            : 'Удалить все прокси в таблице. Связи сбросятся.'}
         </p>
       </Modal>
 
       <Modal
         open={addOpen}
-        title="Add Proxy"
+        title="Прокси (API)"
         onClose={closeAddModal}
         footer={
-          <div className="flex justify-end gap-2">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button variant="ghost" onClick={closeAddModal}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              onClick={submitAdd}
-              disabled={!pasteLine.trim() && !form.host.trim()}
-            >
-              Add Proxy
+              Отмена
             </Button>
             <Button
               variant="secondary"
               onClick={() => void submitAddAllLines()}
               disabled={pasteLine.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).length < 2}
             >
-              Add all lines
+              Добавить все строки
+            </Button>
+            <Button
+              variant="primary"
+              onClick={() => void submitAdd()}
+              disabled={!pasteLine.trim() && !form.host.trim()}
+            >
+              Сохранить
             </Button>
           </div>
         }
       >
-        <div className="space-y-3">
-          <div className="rounded-lg border border-amber-900/50 bg-amber-950/30 px-3 py-2 text-xs text-amber-100/90">
-            По умолчанию: <code className="rounded bg-zinc-950 px-1">IP:порт:пароль:логин</code> (например{' '}
-            <code className="text-zinc-500">dont1</code> — пароль, <code className="text-zinc-500">takeit32</code> —
-            логин). Другой порядок — второй пункт ниже. При <strong className="text-amber-200">407</strong> —
-            whitelist IP у провайдера.
-          </div>
+        <div className="space-y-3 text-sm text-zinc-300">
+          <p className="text-xs text-zinc-500">
+            Либо одна строка <code className="text-zinc-400">IPv4:port:…:…</code> (4 части), либо поля ниже.
+            Порядок 3–4 сегмента задаётся переключателем. Для Playwright executor обычно нужен{' '}
+            <strong className="text-zinc-300">HTTP</strong> (SOCKS5 с логином в Chromium часто не поддерживается).
+          </p>
           <label className="block text-xs font-medium text-zinc-400">
-            Вставить строку прокси <span className="font-normal text-zinc-500">(опционально)</span>
+            Строка (proxy_line)
             <textarea
               className={`${fieldClass} mt-1 min-h-[72px] resize-y font-mono text-xs`}
               value={pasteLine}
               onChange={(e) => setPasteLine(e.target.value)}
-              placeholder="91.246.222.146:50100:dont1:takeit32"
+              placeholder="91.228.13.48:50100:takeit32:dont1"
               spellCheck={false}
             />
           </label>
           <fieldset className="space-y-1 text-xs text-zinc-400">
-            <legend className="font-medium text-zinc-400">Порядок в строке из 4 частей</legend>
+            <legend className="font-medium text-zinc-400">credential_order (4 части)</legend>
             <label className="flex cursor-pointer items-center gap-2">
               <input
                 type="radio"
@@ -294,7 +292,7 @@ export function ProxiesPage() {
                 checked={credentialOrder === 'pass_user'}
                 onChange={() => setCredentialOrder('pass_user')}
               />
-              SOAX-список: <code className="text-zinc-500">host:port:password:username</code>
+              <code className="text-zinc-500">host:port:password:username</code> (SOAX)
             </label>
             <label className="flex cursor-pointer items-center gap-2">
               <input
@@ -303,51 +301,54 @@ export function ProxiesPage() {
                 checked={credentialOrder === 'user_pass'}
                 onChange={() => setCredentialOrder('user_pass')}
               />
-              Иначе: <code className="text-zinc-500">host:port:username:password</code>
+              <code className="text-zinc-500">host:port:username:password</code>
             </label>
           </fieldset>
           <label className="block text-xs font-medium text-zinc-400">
-            Тип прокси (схема)
+            proxy_scheme
             <select
               className={fieldClass}
-              value={form.proxyScheme}
+              value={form.proxyScheme || 'http'}
               onChange={(e) =>
-                setForm((f) => ({ ...f, proxyScheme: e.target.value as 'http' | 'socks5' }))
+                setForm((f) => ({
+                  ...f,
+                  proxyScheme: e.target.value as 'http' | 'socks5',
+                }))
               }
             >
-              <option value="http">HTTP (порт как у SOAX / обычный прокси)</option>
-              <option value="socks5">SOCKS5 (если провайдер выдал именно SOCKS)</option>
+              <option value="http">http</option>
+              <option value="socks5">socks5</option>
             </select>
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            Provider
+            provider <span className="font-normal text-zinc-600">(необязательно)</span>
             <input
               className={fieldClass}
               value={form.provider}
               onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
-              placeholder="SOAX"
             />
           </label>
+          <p className="text-xs font-medium text-zinc-500">Если строка пустая — ручной ввод (host обязателен)</p>
           <label className="block text-xs font-medium text-zinc-400">
-            Host
+            host <span className="text-rose-400/90">*</span>
             <input
               className={fieldClass}
               value={form.host}
               onChange={(e) => setForm((f) => ({ ...f, host: e.target.value }))}
-              placeholder="или вставь строку выше"
+              placeholder="91.228.13.48"
             />
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            Port <span className="font-normal text-zinc-600">(optional)</span>
+            port
             <input
               className={fieldClass}
               value={form.port}
               onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
-              placeholder="9000"
+              placeholder="50100"
             />
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            Username <span className="font-normal text-zinc-600">(optional)</span>
+            username <span className="font-normal text-zinc-600">(необязательно)</span>
             <input
               className={fieldClass}
               value={form.username}
@@ -355,7 +356,7 @@ export function ProxiesPage() {
             />
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            Password <span className="font-normal text-zinc-600">(optional)</span>
+            password <span className="font-normal text-zinc-600">(необязательно)</span>
             <input
               type="password"
               className={fieldClass}

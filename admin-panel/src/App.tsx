@@ -5,7 +5,6 @@ import { DashboardPage } from './pages/DashboardPage'
 import { ProxiesPage } from './pages/ProxiesPage'
 import { BrowserProfilesPage } from './pages/BrowserProfilesPage'
 import { LogsPage } from './pages/LogsPage'
-import { SettingsPage } from './pages/SettingsPage'
 
 const routerBasename =
   (import.meta.env.BASE_URL.endsWith('/')
@@ -22,7 +21,6 @@ export default function App() {
             <Route path="proxies" element={<ProxiesPage />} />
             <Route path="profiles" element={<BrowserProfilesPage />} />
             <Route path="logs" element={<LogsPage />} />
-            <Route path="settings" element={<SettingsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>
