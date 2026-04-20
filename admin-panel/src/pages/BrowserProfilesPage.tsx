@@ -82,7 +82,7 @@ export function BrowserProfilesPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" onClick={openAddModal}>
-          Create Profile
+          Создать профиль
         </Button>
         <Button
           variant="danger"
@@ -183,22 +183,22 @@ export function BrowserProfilesPage() {
 
       <Modal
         open={addOpen}
-        title="Create Profile"
+        title="Профиль (POST /profiles)"
         onClose={closeAddModal}
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={closeAddModal}>
-              Cancel
+              Отмена
             </Button>
             <Button variant="primary" onClick={submitAdd}>
-              Create Profile
+              Сохранить
             </Button>
           </div>
         }
       >
         <div className="space-y-3">
           <label className="block text-xs font-medium text-zinc-400">
-            Profile Name
+            name
             <input
               className={fieldClass}
               value={form.name}
@@ -206,7 +206,7 @@ export function BrowserProfilesPage() {
             />
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            Linked Proxy
+            linked_proxy_id
             <select
               className={fieldClass}
               value={form.proxyId}
@@ -222,7 +222,7 @@ export function BrowserProfilesPage() {
             </select>
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            Status
+            status
             <select
               className={fieldClass}
               value={form.status}

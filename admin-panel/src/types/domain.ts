@@ -42,9 +42,3 @@ export interface LogEntry {
   action: string
   details: string
 }
-
-export interface AppSettings {
-  notifications: boolean
-  autoRetryFailed: boolean
-  strictWarmup: boolean
-}

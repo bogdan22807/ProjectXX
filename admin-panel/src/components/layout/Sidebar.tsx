@@ -1,11 +1,10 @@
 import { NavLink } from 'react-router-dom'
 
 const nav = [
-  { to: '/', label: 'Dashboard', end: true },
-  { to: '/proxies', label: 'Proxies' },
-  { to: '/profiles', label: 'Browser Profiles' },
-  { to: '/logs', label: 'Logs' },
-  { to: '/settings', label: 'Settings' },
+  { to: '/', label: 'Аккаунты', end: true },
+  { to: '/proxies', label: 'Прокси' },
+  { to: '/profiles', label: 'Профили браузера' },
+  { to: '/logs', label: 'Журнал' },
 ] as const
 
 export function Sidebar() {
@@ -42,7 +41,7 @@ export function Sidebar() {
         ))}
       </nav>
       <div className="border-t border-zinc-800/80 p-3 text-xs text-zinc-600">
-        Локальная копия · данные только в этом браузере
+        API: SQLite на сервере · см. VITE_API_URL
       </div>
     </aside>
   )

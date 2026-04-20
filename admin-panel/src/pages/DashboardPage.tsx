@@ -20,7 +20,7 @@ import {
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
 import { formatTime } from '../utils/format'
-import type { Account, AccountStatus, Platform } from '../types/domain'
+import type { Account, AccountStatus } from '../types/domain'
 
 const accountStatuses: AccountStatus[] = ['New', 'Starting', 'Ready', 'Running', 'Error']
 
@@ -28,7 +28,6 @@ type FormState = {
   name: string
   login: string
   cookies: string
-  platform: Platform
   proxyId: string
   profileId: string
   status: AccountStatus
@@ -38,7 +37,6 @@ const emptyForm = (): FormState => ({
   name: '',
   login: '',
   cookies: '',
-  platform: 'TikTok',
   proxyId: '',
   profileId: '',
   status: 'New',
@@ -49,7 +47,6 @@ function formFromAccount(a: Account): FormState {
     name: a.name,
     login: a.login,
     cookies: a.cookies,
-    platform: a.platform,
     proxyId: a.proxyId ?? '',
     profileId: a.profileId ?? '',
     status: a.status,
@@ -70,7 +67,7 @@ function AccountFields({
   return (
     <div className="space-y-3">
       <label className="block text-xs font-medium text-zinc-400">
-        Account Name
+        Имя (name)
         <input
           className={fieldClass}
           value={form.name}
@@ -78,7 +75,7 @@ function AccountFields({
         />
       </label>
       <label className="block text-xs font-medium text-zinc-400">
-        Login
+        Логин (login)
         <input
           className={fieldClass}
           value={form.login}
@@ -92,14 +89,15 @@ function AccountFields({
           className={fieldClassMono}
           value={form.cookies}
           onChange={(e) => setForm((f) => ({ ...f, cookies: e.target.value }))}
-          placeholder="Paste cookie string (local only)"
+          placeholder="Строка cookies"
         />
       </label>
-      <div className="text-xs text-zinc-400">
-        Platform: <span className="text-zinc-200">TikTok</span>
-      </div>
+      <p className="text-xs text-zinc-500">
+        Платформа в API всегда <span className="font-mono text-zinc-400">TikTok</span> (других значений бэкенд не
+        принимает).
+      </p>
       <label className="block text-xs font-medium text-zinc-400">
-        Proxy
+        Прокси (proxy_id)
         <select
           className={fieldClass}
           value={form.proxyId}
@@ -115,7 +113,7 @@ function AccountFields({
         </select>
       </label>
       <label className="block text-xs font-medium text-zinc-400">
-        Browser Profile
+        Профиль браузера (browser_profile_id)
         <select
           className={fieldClass}
           value={form.profileId}
@@ -130,7 +128,7 @@ function AccountFields({
         </select>
       </label>
       <label className="block text-xs font-medium text-zinc-400">
-        Status
+        Статус
         <select
           className={fieldClass}
           value={form.status}
@@ -160,6 +158,9 @@ export function DashboardPage() {
     startAccount,
     stopAccount,
     warmupPending,
+    testRunPending,
+    startPlaywrightTestRun,
+    abortPlaywrightTestRun,
   } = useAppState()
 
   const recentLogs = logs.slice(0, 8)
@@ -190,7 +191,7 @@ export function DashboardPage() {
       name: editForm.name.trim() || 'Unnamed',
       login: editForm.login.trim(),
       cookies: editForm.cookies,
-      platform: editForm.platform,
+      platform: 'TikTok',
       proxyId: editForm.proxyId || null,
       profileId: editForm.profileId || null,
       status: editForm.status,
@@ -208,7 +209,7 @@ export function DashboardPage() {
         name: addForm.name.trim() || 'Unnamed',
         login: addForm.login.trim(),
         cookies: addForm.cookies,
-        platform: addForm.platform,
+        platform: 'TikTok',
         proxyId: addForm.proxyId || null,
         profileId: addForm.profileId || null,
         status: addForm.status,
@@ -296,15 +297,15 @@ export function DashboardPage() {
 
       <div className="flex flex-wrap items-center gap-2">
         <Button variant="primary" onClick={() => setAddOpen(true)}>
-          Add Account
+          Добавить аккаунт
         </Button>
       </div>
 
       <Card className="overflow-hidden p-0">
         <div className={cardSectionHeaderClass}>
-          <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Accounts</h2>
+          <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Аккаунты</h2>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-            Manage all accounts from the dashboard
+            POST /accounts, PATCH /accounts/:id · прогрев: POST /warmup/start|stop · тест: POST /warmup/test-run
           </p>
         </div>
         <div className={tableScrollClass}>
@@ -333,7 +334,7 @@ export function DashboardPage() {
               <tr className={tableHeadRowClass}>
                 <th className={tableCellHeaderClass}>Аккаунт</th>
                 <th className={tableCellHeaderClass}>Логин</th>
-                <th className={tableCellHeaderClass}>Платформа</th>
+                <th className={tableCellHeaderClass}>Платф.</th>
                 <th className={tableCellHeaderClass}>Прокси</th>
                 <th className={tableCellHeaderClass}>Профиль</th>
                 <th className={tableCellHeaderClass}>Статус</th>
@@ -400,7 +401,7 @@ export function DashboardPage() {
                           disabled={warmupPending[a.id] === 'start'}
                           onClick={() => startAccount(a.id)}
                         >
-                          {warmupPending[a.id] === 'start' ? 'Запуск…' : 'Начать'}
+                          {warmupPending[a.id] === 'start' ? 'Запуск…' : 'Прогрев'}
                         </Button>
                       ) : null}
                       {a.status === 'Running' || a.status === 'Starting' ? (
@@ -409,14 +410,39 @@ export function DashboardPage() {
                           disabled={warmupPending[a.id] === 'stop'}
                           onClick={() => stopAccount(a.id)}
                         >
-                          {warmupPending[a.id] === 'stop' ? 'Остановка…' : 'Остановить'}
+                          {warmupPending[a.id] === 'stop' ? 'Остановка…' : 'Стоп прогрева'}
                         </Button>
                       ) : null}
                       <Button
                         className={tableActionButtonClass}
+                        variant="secondary"
+                        disabled={
+                          testRunPending[a.id] === true ||
+                          a.status === 'Running' ||
+                          a.status === 'Starting'
+                        }
+                        title={
+                          a.status === 'Running' || a.status === 'Starting'
+                            ? 'Сначала остановите прогрев — иначе Playwright уже занят'
+                            : 'POST /warmup/test-run'
+                        }
+                        onClick={() => void startPlaywrightTestRun(a.id)}
+                      >
+                        {testRunPending[a.id] ? 'Тест…' : 'Тест Playwright'}
+                      </Button>
+                      <Button
+                        className={tableActionButtonClass}
+                        variant="ghost"
+                        onClick={() => void abortPlaywrightTestRun(a.id)}
+                        title="POST /warmup/test-run/abort"
+                      >
+                        Стоп теста
+                      </Button>
+                      <Button
+                        className={tableActionButtonClass}
                         onClick={() => openEdit(a)}
                       >
-                        Редактировать
+                        Изменить
                       </Button>
                       <Button
                         className={tableActionButtonClass}
@@ -488,7 +514,7 @@ export function DashboardPage() {
 
       <Modal
         open={addOpen}
-        title="Add Account"
+        title="Аккаунт"
         onClose={() => {
           setAddOpen(false)
           setAddForm(emptyForm())
@@ -502,10 +528,10 @@ export function DashboardPage() {
                 setAddForm(emptyForm())
               }}
             >
-              Cancel
+              Отмена
             </Button>
             <Button variant="primary" disabled={addSubmitting} onClick={() => void submitAdd()}>
-              {addSubmitting ? 'Saving…' : 'Save'}
+              {addSubmitting ? 'Сохранение…' : 'Сохранить'}
             </Button>
           </div>
         }
@@ -547,15 +573,15 @@ export function DashboardPage() {
 
       <Modal
         open={editOpen}
-        title="Edit Account"
+        title="Аккаунт"
         onClose={closeEdit}
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={closeEdit}>
-              Cancel
+              Отмена
             </Button>
             <Button variant="primary" onClick={saveEdit}>
-              Save
+              Сохранить
             </Button>
           </div>
         }

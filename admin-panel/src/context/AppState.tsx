@@ -27,7 +27,6 @@ import {
 import type {
   Account,
   AccountStatus,
-  AppSettings,
   BrowserProfile,
   LogEntry,
   Platform,
@@ -41,8 +40,6 @@ interface AppStateValue {
   proxies: Proxy[]
   profiles: BrowserProfile[]
   logs: LogEntry[]
-  settings: AppSettings
-  setSettings: (patch: Partial<AppSettings>) => void
   selectedAccountIds: Set<string>
   setSelectedAccountIds: Dispatch<SetStateAction<Set<string>>>
   selectedProxyIds: Set<string>
@@ -64,7 +61,19 @@ interface AppStateValue {
   stopAccount: (id: string) => Promise<void>
   /** Per-account warmup request: which action is in flight */
   warmupPending: Partial<Record<string, 'start' | 'stop'>>
+  testRunPending: Partial<Record<string, boolean>>
   deleteSelectedAccounts: () => Promise<void>
+  startPlaywrightTestRun: (
+    accountId: string,
+    options?: {
+      targetUrl?: string
+      readySelector?: string
+      debugCheckProxy?: boolean
+      debugScreenshots?: boolean
+      headless?: boolean
+    },
+  ) => Promise<void>
+  abortPlaywrightTestRun: (accountId: string) => Promise<void>
   addProxy: (input: {
     provider: string
     host: string
@@ -111,16 +120,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [proxies, setProxies] = useState<Proxy[]>([])
   const [profiles, setProfiles] = useState<BrowserProfile[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
-  const [settings, setSettingsState] = useState<AppSettings>({
-    notifications: true,
-    autoRetryFailed: false,
-    strictWarmup: true,
-  })
 
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set())
   const [selectedProxyIds, setSelectedProxyIds] = useState<Set<string>>(new Set())
   const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(new Set())
   const [warmupPending, setWarmupPending] = useState<Partial<Record<string, 'start' | 'stop'>>>({})
+  const [testRunPending, setTestRunPending] = useState<Partial<Record<string, boolean>>>({})
   const [lastError, setLastError] = useState<string | null>(null)
 
   const dismissLastError = useCallback(() => setLastError(null), [])
@@ -178,10 +183,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       console.error('appendLog failed', e)
       setLastError(formatApiFailure(e))
     }
-  }, [])
-
-  const setSettings = useCallback((patch: Partial<AppSettings>) => {
-    setSettingsState((s) => ({ ...s, ...patch }))
   }, [])
 
   const addAccount = useCallback(
@@ -442,6 +443,58 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     }
   }, [selectedProfileIds, appendLog, refreshAll])
 
+  const startPlaywrightTestRun = useCallback(
+    async (
+      accountId: string,
+      options?: {
+        targetUrl?: string
+        readySelector?: string
+        debugCheckProxy?: boolean
+        debugScreenshots?: boolean
+        headless?: boolean
+      },
+    ) => {
+      if (testRunPending[accountId]) return
+      setTestRunPending((p) => ({ ...p, [accountId]: true }))
+      try {
+        await apiPost('/warmup/test-run', {
+          accountId,
+          targetUrl: options?.targetUrl,
+          readySelector: options?.readySelector,
+          debugCheckProxy: options?.debugCheckProxy,
+          debugScreenshots: options?.debugScreenshots,
+          headless: options?.headless,
+        })
+        await appendLog('Playwright test-run', `Запущен для аккаунта ${accountId}`)
+        void refreshAccountsAndLogs()
+      } catch (e) {
+        console.error('startPlaywrightTestRun failed', e)
+        setLastError(formatApiFailure(e))
+      } finally {
+        setTestRunPending((p) => {
+          const next = { ...p }
+          delete next[accountId]
+          return next
+        })
+      }
+    },
+    [testRunPending, appendLog, refreshAccountsAndLogs],
+  )
+
+  const abortPlaywrightTestRun = useCallback(
+    async (accountId: string) => {
+      try {
+        await apiPost('/warmup/test-run/abort', { accountId })
+        await appendLog('Playwright test-run abort', accountId)
+        void refreshAccountsAndLogs()
+      } catch (e) {
+        console.error('abortPlaywrightTestRun failed', e)
+        setLastError(formatApiFailure(e))
+      }
+    },
+    [appendLog, refreshAccountsAndLogs],
+  )
+
   const startWarmupSelected = useCallback(async () => {
     const targets = accounts.filter((a) => selectedAccountIds.has(a.id) && a.status === 'New')
     if (targets.length === 0) {
@@ -478,8 +531,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       proxies,
       profiles,
       logs,
-      settings,
-      setSettings,
       selectedAccountIds,
       setSelectedAccountIds,
       selectedProxyIds,
@@ -492,7 +543,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       startAccount,
       stopAccount,
       warmupPending,
+      testRunPending,
       deleteSelectedAccounts,
+      startPlaywrightTestRun,
+      abortPlaywrightTestRun,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,
@@ -509,8 +563,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       proxies,
       profiles,
       logs,
-      settings,
-      setSettings,
       selectedAccountIds,
       selectedProxyIds,
       selectedProfileIds,
@@ -520,7 +572,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       startAccount,
       stopAccount,
       warmupPending,
+      testRunPending,
       deleteSelectedAccounts,
+      startPlaywrightTestRun,
+      abortPlaywrightTestRun,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,
