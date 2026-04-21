@@ -6,6 +6,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { sleepRandom } from '../asyncUtils.js'
+import { ExecutorHaltError } from '../executorHalt.js'
 import { safeClick } from '../safeClick.js'
 import { smoothScrollPage } from '../smoothScrollPage.js'
 
@@ -33,8 +34,17 @@ function selectorTimeoutMs() {
  *   screenshotDir?: string
  *   skipInitialNavigation?: boolean
  *   platform?: string
+ *   shouldAbort?: () => boolean | Promise<boolean>
+ *   onAfterBlock?: (block: string) => void | Promise<void>
  * }} ViewAndScrollScenarioConfig
  */
+
+async function checkHalt(shouldAbort) {
+  if (!shouldAbort) return
+  const v = await shouldAbort()
+  if (v === 'stop') throw new ExecutorHaltError('stop')
+  if (v === 'max_duration') throw new ExecutorHaltError('max_duration')
+}
 
 function defaultScreenshotDir() {
   return path.join(process.cwd(), 'playwright-debug')
@@ -76,6 +86,10 @@ export function inferTikTokAuthState(platform, url, title) {
  */
 export async function runViewAndScrollScenario(page, logger, config) {
   const log = typeof logger === 'function' ? logger : () => {}
+  const shouldAbort = typeof config?.shouldAbort === 'function' ? config.shouldAbort : null
+  const onAfterBlock =
+    typeof config?.onAfterBlock === 'function' ? config.onAfterBlock : async () => {}
+
   const startUrl = String(config?.startUrl ?? '').trim()
   if (!startUrl) {
     throw new Error('runViewAndScrollScenario: startUrl is required')
@@ -117,6 +131,8 @@ export async function runViewAndScrollScenario(page, logger, config) {
     log('PAGE_OPENED', `url=${curUrl} | title=${titleAfterOpen}`)
     await maybeScreenshot(page, shots, shotDir, 'debug-opened.png')
   }
+  await onAfterBlock('initial_navigation')
+  await checkHalt(shouldAbort)
 
   const ready = String(config.readySelector ?? '').trim()
   if (ready) {
@@ -125,12 +141,17 @@ export async function runViewAndScrollScenario(page, logger, config) {
       timeout: selectorTimeoutMs(),
     })
   }
+  await onAfterBlock('ready_selector')
+  await checkHalt(shouldAbort)
 
   log('WAITING', 'after page open 2000–5000ms')
   await sleepRandom(2000, 5000)
+  await onAfterBlock('wait_after_open')
+  await checkHalt(shouldAbort)
 
   await smoothScrollPage(page, log, {
     ...(config.smoothScroll ?? {}),
+    shouldAbort,
     scrollLog: {
       started: 'SCROLL_STARTED',
       completed: 'SCROLL_COMPLETED',
@@ -139,6 +160,8 @@ export async function runViewAndScrollScenario(page, logger, config) {
     },
   })
   await maybeScreenshot(page, shots, shotDir, 'debug-scrolled.png')
+  await onAfterBlock('smooth_scroll')
+  await checkHalt(shouldAbort)
 
   const clickSel = String(config.selectors?.clickTarget ?? '').trim()
   if (clickSel) {
@@ -147,9 +170,13 @@ export async function runViewAndScrollScenario(page, logger, config) {
   } else {
     log('CLICK_SKIPPED', 'no clickTarget selector')
   }
+  await onAfterBlock('optional_click')
+  await checkHalt(shouldAbort)
 
   log('WAITING', 'after scroll 3000–6000ms')
   await sleepRandom(3000, 6000)
+  await onAfterBlock('wait_after_scroll')
+  await checkHalt(shouldAbort)
 
   const finalUrl = page.url()
   const titleDone = (await page.title().catch(() => '')) ?? ''
