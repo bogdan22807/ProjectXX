@@ -353,6 +353,155 @@ async function getFeedStableKey(page) {
 }
 
 /**
+ * Identity for "did the active feed video change?" — author href/text, video src/currentSrc/poster.
+ * @param {import('playwright').Page} page
+ */
+async function getVideoAdvanceKey(page) {
+  const root = page.locator('[data-e2e="feed-active-video"]').first()
+  if ((await root.count()) === 0) return ''
+  try {
+    const part = await root.evaluate((el) => {
+      const r = /** @type {HTMLElement} */ (el)
+      const authorA = r.querySelector('[data-e2e="video-author-uniqueid"] a')
+      const href = (authorA?.getAttribute('href') || '').trim()
+      const userText = (authorA?.innerText || '').replace(/\s+/g, ' ').trim().slice(0, 80)
+      const vid = r.querySelector('video')
+      let cur = ''
+      let srcAttr = ''
+      let poster = ''
+      if (vid) {
+        srcAttr = (vid.getAttribute('src') || '').trim().slice(0, 140)
+        poster = (vid.getAttribute('poster') || '').trim().slice(0, 120)
+        try {
+          cur = String(vid.currentSrc || '').trim().slice(0, 140)
+        } catch {
+          cur = ''
+        }
+      }
+      return `${href}|u:${userText}|cur:${cur}|src:${srcAttr}|p:${poster}`
+    })
+    return String(part).slice(0, 500)
+  } catch {
+    return (await getFeedStableKey(page)) || ''
+  }
+}
+
+/**
+ * Wait for TikTok to swap the active item after a scroll gesture.
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function sleepAfterScrollForAdvanceCheck(shouldHalt) {
+  const ms = randomInt(500, 1200)
+  let left = ms
+  while (left > 0) {
+    await haltIfNeeded(shouldHalt)
+    const step = Math.min(400, left)
+    await sleep(step)
+    left -= step
+  }
+}
+
+/**
+ * If the active video identity did not change after a down-scroll, run escalating recovery (no goto in normal path).
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {string} beforeScrollKey from `getVideoAdvanceKey` before scroll; empty skips comparison
+ */
+async function ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeScrollKey) {
+  await sleepAfterScrollForAdvanceCheck(shouldHalt)
+  await haltIfNeeded(shouldHalt)
+
+  if (!String(beforeScrollKey).trim()) return
+
+  let after = await getVideoAdvanceKey(page)
+  if (!after || after !== beforeScrollKey) {
+    if (after) {
+      lastFeedStableKey = after
+      feedRepeatStreak = 1
+    }
+    return
+  }
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    log('FEED_STUCK_DETECTED', `sameVideoKey attempt=${attempt} len=${beforeScrollKey.length}`)
+
+    log('FEED_STUCK_RECOVERY', `phase=strong_wheel dy=800–1200 attempt=${attempt}`)
+    await scrollFeedStep(page, 'down', log, { forceStuckWheel: true })
+    await sleepAfterScrollForAdvanceCheck(shouldHalt)
+    await haltIfNeeded(shouldHalt)
+    after = await getVideoAdvanceKey(page)
+    if (after && after !== beforeScrollKey) break
+
+    log('FEED_STUCK_RECOVERY', `phase=PageDown×2 attempt=${attempt}`)
+    await page.keyboard.press('PageDown').catch(() => {})
+    await page.keyboard.press('PageDown').catch(() => {})
+    await sleep(randomInt(400, 700))
+    after = await getVideoAdvanceKey(page)
+    if (after && after !== beforeScrollKey) break
+
+    log('FEED_STUCK_RECOVERY', `phase=ArrowDown burst attempt=${attempt}`)
+    await scrollPastLiveNoPointer(page, log, shouldHalt, 'stuck_arrow_burst', {
+      pressesMin: 6,
+      pressesMax: 12,
+      pageDowns: 1,
+    })
+    await sleepAfterScrollForAdvanceCheck(shouldHalt)
+    await haltIfNeeded(shouldHalt)
+    after = await getVideoAdvanceKey(page)
+    if (after && after !== beforeScrollKey) break
+  }
+
+  if (after && after !== beforeScrollKey) {
+    lastFeedStableKey = after
+    feedRepeatStreak = 1
+    bumpSkipScrollBackAfterLive(5)
+    return
+  }
+
+  log('FORCE_SCROLL_AFTER_STUCK', 'PageDown×5 burst')
+  for (let i = 0; i < 5; i++) {
+    await haltIfNeeded(shouldHalt)
+    await page.keyboard.press('PageDown').catch(() => {})
+    await sleep(160 + randomInt(0, 140))
+  }
+  await sleepAfterScrollForAdvanceCheck(shouldHalt)
+  await haltIfNeeded(shouldHalt)
+  after = await getVideoAdvanceKey(page)
+
+  if (after && after !== beforeScrollKey) {
+    lastFeedStableKey = after
+    feedRepeatStreak = 1
+    bumpSkipScrollBackAfterLive(5)
+    return
+  }
+
+  log('FEED_RECOVERY_FALLBACK', 'goBack then optional goto /foryou — last resort')
+  await page.goBack({ waitUntil: 'commit', timeout: 15_000 }).catch(() => {})
+  await sleep(randomInt(500, 900))
+  await haltIfNeeded(shouldHalt)
+  after = await getVideoAdvanceKey(page)
+
+  if (!after || after === beforeScrollKey || pageInLiveRoomUrl(page)) {
+    try {
+      await page.goto('https://www.tiktok.com/foryou', { waitUntil: 'commit', timeout: 25_000 })
+    } catch (e) {
+      const m = e instanceof Error ? e.message : String(e)
+      log('FEED_RECOVERY_FALLBACK', `goto failed ${m.slice(0, 160)}`)
+    }
+    await sleep(randomInt(400, 800))
+    await haltIfNeeded(shouldHalt)
+    after = await getVideoAdvanceKey(page)
+  }
+
+  if (after) {
+    lastFeedStableKey = after
+    feedRepeatStreak = 1
+  }
+  bumpSkipScrollBackAfterLive(5)
+}
+
+/**
  * LIVE stream card on For You (not the same as `/live` room URL).
  * @param {import('playwright').Page} page
  */
@@ -415,10 +564,11 @@ async function focusFeedColumn(page, log) {
  * @param {import('playwright').Page} page
  * @param {'down' | 'up'} dir
  * @param {(action: string, details?: string) => void} log
- * @param {{ forceLarge?: boolean }} [opts]
+ * @param {{ forceLarge?: boolean; forceStuckWheel?: boolean }} [opts]
  */
 async function scrollFeedStep(page, dir, log, opts = {}) {
   const forceLarge = Boolean(opts.forceLarge)
+  const forceStuckWheel = Boolean(opts.forceStuckWheel)
   const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
   try {
     if ((await vid.count()) > 0) {
@@ -430,14 +580,19 @@ async function scrollFeedStep(page, dir, log, opts = {}) {
         await page.mouse.move(cx, cy)
         const dy =
           dir === 'down'
-            ? forceLarge
-              ? randomInt(720, 1100)
-              : randomInt(380, 720)
+            ? forceStuckWheel
+              ? randomInt(800, 1200)
+              : forceLarge
+                ? randomInt(720, 1100)
+                : randomInt(380, 720)
             : forceLarge
               ? -randomInt(200, 400)
               : -randomInt(120, 280)
         await page.mouse.wheel(0, dy)
-        log('SCROLL', `wheel on video center dy=${dy}px${forceLarge ? ' force' : ''}`)
+        log(
+          'SCROLL',
+          `wheel on video center dy=${dy}px${forceStuckWheel ? ' stuck' : forceLarge ? ' force' : ''}`,
+        )
         await sleep(120 + randomInt(0, 180))
         return
       }
@@ -508,7 +663,10 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     if (feedRepeatStreak >= 2) {
       log('FEED_REPEAT_DETECTED', `keyLen=${stableKey.length} streak=${feedRepeatStreak}`)
       log('FORCE_SCROLL_AFTER_REPEAT', 'extra down scroll')
+      const beforeRepeatScroll = await getVideoAdvanceKey(page)
       await scrollFeedStep(page, 'down', log, { forceLarge: true })
+      await haltIfNeeded(shouldHalt)
+      await ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeRepeatScroll)
       await haltIfNeeded(shouldHalt)
       feedRepeatStreak = 0
       lastFeedStableKey = ''
@@ -524,6 +682,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
   if (cardLive) {
     log('LIVE_DETECTED', 'feed card or /live room — skip watch/linger/profile/click; scroll down')
     log('LIVE_SKIPPED', 'no VIEW_VIDEO linger; immediate scroll past LIVE')
+    const beforeLiveScroll = await getVideoAdvanceKey(page)
     await maybeLiveDebugScreenshot(page, debugShots, shotDir, 'debug-live-skipped.png')
     await scrollPastLiveNoPointer(page, log, shouldHalt, 'feed_live_card', {
       pressesMin: 12,
@@ -537,6 +696,8 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
       pageDowns: 2,
     })
     await haltIfNeeded(shouldHalt)
+    await ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeLiveScroll)
+    await haltIfNeeded(shouldHalt)
     bumpSkipScrollBackAfterLive(5)
     consecutiveLingerStreak = 0
     return
@@ -548,7 +709,10 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
 
   if (consecutiveLingerStreak >= 2) {
     log('FORCE_SCROLL_AFTER_LINGER_STREAK', 'two lingers in a row — skip linger; scroll down')
+    const beforeLingerForce = await getVideoAdvanceKey(page)
     await scrollFeedStep(page, 'down', log)
+    await haltIfNeeded(shouldHalt)
+    await ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeLingerForce)
     await haltIfNeeded(shouldHalt)
     consecutiveLingerStreak = 0
   } else if (randomChance(30)) {
@@ -556,7 +720,11 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     await delayWithCaptchaInterruption(page, log, shouldHalt, 3000, 8000)
     consecutiveLingerStreak += 1
   } else {
+    const beforeMainDown = await getVideoAdvanceKey(page)
     await scrollFeedStep(page, 'down', log)
+    await haltIfNeeded(shouldHalt)
+    await ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeMainDown)
+    await haltIfNeeded(shouldHalt)
     consecutiveLingerStreak = 0
     if (randomChance(25)) {
       if (skipScrollBackAfterLive > 0) {
