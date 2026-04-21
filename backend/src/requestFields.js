@@ -81,7 +81,7 @@ export function proxyCreatePayload(body) {
     username: '',
     password: '',
     proxy_scheme: '',
-    status: 'Needs Check',
+    status: 'unknown',
     assigned_to: '',
     last_check: null,
   }

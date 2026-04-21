@@ -21,6 +21,7 @@ export type ApiProxy = {
   password: string
   proxy_scheme?: string
   status: Proxy['status']
+  check_result?: string
   assigned_to?: string
   last_check?: string | null
   created_at?: string
@@ -60,6 +61,24 @@ export function mapAccount(row: ApiAccount): Account {
   }
 }
 
+function normalizeProxyStatus(raw: string | undefined): Proxy['status'] {
+  const s = String(raw ?? '').trim()
+  const allowed = new Set([
+    'unknown',
+    'checking',
+    'ok',
+    'auth_failed',
+    'timeout',
+    'network',
+    'bad_request',
+  ])
+  if (allowed.has(s)) return s as Proxy['status']
+  if (s === 'Active') return 'ok'
+  if (s === 'Needs Check') return 'unknown'
+  if (s === 'Dead') return 'network'
+  return 'unknown'
+}
+
 export function mapProxy(row: ApiProxy): Proxy {
   return {
     id: row.id,
@@ -69,7 +88,8 @@ export function mapProxy(row: ApiProxy): Proxy {
     username: row.username ?? '',
     password: row.password ?? '',
     proxyScheme: row.proxy_scheme ?? '',
-    status: row.status,
+    status: normalizeProxyStatus(row.status),
+    checkResult: row.check_result ?? '',
   }
 }
 
