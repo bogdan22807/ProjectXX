@@ -25,6 +25,9 @@ router.post('/', (req, res) => {
   if (!host || String(host).trim() === '') {
     return sendJsonError(res, 400, 'host is required')
   }
+  if (port == null || String(port).trim() === '') {
+    return sendJsonError(res, 400, 'port is required')
+  }
   const id = newId('px')
   const h = String(host).trim()
   const p = port != null ? String(port).trim() : ''

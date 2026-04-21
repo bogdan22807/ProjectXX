@@ -2,8 +2,6 @@
  * Normalize request bodies so executors can use camelCase; API responses stay snake_case (DB columns).
  */
 
-import { parseProxyFourPartLine } from './proxyLineParse.js'
-
 function has(o, k) {
   return o != null && Object.prototype.hasOwnProperty.call(o, k)
 }
@@ -68,10 +66,6 @@ export function proxyFieldsFromBody(body) {
   if (has(b, 'password')) out.password = trimStr(b.password)
   if (has(b, 'proxy_scheme')) out.proxy_scheme = trimStr(b.proxy_scheme)
   else if (has(b, 'proxyScheme')) out.proxy_scheme = trimStr(b.proxyScheme)
-  if (has(b, 'proxy_line')) out.proxy_line = trimStr(b.proxy_line)
-  else if (has(b, 'proxyLine')) out.proxy_line = trimStr(b.proxyLine)
-  if (has(b, 'credential_order')) out.credential_order = trimStr(b.credential_order)
-  else if (has(b, 'credentialOrder')) out.credential_order = trimStr(b.credentialOrder)
   if (has(b, 'status')) out.status = trimStr(b.status)
   if (has(b, 'assigned_to')) out.assigned_to = trimStr(b.assigned_to)
   else if (has(b, 'assignedTo')) out.assigned_to = trimStr(b.assignedTo)
@@ -93,35 +87,31 @@ export function proxyCreatePayload(body) {
   }
   const fromBody = proxyFieldsFromBody(body)
   const b = body ?? {}
-  let host = trimStr(has(b, 'host') ? b.host : fromBody.host)
-  let port = trimStr(fromBody.port ?? '')
-  let username = trimStr(fromBody.username ?? '')
-  let password = trimStr(fromBody.password ?? '')
-
-  const line = trimStr(fromBody.proxy_line ?? '')
-  const orderRaw = trimStr(fromBody.credential_order ?? '').toLowerCase()
-  const order = orderRaw === 'user_pass' ? 'user_pass' : 'pass_user'
-
-  if (line) {
-    const p = parseProxyFourPartLine(line, order)
-    if (p) {
-      host = p.host
-      port = p.port
-      username = p.username
-      password = p.password
-    }
-  } else if (host && host.split(':').length === 4) {
-    const p = parseProxyFourPartLine(host, order)
-    if (p) {
-      host = p.host
-      port = p.port
-      username = p.username
-      password = p.password
-    }
-  }
-
+  const host = trimStr(has(b, 'host') ? b.host : fromBody.host)
+  const port = trimStr(fromBody.port ?? '')
+  const username = trimStr(fromBody.username ?? '')
+  const password = trimStr(fromBody.password ?? '')
+  const provider = trimStr(fromBody.provider ?? '') ?? ''
   const proxy_scheme = trimStr(fromBody.proxy_scheme ?? '') ?? ''
-  return { ...defaults, ...fromBody, host, port, username, password, proxy_scheme }
+  const status = trimStr(fromBody.status ?? defaults.status) ?? defaults.status
+  const assigned_to = trimStr(fromBody.assigned_to ?? '') ?? ''
+  const last_check =
+    fromBody.last_check == null || fromBody.last_check === ''
+      ? null
+      : trimStr(String(fromBody.last_check))
+
+  return {
+    ...defaults,
+    provider,
+    host,
+    port,
+    username,
+    password,
+    proxy_scheme,
+    status,
+    assigned_to,
+    last_check,
+  }
 }
 
 export function proxyPatchPayload(body) {

@@ -7,7 +7,7 @@ import { Modal } from '../components/ui/Modal'
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
 
-/** Поля POST /api/proxies: provider, host, port, username, password, proxy_scheme, proxy_line, credential_order */
+/** POST /api/proxies: provider, host, port, username, password, proxy_scheme */
 export function ProxiesPage() {
   const {
     proxies,
@@ -26,10 +26,8 @@ export function ProxiesPage() {
     port: '',
     username: '',
     password: '',
-    proxyScheme: 'http' as 'http' | 'socks5' | '',
+    proxyScheme: 'http' as 'http' | 'socks5',
   })
-  const [pasteLine, setPasteLine] = useState('')
-  const [credentialOrder, setCredentialOrder] = useState<'pass_user' | 'user_pass'>('pass_user')
 
   const [deleteOpen, setDeleteOpen] = useState(false)
 
@@ -71,59 +69,29 @@ export function ProxiesPage() {
     }
   }
 
-  const schemeForApi = form.proxyScheme === 'socks5' ? 'socks5' : form.proxyScheme === 'http' ? 'http' : ''
+  const schemeForApi = form.proxyScheme === 'socks5' ? 'socks5' : 'http'
+
+  const canSubmit = Boolean(form.host.trim() && form.port.trim())
 
   async function submitAdd() {
-    const line = pasteLine.trim()
-    if (line) {
-      await addProxy({
-        provider: form.provider.trim(),
-        host: '',
-        port: '',
-        username: '',
-        password: '',
-        proxyScheme: schemeForApi || undefined,
-        proxyLine: line,
-        credentialOrder,
-      })
-    } else if (form.host.trim()) {
-      await addProxy({
-        provider: form.provider.trim(),
-        host: form.host.trim(),
-        port: form.port.trim(),
-        username: form.username.trim(),
-        password: form.password.trim(),
-        proxyScheme: schemeForApi || undefined,
-      })
-    } else {
-      return
-    }
+    if (!canSubmit) return
+    await addProxy({
+      provider: form.provider.trim(),
+      host: form.host.trim(),
+      port: form.port.trim(),
+      username: form.username.trim(),
+      password: form.password.trim(),
+      proxyScheme: schemeForApi,
+    })
     closeAddModal()
-    setForm({ provider: '', host: '', port: '', username: '', password: '', proxyScheme: 'http' })
-    setPasteLine('')
-  }
-
-  async function submitAddAllLines() {
-    const lines = pasteLine
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean)
-    if (lines.length === 0) return
-    for (const line of lines) {
-      await addProxy({
-        provider: form.provider.trim(),
-        host: '',
-        port: '',
-        username: '',
-        password: '',
-        proxyScheme: schemeForApi || undefined,
-        proxyLine: line,
-        credentialOrder,
-      })
-    }
-    closeAddModal()
-    setForm({ provider: '', host: '', port: '', username: '', password: '', proxyScheme: 'http' })
-    setPasteLine('')
+    setForm({
+      provider: '',
+      host: '',
+      port: '',
+      username: '',
+      password: '',
+      proxyScheme: 'http',
+    })
   }
 
   return (
@@ -149,7 +117,7 @@ export function ProxiesPage() {
           {proxies.length === 0 ? (
             <EmptyState
               title="Нет прокси"
-              description="Добавьте запись: host, port, опционально логин/пароль или строка host:port:…:…"
+              description="Укажите host и port, при необходимости — логин и пароль."
               action={
                 <Button variant="primary" onClick={openAddModal}>
                   Добавить прокси
@@ -243,25 +211,14 @@ export function ProxiesPage() {
 
       <Modal
         open={addOpen}
-        title="Прокси (API)"
+        title="Новый прокси"
         onClose={closeAddModal}
         footer={
           <div className="flex flex-wrap justify-end gap-2">
             <Button variant="ghost" onClick={closeAddModal}>
               Отмена
             </Button>
-            <Button
-              variant="secondary"
-              onClick={() => void submitAddAllLines()}
-              disabled={pasteLine.split(/\r?\n/).map((l) => l.trim()).filter(Boolean).length < 2}
-            >
-              Добавить все строки
-            </Button>
-            <Button
-              variant="primary"
-              onClick={() => void submitAdd()}
-              disabled={!pasteLine.trim() && !form.host.trim()}
-            >
+            <Button variant="primary" onClick={() => void submitAdd()} disabled={!canSubmit}>
               Сохранить
             </Button>
           </div>
@@ -269,46 +226,14 @@ export function ProxiesPage() {
       >
         <div className="space-y-3 text-sm text-zinc-300">
           <p className="text-xs text-zinc-500">
-            Либо одна строка <code className="text-zinc-400">IPv4:port:…:…</code> (4 части), либо поля ниже.
-            Порядок 3–4 сегмента задаётся переключателем. Для Playwright executor обычно нужен{' '}
-            <strong className="text-zinc-300">HTTP</strong> (SOCKS5 с логином в Chromium часто не поддерживается).
+            Для Playwright обычно выбирайте <strong className="text-zinc-300">http</strong>. SOCKS5 с логином в
+            Chromium может не поддерживаться.
           </p>
           <label className="block text-xs font-medium text-zinc-400">
-            Строка (proxy_line)
-            <textarea
-              className={`${fieldClass} mt-1 min-h-[72px] resize-y font-mono text-xs`}
-              value={pasteLine}
-              onChange={(e) => setPasteLine(e.target.value)}
-              placeholder="91.228.13.48:50100:takeit32:dont1"
-              spellCheck={false}
-            />
-          </label>
-          <fieldset className="space-y-1 text-xs text-zinc-400">
-            <legend className="font-medium text-zinc-400">credential_order (4 части)</legend>
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="radio"
-                name="credOrder"
-                checked={credentialOrder === 'pass_user'}
-                onChange={() => setCredentialOrder('pass_user')}
-              />
-              <code className="text-zinc-500">host:port:password:username</code> (SOAX)
-            </label>
-            <label className="flex cursor-pointer items-center gap-2">
-              <input
-                type="radio"
-                name="credOrder"
-                checked={credentialOrder === 'user_pass'}
-                onChange={() => setCredentialOrder('user_pass')}
-              />
-              <code className="text-zinc-500">host:port:username:password</code>
-            </label>
-          </fieldset>
-          <label className="block text-xs font-medium text-zinc-400">
-            proxy_scheme
+            Схема (proxy_scheme)
             <select
               className={fieldClass}
-              value={form.proxyScheme || 'http'}
+              value={form.proxyScheme}
               onChange={(e) =>
                 setForm((f) => ({
                   ...f,
@@ -321,16 +246,15 @@ export function ProxiesPage() {
             </select>
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            provider <span className="font-normal text-zinc-600">(необязательно)</span>
+            Провайдер <span className="font-normal text-zinc-600">(необязательно)</span>
             <input
               className={fieldClass}
               value={form.provider}
               onChange={(e) => setForm((f) => ({ ...f, provider: e.target.value }))}
             />
           </label>
-          <p className="text-xs font-medium text-zinc-500">Если строка пустая — ручной ввод (host обязателен)</p>
           <label className="block text-xs font-medium text-zinc-400">
-            host <span className="text-rose-400/90">*</span>
+            Host <span className="text-rose-400/90">*</span>
             <input
               className={fieldClass}
               value={form.host}
@@ -339,16 +263,17 @@ export function ProxiesPage() {
             />
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            port
+            Port <span className="text-rose-400/90">*</span>
             <input
               className={fieldClass}
               value={form.port}
               onChange={(e) => setForm((f) => ({ ...f, port: e.target.value }))}
               placeholder="50100"
+              inputMode="numeric"
             />
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            username <span className="font-normal text-zinc-600">(необязательно)</span>
+            Username <span className="font-normal text-zinc-600">(необязательно)</span>
             <input
               className={fieldClass}
               value={form.username}
@@ -356,7 +281,7 @@ export function ProxiesPage() {
             />
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            password <span className="font-normal text-zinc-600">(необязательно)</span>
+            Password <span className="font-normal text-zinc-600">(необязательно)</span>
             <input
               type="password"
               className={fieldClass}
