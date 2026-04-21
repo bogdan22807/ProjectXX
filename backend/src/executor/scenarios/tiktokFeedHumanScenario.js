@@ -1,7 +1,7 @@
 /**
  * One "human" iteration on TikTok FYP: watch → keyboard scroll (feed-focused) → optional video center-click.
  * No page.goto / reload in the normal path — caller opens TikTok once.
- * Full-page LIVE room (`/live` URL): leave with Escape / back / keyboard-only scroll — no `goto` / reload.
+ * Full-page LIVE room (`/live` URL): leave with Escape + strong keyboard-only down scroll — no goBack, no `goto` / reload (goBack was ping-ponging back to the same LIVE).
  *
  * Mouse wheel at screen edge often hovers the sidebar avatar (flicker). Keyboard scroll + center focus avoids that.
  * Captcha/verify: we pause and log so you can solve manually; we do not auto-solve.
@@ -12,8 +12,14 @@ import path from 'node:path'
 import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 
-/** After a LIVE feed card, suppress SCROLL_BACK for this many iterations (incl. current). */
+/** After a LIVE feed card (or repeat guard), suppress SCROLL_BACK for this many iterations. */
 let skipScrollBackAfterLive = 0
+
+function bumpSkipScrollBackAfterLive(n) {
+  const k = Number(n)
+  if (!Number.isFinite(k) || k < 1) return
+  skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, Math.floor(k))
+}
 
 /** Consecutive same-card detection (anti stuck / LIVE ping-pong). */
 let lastFeedStableKey = ''
@@ -152,21 +158,29 @@ function pageInLiveRoomUrl(page) {
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  * @param {string} reason short tag for log details
+ * @param {{ pressesMin?: number; pressesMax?: number; pageDowns?: number }} [opts]
  */
-async function scrollPastLiveNoPointer(page, log, shouldHalt, reason) {
-  const n = randomInt(6, 11)
+async function scrollPastLiveNoPointer(page, log, shouldHalt, reason, opts = {}) {
+  const pMin = Number(opts.pressesMin)
+  const pMax = Number(opts.pressesMax)
+  const min = Number.isFinite(pMin) && pMin > 0 ? pMin : 6
+  const max = Number.isFinite(pMax) && pMax >= min ? pMax : 11
+  const n = randomInt(min, max)
   for (let i = 0; i < n; i++) {
     await haltIfNeeded(shouldHalt)
     await page.keyboard.press('ArrowDown')
     await sleep(65 + randomInt(0, 95))
   }
-  await page.keyboard.press('PageDown').catch(() => {})
-  await page.keyboard.press('PageDown').catch(() => {})
-  log('SCROLL', `live-skip keyboard-only reason=${reason} ArrowDown×${n}+PageDown×2`)
+  const pd = Math.min(5, Math.max(1, Math.floor(Number(opts.pageDowns)) || 2))
+  for (let j = 0; j < pd; j++) {
+    await page.keyboard.press('PageDown').catch(() => {})
+  }
+  log('SCROLL', `live-skip keyboard-only reason=${reason} ArrowDown×${n}+PageDown×${pd}`)
 }
 
 /**
- * Leave full-page LIVE room without `goto` / reload: Escape, back, then keyboard-only feed advance.
+ * Leave full-page LIVE room without `goto` / reload: Escape, then strong keyboard-only feed advance.
+ * Intentionally no `history.back()`: it often returns to the same LIVE tile and causes LIVE↔video ping-pong.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
@@ -181,26 +195,25 @@ async function recoverFromLiveSurface(page, log, shouldHalt) {
   await interruptibleRandomDelay(400, 900, shouldHalt)
   if (!pageInLiveRoomUrl(page)) {
     log('TIKTOK_LIVE_EXIT', `after Escape url=${page.url().slice(0, 200)}`)
+    bumpSkipScrollBackAfterLive(5)
     return true
   }
 
-  await page.goBack({ waitUntil: 'commit', timeout: 18_000 }).catch(() => {})
-  await interruptibleRandomDelay(500, 1200, shouldHalt)
-  if (!pageInLiveRoomUrl(page)) {
-    log('TIKTOK_LIVE_EXIT', `after goBack url=${page.url().slice(0, 200)}`)
-    return true
-  }
-
-  log('LIVE_SKIPPED', 'still on /live — keyboard scroll only (no goto/reload)')
-  for (let wave = 0; wave < 4 && pageInLiveRoomUrl(page); wave++) {
-    await scrollPastLiveNoPointer(page, log, shouldHalt, 'exit_live_room')
-    await interruptibleRandomDelay(350, 700, shouldHalt)
+  log('LIVE_SKIPPED', 'still on /live — keyboard-only down scroll (no goBack/goto)')
+  for (let wave = 0; wave < 6 && pageInLiveRoomUrl(page); wave++) {
+    await scrollPastLiveNoPointer(page, log, shouldHalt, 'exit_live_room', {
+      pressesMin: 12,
+      pressesMax: 20,
+      pageDowns: 3,
+    })
+    await interruptibleRandomDelay(400, 800, shouldHalt)
   }
   if (pageInLiveRoomUrl(page)) {
     log('TIKTOK_LIVE_EXIT_FAILED', 'still /live after keyboard-only recovery waves')
   } else {
     log('TIKTOK_LIVE_EXIT', `after keyboard-only url=${page.url().slice(0, 200)}`)
   }
+  bumpSkipScrollBackAfterLive(5)
   return true
 }
 
@@ -500,7 +513,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
       feedRepeatStreak = 0
       lastFeedStableKey = ''
       consecutiveLingerStreak = 0
-      skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, 2)
+      bumpSkipScrollBackAfterLive(5)
     }
   } else {
     feedRepeatStreak = 0
@@ -512,9 +525,19 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     log('LIVE_DETECTED', 'feed card or /live room — skip watch/linger/profile/click; scroll down')
     log('LIVE_SKIPPED', 'no VIEW_VIDEO linger; immediate scroll past LIVE')
     await maybeLiveDebugScreenshot(page, debugShots, shotDir, 'debug-live-skipped.png')
-    await scrollPastLiveNoPointer(page, log, shouldHalt, 'feed_live_card')
+    await scrollPastLiveNoPointer(page, log, shouldHalt, 'feed_live_card', {
+      pressesMin: 12,
+      pressesMax: 18,
+      pageDowns: 3,
+    })
+    await interruptibleRandomDelay(250, 500, shouldHalt)
+    await scrollPastLiveNoPointer(page, log, shouldHalt, 'feed_live_card_extra', {
+      pressesMin: 8,
+      pressesMax: 14,
+      pageDowns: 2,
+    })
     await haltIfNeeded(shouldHalt)
-    skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, 2)
+    bumpSkipScrollBackAfterLive(5)
     consecutiveLingerStreak = 0
     return
   }
