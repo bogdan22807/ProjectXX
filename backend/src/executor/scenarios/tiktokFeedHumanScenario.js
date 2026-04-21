@@ -1,6 +1,7 @@
 /**
  * One "human" iteration on TikTok FYP: watch → keyboard scroll (feed-focused) → optional video center-click.
- * No page.goto / reload — caller opens TikTok once.
+ * No page.goto / reload in the normal path — caller opens TikTok once. LIVE/stream recovery may
+ * `goto` For You if Escape/back cannot restore the feed.
  *
  * Mouse wheel at screen edge often hovers the sidebar avatar (flicker). Keyboard scroll + center focus avoids that.
  * Captcha/verify: we pause and log so you can solve manually; we do not auto-solve.
@@ -34,6 +35,46 @@ function shouldTryLike() {
 }
 
 /**
+ * TikTok often keeps the FYP URL while showing a captcha overlay — detect via DOM/title too.
+ * @param {import('playwright').Page} page
+ * @returns {Promise<boolean>}
+ */
+async function detectChallengeDom(page) {
+  try {
+    const ti = ((await page.title().catch(() => '')) ?? '').toLowerCase()
+    if (
+      ti.includes('captcha') ||
+      ti.includes('verify') ||
+      ti.includes('security check') ||
+      ti.includes('robot')
+    ) {
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+  const hints = [
+    'iframe[src*="captcha" i]',
+    'iframe[src*="verify" i]',
+    'iframe[src*="challenge" i]',
+    '[class*="captcha" i]',
+    '[id*="captcha" i]',
+    '[class*="Captcha" i]',
+    '[data-testid*="captcha" i]',
+    'text=/\\bcaptcha\\b/i',
+    'text=/security check/i',
+    'text=/verify you are human/i',
+    'text=/slide to verify/i',
+    'text=/drag.*puzzle/i',
+  ]
+  for (const sel of hints) {
+    const loc = page.locator(sel).first()
+    if (await loc.isVisible().catch(() => false)) return true
+  }
+  return false
+}
+
+/**
  * @param {import('playwright').Page} page
  * @returns {Promise<'challenge' | 'login' | null>}
  */
@@ -55,7 +96,61 @@ async function detectBlockingFlow(page) {
   } catch {
     /* ignore */
   }
+  if (await detectChallengeDom(page)) return 'challenge'
   return null
+}
+
+/**
+ * LIVE slide or navigated into live room — scrolling/clicking the “video” hits stream UI.
+ * @param {import('playwright').Page} page
+ */
+async function pageShowsLiveContext(page) {
+  const u = page.url().toLowerCase()
+  if (u.includes('/live')) return true
+  try {
+    const badge = page.locator('[data-e2e="live-tag"], [data-e2e="video-live-tag"]').first()
+    if ((await badge.count()) > 0 && (await badge.isVisible().catch(() => false))) return true
+  } catch {
+    /* ignore */
+  }
+  return false
+}
+
+/**
+ * Leave LIVE / stream surface back toward For You (no busy loop).
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function recoverFromLiveSurface(page, log, shouldHalt) {
+  const before = page.url()
+  if (!(await pageShowsLiveContext(page))) return false
+
+  log('TIKTOK_LIVE_DETECTED', before.slice(0, 280))
+
+  await page.keyboard.press('Escape').catch(() => {})
+  await interruptibleRandomDelay(400, 900, shouldHalt)
+  if (!(await pageShowsLiveContext(page))) {
+    log('TIKTOK_LIVE_EXIT', `after Escape url=${page.url().slice(0, 200)}`)
+    return true
+  }
+
+  await page.goBack({ waitUntil: 'commit', timeout: 18_000 }).catch(() => {})
+  await interruptibleRandomDelay(500, 1200, shouldHalt)
+  if (!(await pageShowsLiveContext(page))) {
+    log('TIKTOK_LIVE_EXIT', `after goBack url=${page.url().slice(0, 200)}`)
+    return true
+  }
+
+  const fyp = 'https://www.tiktok.com/foryou'
+  try {
+    await page.goto(fyp, { waitUntil: 'commit', timeout: 28_000 })
+    log('TIKTOK_LIVE_EXIT', `recovery goto ${fyp}`)
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    log('TIKTOK_LIVE_EXIT_FAILED', msg.slice(0, 200))
+  }
+  return true
 }
 
 /**
@@ -83,7 +178,11 @@ async function waitIfChallengeOrLogin(page, log, shouldHalt) {
     await haltIfNeeded(shouldHalt)
     const still = await detectBlockingFlow(page)
     if (!still || still === 'login') {
-      if (!still) log('TIKTOK_CHALLENGE_CLEARED', 'feed should be usable again')
+      if (!still) {
+        log('TIKTOK_CHALLENGE_CLEARED', 'overlay gone — resuming after short pause')
+        await interruptibleRandomDelay(3000, 5000, shouldHalt)
+        log('TIKTOK_RESUME_AFTER_CHALLENGE', 'continuing feed automation')
+      }
       break
     }
     await interruptibleRandomDelay(8000, 12000, shouldHalt)
@@ -166,6 +265,9 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
   await waitIfChallengeOrLogin(page, log, shouldHalt)
   await haltIfNeeded(shouldHalt)
 
+  await recoverFromLiveSurface(page, log, shouldHalt)
+  await haltIfNeeded(shouldHalt)
+
   if ((await detectBlockingFlow(page)) === 'challenge') {
     log('TIKTOK_CHALLENGE_STILL_ACTIVE', 'skip actions this iteration — finish captcha in browser')
     await interruptibleRandomDelay(5000, 10000, shouldHalt)
@@ -188,7 +290,12 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
   }
   await haltIfNeeded(shouldHalt)
 
-  if (shouldTryLike()) {
+  if (await pageShowsLiveContext(page)) {
+    await recoverFromLiveSurface(page, log, shouldHalt)
+    await haltIfNeeded(shouldHalt)
+  }
+
+  if (shouldTryLike() && !(await pageShowsLiveContext(page))) {
     await focusFeedColumn(page, log)
     const likeSelectors = [
       '[data-e2e="browse-like-icon"]',
@@ -222,31 +329,35 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
   }
 
   if (randomChance(15)) {
-    const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
-    try {
-      if ((await vid.count()) > 0) {
-        await vid.scrollIntoViewIfNeeded().catch(() => {})
-        const box = await vid.boundingBox()
-        if (box && box.width > 20 && box.height > 20) {
-          await vid.click({
-            position: {
-              x: box.width / 2,
-              y: Math.min(box.height * 0.42, box.height * 0.48),
-            },
-            timeout: 6000,
-          })
-          log('CLICK_VIDEO', 'locator click center-ish on video')
-          await interruptibleRandomDelay(5000, 12000, shouldHalt)
+    if (await pageShowsLiveContext(page)) {
+      log('CLICK_VIDEO', 'skipped — LIVE/stream surface')
+    } else {
+      const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
+      try {
+        if ((await vid.count()) > 0) {
+          await vid.scrollIntoViewIfNeeded().catch(() => {})
+          const box = await vid.boundingBox()
+          if (box && box.width > 20 && box.height > 20) {
+            await vid.click({
+              position: {
+                x: box.width / 2,
+                y: Math.min(box.height * 0.42, box.height * 0.48),
+              },
+              timeout: 6000,
+            })
+            log('CLICK_VIDEO', 'locator click center-ish on video')
+            await interruptibleRandomDelay(5000, 12000, shouldHalt)
+          }
         }
+      } catch {
+        log('CLICK_VIDEO', 'skipped')
       }
-    } catch {
-      log('CLICK_VIDEO', 'skipped')
     }
     await haltIfNeeded(shouldHalt)
   }
 
   const profilePct = profilePeekPercent()
-  if (profilePct > 0 && randomChance(profilePct)) {
+  if (profilePct > 0 && randomChance(profilePct) && !(await pageShowsLiveContext(page))) {
     const author = page.locator('[data-e2e="video-author-uniqueid"]').first()
     try {
       if ((await author.count()) > 0) {
