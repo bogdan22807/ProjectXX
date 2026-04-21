@@ -22,6 +22,17 @@ function profilePeekPercent() {
   return Math.min(100, n)
 }
 
+/** Like attempt probability per iteration (0–10, float ok). Default ~1.5% (between 1 and 2). Env: TIKTOK_LIKE_PERCENT */
+function shouldTryLike() {
+  const raw = process.env.TIKTOK_LIKE_PERCENT
+  let pct = 1.5
+  if (raw != null && String(raw).trim() !== '') {
+    const n = Number(raw)
+    if (Number.isFinite(n) && n > 0) pct = Math.min(n, 10)
+  }
+  return Math.random() * 100 < pct
+}
+
 /**
  * @param {import('playwright').Page} page
  * @returns {Promise<'challenge' | 'login' | null>}
@@ -155,6 +166,28 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
     }
   }
   await haltIfNeeded(shouldHalt)
+
+  if (shouldTryLike()) {
+    await focusFeedColumn(page, log)
+    const likeBtn = page
+      .locator(
+        '[data-e2e="browse-like-icon"], [data-e2e="like-icon"], [data-e2e="video-player-like-icon"], button[aria-label*="Like" i]',
+      )
+      .first()
+    try {
+      if ((await likeBtn.count()) > 0) {
+        await likeBtn.click({ timeout: 5000 })
+        log('LIKE_VIDEO', 'like button (rare)')
+        await interruptibleRandomDelay(800, 2200, shouldHalt)
+      } else {
+        log('LIKE_SKIPPED', 'no like control found')
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      log('LIKE_SKIPPED', msg.slice(0, 200))
+    }
+    await haltIfNeeded(shouldHalt)
+  }
 
   if (randomChance(15)) {
     const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
