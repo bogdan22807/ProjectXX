@@ -216,9 +216,12 @@ function gotoWaitUntil() {
 const DEBUG_PROXY_IP_URL = 'https://httpbin.org/ip'
 
 function resolveMaxDurationMs(options) {
-  const raw = options?.maxDurationMs ?? process.env.PLAYWRIGHT_MAX_DURATION_MS
-  const n = Number(raw)
-  if (Number.isFinite(n) && n > 0) return Math.min(n, 24 * 60 * 60 * 1000)
+  if (options && options.maxDurationMs != null) {
+    const n = Number(options.maxDurationMs)
+    if (Number.isFinite(n) && n > 0) return Math.min(n, 24 * 60 * 60 * 1000)
+  }
+  const fromEnv = Number(process.env.PLAYWRIGHT_MAX_DURATION_MS)
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return Math.min(fromEnv, 24 * 60 * 60 * 1000)
   return DEFAULT_MAX_DURATION_MS
 }
 
