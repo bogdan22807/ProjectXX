@@ -1,7 +1,7 @@
 /**
  * One "human" iteration on TikTok FYP: watch → keyboard scroll (feed-focused) → optional video center-click.
  * No page.goto / reload in the normal path — caller opens TikTok once.
- * FYP LIVE card: double strong keyboard scroll, no clicks/linger/scroll_back; suppress rich actions briefly after.
+ * FYP LIVE card: double strong keyboard scroll down only; no clicks/linger; suppress rich actions briefly after.
  * Full-page `/live` URL: Escape, then `goBack()` (primary); `goto` /foryou only as fallback (`LIVE_RECOVERY_*`).
  *
  * Mouse wheel at screen edge often hovers the sidebar avatar (flicker). Keyboard scroll + center focus avoids that.
@@ -12,15 +12,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
-
-/** After a LIVE feed card (or repeat guard), suppress SCROLL_BACK for this many iterations. */
-let skipScrollBackAfterLive = 0
-
-function bumpSkipScrollBackAfterLive(n) {
-  const k = Number(n)
-  if (!Number.isFinite(k) || k < 1) return
-  skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, Math.floor(k))
-}
 
 /** After FYP LIVE skip: suppress CLICK_VIDEO / OPEN_PROFILE / LIKE for this many iterations. */
 let skipClickProfileAfterLive = 0
@@ -206,7 +197,6 @@ async function recoverFromLiveSurface(page, log, shouldHalt) {
   await interruptibleRandomDelay(400, 900, shouldHalt)
   if (!pageInLiveRoomUrl(page)) {
     log('TIKTOK_LIVE_EXIT', `after Escape url=${page.url().slice(0, 200)}`)
-    bumpSkipScrollBackAfterLive(3)
     bumpSkipClickProfileAfterLive(2)
     return true
   }
@@ -216,7 +206,6 @@ async function recoverFromLiveSurface(page, log, shouldHalt) {
   await interruptibleRandomDelay(500, 1100, shouldHalt)
   if (!pageInLiveRoomUrl(page)) {
     log('TIKTOK_LIVE_EXIT', `after goBack url=${page.url().slice(0, 200)}`)
-    bumpSkipScrollBackAfterLive(3)
     bumpSkipClickProfileAfterLive(2)
     return true
   }
@@ -229,7 +218,6 @@ async function recoverFromLiveSurface(page, log, shouldHalt) {
     log('LIVE_RECOVERY_FALLBACK', `goto failed ${m.slice(0, 200)}`)
   }
   await interruptibleRandomDelay(400, 800, shouldHalt)
-  bumpSkipScrollBackAfterLive(3)
   bumpSkipClickProfileAfterLive(2)
   return true
 }
@@ -444,7 +432,7 @@ async function ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeScroll
     log('FEED_STUCK_DETECTED', `sameVideoKey attempt=${attempt} len=${beforeScrollKey.length}`)
 
     log('FEED_STUCK_RECOVERY', `phase=strong_wheel dy=800–1200 attempt=${attempt}`)
-    await scrollFeedStep(page, 'down', log, { forceStuckWheel: true })
+    await scrollFeedStep(page, log, { forceStuckWheel: true })
     await sleepAfterScrollForAdvanceCheck(shouldHalt)
     await haltIfNeeded(shouldHalt)
     after = await getVideoAdvanceKey(page)
@@ -472,7 +460,6 @@ async function ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeScroll
   if (after && after !== beforeScrollKey) {
     lastFeedStableKey = after
     feedRepeatStreak = 1
-    bumpSkipScrollBackAfterLive(5)
     return
   }
 
@@ -489,7 +476,6 @@ async function ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeScroll
   if (after && after !== beforeScrollKey) {
     lastFeedStableKey = after
     feedRepeatStreak = 1
-    bumpSkipScrollBackAfterLive(5)
     return
   }
 
@@ -515,7 +501,6 @@ async function ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeScroll
     lastFeedStableKey = after
     feedRepeatStreak = 1
   }
-  bumpSkipScrollBackAfterLive(5)
 }
 
 /**
@@ -618,14 +603,12 @@ async function focusFeedColumn(page, log) {
 }
 
 /**
- * Prefer wheel over the main video center (feed scrolls, sidebar untouched).
- * Fallback: keyboard after feed column focus.
+ * Scroll **down only** (FYP): wheel with positive dy on video center, or ArrowDown/PageDown fallback — never up.
  * @param {import('playwright').Page} page
- * @param {'down' | 'up'} dir
  * @param {(action: string, details?: string) => void} log
  * @param {{ forceLarge?: boolean; forceStuckWheel?: boolean }} [opts]
  */
-async function scrollFeedStep(page, dir, log, opts = {}) {
+async function scrollFeedStep(page, log, opts = {}) {
   const forceLarge = Boolean(opts.forceLarge)
   const forceStuckWheel = Boolean(opts.forceStuckWheel)
   const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
@@ -637,16 +620,11 @@ async function scrollFeedStep(page, dir, log, opts = {}) {
         const cx = box.x + box.width / 2
         const cy = box.y + box.height / 2
         await page.mouse.move(cx, cy)
-        const dy =
-          dir === 'down'
-            ? forceStuckWheel
-              ? randomInt(800, 1200)
-              : forceLarge
-                ? randomInt(720, 1100)
-                : randomInt(380, 720)
-            : forceLarge
-              ? -randomInt(200, 400)
-              : -randomInt(120, 280)
+        const dy = forceStuckWheel
+          ? randomInt(800, 1200)
+          : forceLarge
+            ? randomInt(720, 1100)
+            : randomInt(380, 720)
         await page.mouse.wheel(0, dy)
         log(
           'SCROLL',
@@ -661,26 +639,19 @@ async function scrollFeedStep(page, dir, log, opts = {}) {
   }
 
   await focusFeedColumn(page, log)
-  const times =
-    dir === 'down'
-      ? forceLarge
-        ? randomInt(6, 10)
-        : randomInt(2, 5)
-      : forceLarge
-        ? randomInt(2, 4)
-        : randomInt(1, 2)
+  const times = forceLarge ? randomInt(6, 10) : randomInt(2, 5)
   for (let i = 0; i < times; i++) {
-    await page.keyboard.press(dir === 'down' ? 'ArrowDown' : 'ArrowUp')
+    await page.keyboard.press('ArrowDown')
     await sleep(80 + randomInt(0, 120))
   }
-  if (dir === 'down' && (forceLarge || randomChance(35))) {
+  if (forceLarge || randomChance(35)) {
     await page.keyboard.press('PageDown')
     if (forceLarge) {
       await page.keyboard.press('PageDown').catch(() => {})
     }
     log('SCROLL', `fallback keyboard ArrowDown×${times}+PageDown${forceLarge ? ' force' : ''}`)
   } else {
-    log('SCROLL', `fallback keyboard ${dir === 'down' ? 'ArrowDown' : 'ArrowUp'}×${times}${forceLarge ? ' force' : ''}`)
+    log('SCROLL', `fallback keyboard ArrowDown×${times}`)
   }
 }
 
@@ -723,14 +694,13 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
       log('FEED_REPEAT_DETECTED', `keyLen=${stableKey.length} streak=${feedRepeatStreak}`)
       log('FORCE_SCROLL_AFTER_REPEAT', 'extra down scroll')
       const beforeRepeatScroll = await getVideoAdvanceKey(page)
-      await scrollFeedStep(page, 'down', log, { forceLarge: true })
+      await scrollFeedStep(page, log, { forceLarge: true })
       await haltIfNeeded(shouldHalt)
       await ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeRepeatScroll)
       await haltIfNeeded(shouldHalt)
       feedRepeatStreak = 0
       lastFeedStableKey = ''
       consecutiveLingerStreak = 0
-      bumpSkipScrollBackAfterLive(3)
     }
   } else {
     feedRepeatStreak = 0
@@ -739,7 +709,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
 
   const liveCardOnly = await isLiveFeedCardOnly(page)
   if (liveCardOnly) {
-    log('LIVE_DETECTED', 'FYP LIVE card — skip watch/linger/click/profile/scroll_back; double strong scroll down')
+    log('LIVE_DETECTED', 'FYP LIVE card — skip watch/linger/click/profile; double strong scroll down only')
     log('LIVE_SKIPPED', 'immediate keyboard-only scroll past LIVE')
     const stableBeforeLive = await getFeedStableKey(page)
     await maybeLiveDebugScreenshot(page, debugShots, shotDir, 'debug-live-skipped.png')
@@ -761,7 +731,6 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     await haltIfNeeded(shouldHalt)
     await ensureAdvancedOrForceAfterLive(page, log, shouldHalt, stableBeforeLive)
     await haltIfNeeded(shouldHalt)
-    bumpSkipScrollBackAfterLive(3)
     bumpSkipClickProfileAfterLive(2)
     consecutiveLingerStreak = 0
     return
@@ -774,7 +743,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
   if (consecutiveLingerStreak >= 2) {
     log('FORCE_SCROLL_AFTER_LINGER_STREAK', 'two lingers in a row — skip linger; scroll down')
     const beforeLingerForce = await getVideoAdvanceKey(page)
-    await scrollFeedStep(page, 'down', log)
+    await scrollFeedStep(page, log)
     await haltIfNeeded(shouldHalt)
     await ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeLingerForce)
     await haltIfNeeded(shouldHalt)
@@ -785,21 +754,12 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     consecutiveLingerStreak += 1
   } else {
     const beforeMainDown = await getVideoAdvanceKey(page)
-    await scrollFeedStep(page, 'down', log)
+    await scrollFeedStep(page, log)
     await haltIfNeeded(shouldHalt)
     await ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeMainDown)
     await haltIfNeeded(shouldHalt)
     consecutiveLingerStreak = 0
-    if (randomChance(25)) {
-      if (skipScrollBackAfterLive > 0) {
-        log('LIVE_SKIPPED', 'SCROLL_BACK suppressed (after LIVE)')
-      } else {
-        await scrollFeedStep(page, 'up', log)
-        log('SCROLL_BACK', 'up')
-      }
-    }
   }
-  if (skipScrollBackAfterLive > 0) skipScrollBackAfterLive -= 1
   if (skipClickProfileAfterLive > 0) skipClickProfileAfterLive -= 1
 
   await haltIfNeeded(shouldHalt)
