@@ -389,13 +389,32 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       String(runConfig.startUrlSource ?? 'default'),
     )
 
+    logStep(
+      accountId,
+      'PLAYWRIGHT_LAUNCHING',
+      `createBrowserSession headless=${headlessForSession ? 1 : 0} cookies=${parsed.cookies.length} hasProxy=${launchProxy ? 1 : 0}`,
+    )
+    const sessionPhaseToAction = {
+      chromium_launch_start: 'CHROMIUM_LAUNCH_START',
+      chromium_launched: 'CHROMIUM_LAUNCHED',
+      context_created: 'CONTEXT_CREATED',
+      cookies_applied: 'COOKIES_APPLIED',
+      cookies_empty_after_parse: 'COOKIES_EMPTY_AFTER_PARSE',
+      cookies_skipped: 'COOKIES_SKIPPED',
+      first_page_created: 'FIRST_PAGE_READY',
+    }
     try {
       ;({ browser, context, page } = await createBrowserSession({
         headless: headlessForSession,
         proxy: launchProxy,
         cookies: rawCookies || undefined,
         cookieUrl: runConfig.startUrl,
+        onPhase: (p, d) => {
+          const action = sessionPhaseToAction[p] ?? 'BROWSER_SESSION_PHASE'
+          logStep(accountId, action, d ?? '')
+        },
       }))
+      logStep(accountId, 'PLAYWRIGHT_LAUNCHED', 'createBrowserSession finished')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (parsed.cookies.length > 0 || rawCookies) {

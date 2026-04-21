@@ -19,6 +19,7 @@ function launchTimeoutMs() {
  *   cookies?: string
  *   cookieUrl?: string
  *   userAgent?: string
+ *   onPhase?: (phase: string, detail?: string) => void
  * }} CreateBrowserSessionConfig
  */
 
@@ -27,6 +28,11 @@ function launchTimeoutMs() {
  * @returns {Promise<{ browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page }>}
  */
 export async function createBrowserSession(config = {}) {
+  const phase =
+    typeof config.onPhase === 'function'
+      ? /** @type {(p: string, d?: string) => void} */ (config.onPhase)
+      : () => {}
+
   const headless =
     config.headless !== undefined
       ? Boolean(config.headless)
@@ -52,7 +58,9 @@ export async function createBrowserSession(config = {}) {
   /** @type {import('playwright').BrowserContext | null} */
   let context = null
   try {
+    phase('chromium_launch_start', `timeoutMs=${launchTimeoutMs()}`)
     browser = await Promise.race([chromium.launch(launchOpts), timeoutPromise])
+    phase('chromium_launched', '')
   } finally {
     if (launchTimeoutId) clearTimeout(launchTimeoutId)
   }
@@ -67,6 +75,7 @@ export async function createBrowserSession(config = {}) {
     }
 
     context = await browser.newContext(contextOpts)
+    phase('context_created', '')
 
     const rawCookies = String(config.cookies ?? '').trim()
     if (rawCookies) {
@@ -84,10 +93,16 @@ export async function createBrowserSession(config = {}) {
       }
       if (parsed.cookies.length > 0) {
         await context.addCookies(parsed.cookies)
+        phase('cookies_applied', `${parsed.cookies.length}`)
+      } else {
+        phase('cookies_empty_after_parse', '')
       }
+    } else {
+      phase('cookies_skipped', 'no cookie string')
     }
 
     const page = await context.newPage()
+    phase('first_page_created', '')
     return { browser, context, page }
   } catch (err) {
     await context?.close().catch(() => {})
