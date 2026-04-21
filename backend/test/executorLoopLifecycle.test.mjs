@@ -41,6 +41,7 @@ test('executor loop: graceful stop logs STOP_REQUESTED, EXECUTOR_STOPPED, EXECUT
     headless: true,
     targetUrl: 'https://example.com/',
     maxDurationMs: 120_000,
+    tiktokHumanFeedLoop: false,
   })
 
   await new Promise((r) => setTimeout(r, 2500))
@@ -69,6 +70,7 @@ test('executor loop: maxDurationMs ends with MAX_DURATION_REACHED and closes run
     headless: true,
     targetUrl: 'https://example.com/',
     maxDurationMs: 4000,
+    tiktokHumanFeedLoop: false,
   })
 
   assert.equal(isPlaywrightTestRunActive(accountId), false)

@@ -18,8 +18,9 @@ import {
   inferTikTokAuthState,
   runViewAndScrollScenario,
 } from './scenarios/viewAndScrollScenario.js'
+import { runTikTokHumanFeedIteration } from './scenarios/tiktokFeedHumanScenario.js'
 import { ExecutorHaltError, isExecutorHaltError } from './executorHalt.js'
-import { sleepRandom } from './asyncUtils.js'
+import { interruptibleRandomDelay, randomDelay, sleepRandom } from './asyncUtils.js'
 
 /**
  * @typedef {'idle' | 'running' | 'stop_requested' | 'stopped' | 'completed' | 'failed' | 'max_duration_reached'} ExecutorLifecycle
@@ -227,7 +228,7 @@ function resolveMaxDurationMs(options) {
 
 /**
  * @param {string} accountId
- * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean; headless?: boolean; maxDurationMs?: number }} [options]
+ * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean; headless?: boolean; maxDurationMs?: number; tiktokHumanFeedLoop?: boolean }} [options]
  */
 export async function runPlaywrightTestRun(accountId, options = {}) {
   if (playwrightRuns.has(accountId)) {
@@ -277,6 +278,15 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     } catch {
       throw new Error(`Invalid target URL: ${runConfig.startUrl}`)
     }
+
+    /**
+     * Real FYP: one `goto`, then human feed loop (no reload). Set `tiktokHumanFeedLoop: false` to force classic
+     * goto+scenario loop (e.g. tests when startUrl is forced to tiktok.com).
+     */
+    const useTikTokFeedLoop =
+      runConfig.platform === 'TikTok' &&
+      pageUrl.hostname.includes('tiktok.com') &&
+      options.tiktokHumanFeedLoop !== false
 
     updateStatus(accountId, 'Running')
     logStep(
@@ -502,6 +512,97 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       }
     }
 
+    /** TikTok FYP: single navigation; loop uses scroll only (no goto/reload). */
+    if (useTikTokFeedLoop) {
+      try {
+        const nav = await page.goto(runConfig.startUrl, {
+          waitUntil: gotoWaitUntil(),
+          timeout: gotoTimeoutMs(),
+        })
+        const st = nav?.status() ?? null
+        if (st === 407) {
+          logStep(accountId, 'TIKTOK_OPEN_ERROR', 'HTTP 407')
+        } else if (st != null && st >= 400) {
+          logStep(accountId, 'TIKTOK_OPEN_ERROR', `HTTP ${st}`)
+        }
+        const u = page.url()
+        const ti = (await page.title().catch(() => '')) ?? ''
+        logStep(accountId, 'CURRENT_URL', u)
+        logStep(accountId, 'PAGE_TITLE', ti || '(empty)')
+        const auth0 = inferTikTokAuthState('TikTok', u, ti)
+        logStep(accountId, 'AUTH_STATE', auth0)
+        if (auth0 === 'redirected_to_login') {
+          logStep(
+            accountId,
+            'TIKTOK_AUTH_REDIRECT',
+            'cookies invalid or session expired — login/verify/captcha flow detected',
+          )
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        const lower = msg.toLowerCase()
+        let errType = 'network'
+        if (lower.includes('timeout')) errType = 'timeout'
+        else if (lower.includes('407') || lower.includes('proxy') || lower.includes('tunnel')) {
+          errType = 'proxy'
+        }
+        logStep(accountId, 'TIKTOK_OPEN_ERROR', `type=${errType} ${msg}`)
+      }
+      const haltAfterOpen = await shouldHalt()
+      if (haltAfterOpen === 'max_duration') {
+        logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()}`)
+        state.lifecycle = 'max_duration_reached'
+        logStep(accountId, 'EXECUTOR_STOPPED', `reason=max_duration_reached runId=${runId} iterations=0`)
+        logStep(
+          accountId,
+          'EXECUTOR_FINISHED',
+          `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle}`,
+        )
+        logStep(accountId, 'completed', runConfig.startUrl)
+        updateStatus(accountId, 'Ready')
+        return
+      }
+      if (haltAfterOpen === 'stop') {
+        state.lifecycle = 'stopped'
+        logStep(accountId, 'EXECUTOR_STOPPED', `reason=stopped runId=${runId} iterations=0`)
+        logStep(
+          accountId,
+          'EXECUTOR_FINISHED',
+          `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle}`,
+        )
+        logStep(accountId, 'completed', runConfig.startUrl)
+        updateStatus(accountId, 'Ready')
+        return
+      }
+      logStep(accountId, 'WAITING', 'initial TikTok settle 3–7s')
+      try {
+        await interruptibleRandomDelay(3000, 7000, shouldHalt)
+      } catch (e) {
+        if (isExecutorHaltError(e)) {
+          if (e.reason === 'max_duration') {
+            logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()}`)
+            state.lifecycle = 'max_duration_reached'
+          } else {
+            state.lifecycle = 'stopped'
+          }
+          logStep(
+            accountId,
+            'EXECUTOR_STOPPED',
+            `reason=${state.lifecycle} runId=${runId} iterations=0`,
+          )
+          logStep(
+            accountId,
+            'EXECUTOR_FINISHED',
+            `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle}`,
+          )
+          logStep(accountId, 'completed', runConfig.startUrl)
+          updateStatus(accountId, 'Ready')
+          return
+        }
+        throw e
+      }
+    }
+
     let loopIteration = 0
     /** @type {'completed' | 'stopped' | 'max_duration_reached' | 'failed' | null} */
     let loopExitReason = null
@@ -527,7 +628,25 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           `iteration=${loopIteration} runId=${runId} elapsedMs=${elapsedMs()}`,
         )
 
-        if (runConfig.platform === 'TikTok') {
+        if (useTikTokFeedLoop) {
+          try {
+            await runTikTokHumanFeedIteration(page, (action, details) => logStep(accountId, action, details ?? ''), shouldHalt)
+          } catch (err) {
+            if (isExecutorHaltError(err)) {
+              if (err.reason === 'max_duration') {
+                logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()} phase=tiktok_feed`)
+                state.lifecycle = 'max_duration_reached'
+                loopExitReason = 'max_duration_reached'
+              } else {
+                state.lifecycle = 'stopped'
+                loopExitReason = 'stopped'
+              }
+              break
+            }
+            const msg = err instanceof Error ? err.message : String(err)
+            logStep(accountId, 'TIKTOK_FEED_ERROR', msg.slice(0, 500))
+          }
+        } else if (runConfig.platform === 'TikTok') {
           try {
             const nav = await page.goto(runConfig.startUrl, {
               waitUntil: gotoWaitUntil(),
@@ -562,6 +681,32 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
             }
             logStep(accountId, 'TIKTOK_OPEN_ERROR', `type=${errType} ${msg}`)
           }
+        } else {
+          try {
+            const nav = await page.goto(runConfig.startUrl, {
+              waitUntil: gotoWaitUntil(),
+              timeout: gotoTimeoutMs(),
+            })
+            const st = nav?.status() ?? null
+            if (st === 407) {
+              logStep(accountId, 'PAGE_OPEN_ERROR', 'HTTP 407')
+            } else if (st != null && st >= 400) {
+              logStep(accountId, 'PAGE_OPEN_ERROR', `HTTP ${st}`)
+            }
+            const u = page.url()
+            const ti = (await page.title().catch(() => '')) ?? ''
+            logStep(accountId, 'CURRENT_URL', u)
+            logStep(accountId, 'PAGE_TITLE', ti || '(empty)')
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            const lower = msg.toLowerCase()
+            let errType = 'network'
+            if (lower.includes('timeout')) errType = 'timeout'
+            else if (lower.includes('407') || lower.includes('proxy') || lower.includes('tunnel')) {
+              errType = 'proxy'
+            }
+            logStep(accountId, 'PAGE_OPEN_ERROR', `type=${errType} ${msg}`)
+          }
         }
 
         const haltMid = await shouldHalt()
@@ -578,30 +723,32 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         }
 
         try {
-          await runViewAndScrollScenario(
-            page,
-            (action, details) => logStep(accountId, action, details ?? ''),
-            {
-              startUrl: runConfig.startUrl,
-              readySelector: runConfig.readySelector,
-              selectors: runConfig.selectors,
-              timeouts: runConfig.timeouts,
-              debugScreenshots,
-              platform: runConfig.platform,
-              skipInitialNavigation: runConfig.platform === 'TikTok',
-              shouldAbort: shouldHalt,
-              onAfterBlock: async () => {
-                const h = await shouldHalt()
-                if (h === 'max_duration') {
-                  logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()}`)
-                  throw new ExecutorHaltError('max_duration')
-                }
-                if (h === 'stop') {
-                  throw new ExecutorHaltError('stop')
-                }
+          if (!useTikTokFeedLoop) {
+            await runViewAndScrollScenario(
+              page,
+              (action, details) => logStep(accountId, action, details ?? ''),
+              {
+                startUrl: runConfig.startUrl,
+                readySelector: runConfig.readySelector,
+                selectors: runConfig.selectors,
+                timeouts: runConfig.timeouts,
+                debugScreenshots,
+                platform: runConfig.platform,
+                skipInitialNavigation: runConfig.platform === 'TikTok',
+                shouldAbort: shouldHalt,
+                onAfterBlock: async () => {
+                  const h = await shouldHalt()
+                  if (h === 'max_duration') {
+                    logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()}`)
+                    throw new ExecutorHaltError('max_duration')
+                  }
+                  if (h === 'stop') {
+                    throw new ExecutorHaltError('stop')
+                  }
+                },
               },
-            },
-          )
+            )
+          }
         } catch (err) {
           if (isExecutorHaltError(err)) {
             if (err.reason === 'max_duration') {

@@ -2,6 +2,8 @@
  * Small async / timing helpers for executor scenarios (no side effects).
  */
 
+import { ExecutorHaltError } from './executorHalt.js'
+
 /**
  * @param {number} ms
  * @returns {Promise<void>}
@@ -40,4 +42,48 @@ export function randomInt(min, max) {
  */
 export async function sleepRandom(minMs, maxMs) {
   await sleep(randomInt(minMs, maxMs))
+}
+
+/**
+ * Random wait in [minMs, maxMs] inclusive.
+ * @param {number} minMs
+ * @param {number} maxMs
+ * @returns {Promise<void>}
+ */
+export async function randomDelay(minMs, maxMs) {
+  await sleepRandom(minMs, maxMs)
+}
+
+/**
+ * True with given probability in percent (0–100).
+ * @param {number} percent
+ */
+export function randomChance(percent) {
+  const p = Number(percent)
+  if (!Number.isFinite(p) || p <= 0) return false
+  if (p >= 100) return true
+  return Math.random() * 100 < p
+}
+
+const HALT_CHUNK_MS = 400
+
+/**
+ * Sleep random [minMs, maxMs] but wake every ~400ms to check halt (stop / max duration).
+ * @param {number} minMs
+ * @param {number} maxMs
+ * @param {null | (() => Promise<false | 'stop' | 'max_duration'>)} shouldHalt
+ */
+export async function interruptibleRandomDelay(minMs, maxMs, shouldHalt) {
+  const total = randomInt(minMs, maxMs)
+  let left = total
+  while (left > 0) {
+    if (shouldHalt) {
+      const h = await shouldHalt()
+      if (h === 'stop') throw new ExecutorHaltError('stop')
+      if (h === 'max_duration') throw new ExecutorHaltError('max_duration')
+    }
+    const step = Math.min(HALT_CHUNK_MS, left)
+    await sleep(step)
+    left -= step
+  }
 }
