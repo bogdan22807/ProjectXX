@@ -115,12 +115,33 @@ async function focusFeedColumn(page, log) {
 }
 
 /**
- * Scroll feed with keyboard (after focus), not mouse wheel at edge.
+ * Prefer wheel over the main video center (feed scrolls, sidebar untouched).
+ * Fallback: keyboard after feed column focus.
  * @param {import('playwright').Page} page
  * @param {'down' | 'up'} dir
  * @param {(action: string, details?: string) => void} log
  */
-async function keyboardFeedScroll(page, dir, log) {
+async function scrollFeedStep(page, dir, log) {
+  const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
+  try {
+    if ((await vid.count()) > 0) {
+      await vid.scrollIntoViewIfNeeded().catch(() => {})
+      const box = await vid.boundingBox()
+      if (box && box.width > 40 && box.height > 40) {
+        const cx = box.x + box.width / 2
+        const cy = box.y + box.height / 2
+        await page.mouse.move(cx, cy)
+        const dy = dir === 'down' ? randomInt(380, 720) : -randomInt(120, 280)
+        await page.mouse.wheel(0, dy)
+        log('SCROLL', `wheel on video center dy=${dy}px`)
+        await sleep(120 + randomInt(0, 180))
+        return
+      }
+    }
+  } catch {
+    /* fall through */
+  }
+
   await focusFeedColumn(page, log)
   const times = dir === 'down' ? randomInt(2, 5) : randomInt(1, 2)
   for (let i = 0; i < times; i++) {
@@ -129,9 +150,9 @@ async function keyboardFeedScroll(page, dir, log) {
   }
   if (dir === 'down' && randomChance(35)) {
     await page.keyboard.press('PageDown')
-    log('SCROLL', `keyboard ArrowDown×${times}+PageDown`)
+    log('SCROLL', `fallback keyboard ArrowDown×${times}+PageDown`)
   } else {
-    log('SCROLL', `keyboard ${dir === 'down' ? 'ArrowDown' : 'ArrowUp'}×${times}`)
+    log('SCROLL', `fallback keyboard ${dir === 'down' ? 'ArrowDown' : 'ArrowUp'}×${times}`)
   }
 }
 
@@ -159,28 +180,39 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
     log('VIEW_VIDEO', 'linger 3–8s (no scroll this beat)')
     await interruptibleRandomDelay(3000, 8000, shouldHalt)
   } else {
-    await keyboardFeedScroll(page, 'down', log)
+    await scrollFeedStep(page, 'down', log)
     if (randomChance(25)) {
-      await keyboardFeedScroll(page, 'up', log)
-      log('SCROLL_BACK', 'keyboard up')
+      await scrollFeedStep(page, 'up', log)
+      log('SCROLL_BACK', 'up')
     }
   }
   await haltIfNeeded(shouldHalt)
 
   if (shouldTryLike()) {
     await focusFeedColumn(page, log)
-    const likeBtn = page
-      .locator(
-        '[data-e2e="browse-like-icon"], [data-e2e="like-icon"], [data-e2e="video-player-like-icon"], button[aria-label*="Like" i]',
-      )
-      .first()
+    const likeSelectors = [
+      '[data-e2e="browse-like-icon"]',
+      '[data-e2e="like-icon"]',
+      '[data-e2e="video-player-like-icon"]',
+      'button[aria-label*="Like" i]',
+    ]
     try {
-      if ((await likeBtn.count()) > 0) {
-        await likeBtn.click({ timeout: 5000 })
-        log('LIKE_VIDEO', 'like button (rare)')
-        await interruptibleRandomDelay(800, 2200, shouldHalt)
+      let clicked = false
+      for (const sel of likeSelectors) {
+        const loc = page.locator(sel).first()
+        if ((await loc.count()) === 0) continue
+        await loc.scrollIntoViewIfNeeded().catch(() => {})
+        const vis = await loc.isVisible().catch(() => false)
+        if (!vis) continue
+        await loc.click({ timeout: 4500 })
+        clicked = true
+        log('LIKE_VIDEO', `like ${sel}`)
+        break
+      }
+      if (!clicked) {
+        log('LIKE_SKIPPED', 'no visible like control')
       } else {
-        log('LIKE_SKIPPED', 'no like control found')
+        await interruptibleRandomDelay(800, 2200, shouldHalt)
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
@@ -193,13 +225,17 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
     const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
     try {
       if ((await vid.count()) > 0) {
+        await vid.scrollIntoViewIfNeeded().catch(() => {})
         const box = await vid.boundingBox()
         if (box && box.width > 20 && box.height > 20) {
-          await page.mouse.click(
-            box.x + box.width / 2,
-            box.y + Math.min(box.height * 0.45, box.height / 2),
-          )
-          log('CLICK_VIDEO', 'center of video element')
+          await vid.click({
+            position: {
+              x: box.width / 2,
+              y: Math.min(box.height * 0.42, box.height * 0.48),
+            },
+            timeout: 6000,
+          })
+          log('CLICK_VIDEO', 'locator click center-ish on video')
           await interruptibleRandomDelay(5000, 12000, shouldHalt)
         }
       }
@@ -214,6 +250,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
     const author = page.locator('[data-e2e="video-author-uniqueid"]').first()
     try {
       if ((await author.count()) > 0) {
+        await author.scrollIntoViewIfNeeded().catch(() => {})
         await author.click({ timeout: 8000 })
         const u = page.url()
         log('OPEN_PROFILE', u)
