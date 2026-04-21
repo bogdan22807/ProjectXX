@@ -81,8 +81,6 @@ interface AppStateValue {
     username: string
     password: string
     proxyScheme?: string
-    proxyLine?: string
-    credentialOrder?: 'pass_user' | 'user_pass'
   }) => Promise<void>
   deleteSelectedProxies: () => Promise<void>
   checkSelectedProxies: () => Promise<void>
@@ -336,12 +334,10 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       username: string
       password: string
       proxyScheme?: string
-      proxyLine?: string
-      credentialOrder?: 'pass_user' | 'user_pass'
     }) => {
       try {
         const body: Record<string, unknown> = {
-          provider: input.provider || 'SOAX',
+          provider: input.provider.trim() || '',
           host: input.host,
           port: input.port,
           username: input.username,
@@ -350,10 +346,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         }
         if (input.proxyScheme?.trim()) {
           body.proxy_scheme = input.proxyScheme.trim().toLowerCase()
-        }
-        if (input.proxyLine?.trim()) {
-          body.proxy_line = input.proxyLine.trim()
-          body.credential_order = input.credentialOrder ?? 'pass_user'
         }
         const row = await apiPost<ApiProxy>('/proxies', body)
         setProxies((prev) => [mapProxy(row), ...prev])
