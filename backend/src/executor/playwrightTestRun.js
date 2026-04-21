@@ -228,7 +228,7 @@ function resolveMaxDurationMs(options) {
 
 /**
  * @param {string} accountId
- * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean; headless?: boolean; maxDurationMs?: number; tiktokHumanFeedLoop?: boolean }} [options]
+ * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean; headless?: boolean; maxDurationMs?: number; tiktokHumanFeedLoop?: boolean; screenshotDir?: string }} [options]
  */
 export async function runPlaywrightTestRun(accountId, options = {}) {
   if (playwrightRuns.has(accountId)) {
@@ -649,7 +649,15 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
         if (useTikTokFeedLoop) {
           try {
-            await runTikTokHumanFeedIteration(page, (action, details) => logStep(accountId, action, details ?? ''), shouldHalt)
+            await runTikTokHumanFeedIteration(
+              page,
+              (action, details) => logStep(accountId, action, details ?? ''),
+              shouldHalt,
+              {
+                debugScreenshots,
+                screenshotDir: options.screenshotDir,
+              },
+            )
           } catch (err) {
             if (isExecutorHaltError(err)) {
               if (err.reason === 'max_duration') {
