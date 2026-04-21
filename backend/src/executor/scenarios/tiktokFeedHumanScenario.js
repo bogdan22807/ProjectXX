@@ -1,14 +1,44 @@
 /**
  * One "human" iteration on TikTok FYP: watch → keyboard scroll (feed-focused) → optional video center-click.
- * No page.goto / reload in the normal path — caller opens TikTok once. LIVE/stream recovery may
- * `goto` For You if Escape/back cannot restore the feed.
+ * No page.goto / reload in the normal path — caller opens TikTok once.
+ * Full-page LIVE room (`/live` URL) may use recovery `goto` For You only from `recoverFromLiveSurface`.
  *
  * Mouse wheel at screen edge often hovers the sidebar avatar (flicker). Keyboard scroll + center focus avoids that.
  * Captcha/verify: we pause and log so you can solve manually; we do not auto-solve.
  */
 
+import fs from 'node:fs'
+import path from 'node:path'
 import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
+
+/** After a LIVE feed card, suppress SCROLL_BACK for this many iterations (incl. current). */
+let skipScrollBackAfterLive = 0
+
+/** Consecutive same-card detection (anti stuck / LIVE ping-pong). */
+let lastFeedStableKey = ''
+let feedRepeatStreak = 0
+
+function defaultScreenshotDir() {
+  return path.join(process.cwd(), 'playwright-debug')
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {boolean} enabled
+ * @param {string} [dir]
+ * @param {string} filename
+ */
+async function maybeLiveDebugScreenshot(page, enabled, dir, filename) {
+  if (!enabled) return
+  const d = String(dir ?? '').trim() || defaultScreenshotDir()
+  try {
+    fs.mkdirSync(d, { recursive: true })
+    await page.screenshot({ path: path.join(d, filename), fullPage: false }).catch(() => {})
+  } catch {
+    /* ignore */
+  }
+}
 
 /** Max total wait for user to clear captcha/verify (ms). */
 function challengeWaitBudgetMs() {
@@ -101,43 +131,40 @@ async function detectBlockingFlow(page) {
 }
 
 /**
- * LIVE slide or navigated into live room — scrolling/clicking the “video” hits stream UI.
+ * Dedicated live stream page (not the same as a LIVE badge on a For You card).
  * @param {import('playwright').Page} page
  */
-async function pageShowsLiveContext(page) {
-  const u = page.url().toLowerCase()
-  if (u.includes('/live')) return true
+function pageInLiveRoomUrl(page) {
   try {
-    const badge = page.locator('[data-e2e="live-tag"], [data-e2e="video-live-tag"]').first()
-    if ((await badge.count()) > 0 && (await badge.isVisible().catch(() => false))) return true
+    const p = new URL(page.url()).pathname.toLowerCase()
+    return p.includes('/live')
   } catch {
-    /* ignore */
+    return String(page.url()).toLowerCase().includes('/live')
   }
-  return false
 }
 
 /**
- * Leave LIVE / stream surface back toward For You (no busy loop).
+ * Leave full-page LIVE room back toward For You. Only when URL indicates /live (not FYP card badge).
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
 async function recoverFromLiveSurface(page, log, shouldHalt) {
   const before = page.url()
-  if (!(await pageShowsLiveContext(page))) return false
+  if (!pageInLiveRoomUrl(page)) return false
 
   log('TIKTOK_LIVE_DETECTED', before.slice(0, 280))
 
   await page.keyboard.press('Escape').catch(() => {})
   await interruptibleRandomDelay(400, 900, shouldHalt)
-  if (!(await pageShowsLiveContext(page))) {
+  if (!pageInLiveRoomUrl(page)) {
     log('TIKTOK_LIVE_EXIT', `after Escape url=${page.url().slice(0, 200)}`)
     return true
   }
 
   await page.goBack({ waitUntil: 'commit', timeout: 18_000 }).catch(() => {})
   await interruptibleRandomDelay(500, 1200, shouldHalt)
-  if (!(await pageShowsLiveContext(page))) {
+  if (!pageInLiveRoomUrl(page)) {
     log('TIKTOK_LIVE_EXIT', `after goBack url=${page.url().slice(0, 200)}`)
     return true
   }
@@ -232,6 +259,106 @@ async function delayWithCaptchaInterruption(page, log, shouldHalt, minMs, maxMs)
 }
 
 /**
+ * @param {string} blob
+ */
+function textIndicatesLiveCard(blob) {
+  const s = String(blob ?? '')
+  if (!s.trim()) return false
+  const upper = s.toUpperCase()
+  if (/\bLIVE NOW\b/i.test(s)) return true
+  if (/\bLIVE\b/.test(upper)) return true
+  return false
+}
+
+/**
+ * Sample text from the active feed card (video container + a few ancestors) for LIVE heuristics.
+ * @param {import('playwright').Page} page
+ */
+async function readActiveFeedCardText(page) {
+  const handle = page.locator('[data-e2e="feed-active-video"]').first()
+  if ((await handle.count()) === 0) return ''
+  try {
+    return await handle.evaluate((el) => {
+      let n = /** @type {HTMLElement | null} */ (el)
+      const parts = []
+      for (let i = 0; i < 8 && n; i++) {
+        const t = (n.innerText || n.textContent || '').replace(/\s+/g, ' ').trim()
+        if (t.length > 0) parts.push(t.slice(0, 500))
+        n = n.parentElement
+      }
+      return parts.join(' | ').slice(0, 2500)
+    })
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Stable-ish key for "same card again" (author link + video src prefix).
+ * @param {import('playwright').Page} page
+ */
+async function getFeedStableKey(page) {
+  try {
+    const root = page.locator('[data-e2e="feed-active-video"]').first()
+    if ((await root.count()) === 0) return ''
+    const href =
+      (await root.locator('[data-e2e="video-author-uniqueid"] a').first().getAttribute('href').catch(() => null)) ??
+      ''
+    const src =
+      (await root.locator('video').first().getAttribute('src').catch(() => null)) ?? ''
+    const combined = `${href}|${src.slice(0, 120)}`.trim()
+    if (combined) return combined.slice(0, 400)
+    const blob = await readActiveFeedCardText(page)
+    return blob.slice(0, 200)
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * LIVE stream card on For You (not the same as `/live` room URL).
+ * @param {import('playwright').Page} page
+ */
+async function detectFeedCardLive(page) {
+  if (pageInLiveRoomUrl(page)) return true
+
+  const root = page.locator('[data-e2e="feed-active-video"]').first()
+  if ((await root.count()) === 0) return false
+
+  try {
+    if (
+      (await root.locator('[data-e2e="live-tag"], [data-e2e="video-live-tag"]').first().isVisible().catch(() => false))
+    ) {
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    if (await root.getByText(/^LIVE$/i).first().isVisible().catch(() => false)) return true
+    if (await root.getByText(/\bLIVE\s+now\b/i).first().isVisible().catch(() => false)) return true
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    const ariaLive = root.locator('[aria-label*="live" i]').first()
+    if (await ariaLive.isVisible().catch(() => false)) {
+      const lab = ((await ariaLive.getAttribute('aria-label').catch(() => '')) ?? '').toLowerCase()
+      if (lab.includes('live')) return true
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const blob = await readActiveFeedCardText(page)
+  if (textIndicatesLiveCard(blob)) return true
+
+  return false
+}
+
+/**
  * Click center-ish of viewport (main column), not left sidebar — reduces avatar hover.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
@@ -251,8 +378,10 @@ async function focusFeedColumn(page, log) {
  * @param {import('playwright').Page} page
  * @param {'down' | 'up'} dir
  * @param {(action: string, details?: string) => void} log
+ * @param {{ forceLarge?: boolean }} [opts]
  */
-async function scrollFeedStep(page, dir, log) {
+async function scrollFeedStep(page, dir, log, opts = {}) {
+  const forceLarge = Boolean(opts.forceLarge)
   const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
   try {
     if ((await vid.count()) > 0) {
@@ -262,9 +391,16 @@ async function scrollFeedStep(page, dir, log) {
         const cx = box.x + box.width / 2
         const cy = box.y + box.height / 2
         await page.mouse.move(cx, cy)
-        const dy = dir === 'down' ? randomInt(380, 720) : -randomInt(120, 280)
+        const dy =
+          dir === 'down'
+            ? forceLarge
+              ? randomInt(720, 1100)
+              : randomInt(380, 720)
+            : forceLarge
+              ? -randomInt(200, 400)
+              : -randomInt(120, 280)
         await page.mouse.wheel(0, dy)
-        log('SCROLL', `wheel on video center dy=${dy}px`)
+        log('SCROLL', `wheel on video center dy=${dy}px${forceLarge ? ' force' : ''}`)
         await sleep(120 + randomInt(0, 180))
         return
       }
@@ -274,25 +410,43 @@ async function scrollFeedStep(page, dir, log) {
   }
 
   await focusFeedColumn(page, log)
-  const times = dir === 'down' ? randomInt(2, 5) : randomInt(1, 2)
+  const times =
+    dir === 'down'
+      ? forceLarge
+        ? randomInt(6, 10)
+        : randomInt(2, 5)
+      : forceLarge
+        ? randomInt(2, 4)
+        : randomInt(1, 2)
   for (let i = 0; i < times; i++) {
     await page.keyboard.press(dir === 'down' ? 'ArrowDown' : 'ArrowUp')
     await sleep(80 + randomInt(0, 120))
   }
-  if (dir === 'down' && randomChance(35)) {
+  if (dir === 'down' && (forceLarge || randomChance(35))) {
     await page.keyboard.press('PageDown')
-    log('SCROLL', `fallback keyboard ArrowDown×${times}+PageDown`)
+    if (forceLarge) {
+      await page.keyboard.press('PageDown').catch(() => {})
+    }
+    log('SCROLL', `fallback keyboard ArrowDown×${times}+PageDown${forceLarge ? ' force' : ''}`)
   } else {
-    log('SCROLL', `fallback keyboard ${dir === 'down' ? 'ArrowDown' : 'ArrowUp'}×${times}`)
+    log('SCROLL', `fallback keyboard ${dir === 'down' ? 'ArrowDown' : 'ArrowUp'}×${times}${forceLarge ? ' force' : ''}`)
   }
 }
+
+/**
+ * @typedef {{ debugScreenshots?: boolean; screenshotDir?: string }} TikTokFeedIterationOptions
+ */
 
 /**
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {TikTokFeedIterationOptions} [options]
  */
-export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
+export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options = {}) {
+  const debugShots = Boolean(options.debugScreenshots)
+  const shotDir = options.screenshotDir
+
   await haltIfNeeded(shouldHalt)
   await waitIfChallengeOrLogin(page, log, shouldHalt)
   await haltIfNeeded(shouldHalt)
@@ -306,6 +460,39 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
     return
   }
 
+  const stableKey = await getFeedStableKey(page)
+  if (stableKey) {
+    if (stableKey === lastFeedStableKey) {
+      feedRepeatStreak += 1
+    } else {
+      feedRepeatStreak = 1
+      lastFeedStableKey = stableKey
+    }
+    if (feedRepeatStreak >= 2) {
+      log('FEED_REPEAT_DETECTED', `keyLen=${stableKey.length} streak=${feedRepeatStreak}`)
+      log('FORCE_SCROLL_AFTER_REPEAT', 'extra down scroll')
+      await scrollFeedStep(page, 'down', log, { forceLarge: true })
+      await haltIfNeeded(shouldHalt)
+      feedRepeatStreak = 0
+      lastFeedStableKey = ''
+      skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, 2)
+    }
+  } else {
+    feedRepeatStreak = 0
+    lastFeedStableKey = ''
+  }
+
+  const cardLive = await detectFeedCardLive(page)
+  if (cardLive) {
+    log('LIVE_DETECTED', 'feed card or /live room — skip watch/linger/profile/click; scroll down')
+    log('LIVE_SKIPPED', 'no VIEW_VIDEO linger; immediate scroll past LIVE')
+    await maybeLiveDebugScreenshot(page, debugShots, shotDir, 'debug-live-skipped.png')
+    await scrollFeedStep(page, 'down', log)
+    await haltIfNeeded(shouldHalt)
+    skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, 2)
+    return
+  }
+
   log('VIEW_VIDEO', 'watching 5–15s')
   await delayWithCaptchaInterruption(page, log, shouldHalt, 5000, 15000)
   await haltIfNeeded(shouldHalt)
@@ -316,10 +503,16 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
   } else {
     await scrollFeedStep(page, 'down', log)
     if (randomChance(25)) {
-      await scrollFeedStep(page, 'up', log)
-      log('SCROLL_BACK', 'up')
+      if (skipScrollBackAfterLive > 0) {
+        log('LIVE_SKIPPED', 'SCROLL_BACK suppressed (after LIVE)')
+      } else {
+        await scrollFeedStep(page, 'up', log)
+        log('SCROLL_BACK', 'up')
+      }
     }
   }
+  if (skipScrollBackAfterLive > 0) skipScrollBackAfterLive -= 1
+
   await haltIfNeeded(shouldHalt)
 
   if ((await detectBlockingFlow(page)) === 'challenge') {
@@ -327,12 +520,14 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
     await haltIfNeeded(shouldHalt)
   }
 
-  if (await pageShowsLiveContext(page)) {
+  if (pageInLiveRoomUrl(page)) {
     await recoverFromLiveSurface(page, log, shouldHalt)
     await haltIfNeeded(shouldHalt)
   }
 
-  if (shouldTryLike() && !(await pageShowsLiveContext(page))) {
+  const liveForActions = (await detectFeedCardLive(page)) || pageInLiveRoomUrl(page)
+
+  if (shouldTryLike() && !liveForActions) {
     await focusFeedColumn(page, log)
     const likeSelectors = [
       '[data-e2e="browse-like-icon"]',
@@ -366,12 +561,18 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
   }
 
   if (randomChance(15)) {
-    if (await pageShowsLiveContext(page)) {
-      log('CLICK_VIDEO', 'skipped — LIVE/stream surface')
+    const liveNow = (await detectFeedCardLive(page)) || pageInLiveRoomUrl(page)
+    const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
+    if (liveNow) {
+      log('LIVE_SKIPPED', 'CLICK_VIDEO blocked — LIVE/stream card')
+    } else if ((await vid.count()) === 0) {
+      log('CLICK_VIDEO', 'skipped — no video')
     } else {
-      const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
-      try {
-        if ((await vid.count()) > 0) {
+      const vis = await vid.isVisible().catch(() => false)
+      if (!vis) {
+        log('CLICK_VIDEO', 'skipped — not visible')
+      } else {
+        try {
           await vid.scrollIntoViewIfNeeded().catch(() => {})
           const box = await vid.boundingBox()
           if (box && box.width > 20 && box.height > 20) {
@@ -385,29 +586,34 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt) {
             log('CLICK_VIDEO', 'locator click center-ish on video')
             await delayWithCaptchaInterruption(page, log, shouldHalt, 5000, 12000)
           }
+        } catch {
+          log('CLICK_VIDEO', 'skipped')
         }
-      } catch {
-        log('CLICK_VIDEO', 'skipped')
       }
     }
     await haltIfNeeded(shouldHalt)
   }
 
   const profilePct = profilePeekPercent()
-  if (profilePct > 0 && randomChance(profilePct) && !(await pageShowsLiveContext(page))) {
-    const author = page.locator('[data-e2e="video-author-uniqueid"]').first()
-    try {
-      if ((await author.count()) > 0) {
-        await author.scrollIntoViewIfNeeded().catch(() => {})
-        await author.click({ timeout: 8000 })
-        const u = page.url()
-        log('OPEN_PROFILE', u)
-        await delayWithCaptchaInterruption(page, log, shouldHalt, 5000, 10000)
-        await page.goBack({ waitUntil: 'commit', timeout: 20000 }).catch(() => {})
-        log('PROFILE_BACK', page.url())
+  if (profilePct > 0 && randomChance(profilePct)) {
+    const liveNow = (await detectFeedCardLive(page)) || pageInLiveRoomUrl(page)
+    if (liveNow) {
+      log('LIVE_SKIPPED', 'OPEN_PROFILE blocked — LIVE/stream card')
+    } else {
+      const author = page.locator('[data-e2e="video-author-uniqueid"]').first()
+      try {
+        if ((await author.count()) > 0) {
+          await author.scrollIntoViewIfNeeded().catch(() => {})
+          await author.click({ timeout: 8000 })
+          const u = page.url()
+          log('OPEN_PROFILE', u)
+          await delayWithCaptchaInterruption(page, log, shouldHalt, 5000, 10000)
+          await page.goBack({ waitUntil: 'commit', timeout: 20000 }).catch(() => {})
+          log('PROFILE_BACK', page.url())
+        }
+      } catch {
+        log('OPEN_PROFILE', 'skipped')
       }
-    } catch {
-      log('OPEN_PROFILE', 'skipped')
     }
     await haltIfNeeded(shouldHalt)
   }
