@@ -1,7 +1,7 @@
 /**
  * One "human" iteration on TikTok FYP: watch → keyboard scroll (feed-focused) → optional video center-click.
  * No page.goto / reload in the normal path — caller opens TikTok once.
- * Full-page LIVE room (`/live` URL) may use recovery `goto` For You only from `recoverFromLiveSurface`.
+ * Full-page LIVE room (`/live` URL): leave with Escape / back / keyboard-only scroll — no `goto` / reload.
  *
  * Mouse wheel at screen edge often hovers the sidebar avatar (flicker). Keyboard scroll + center focus avoids that.
  * Captcha/verify: we pause and log so you can solve manually; we do not auto-solve.
@@ -147,7 +147,26 @@ function pageInLiveRoomUrl(page) {
 }
 
 /**
- * Leave full-page LIVE room back toward For You. Only when URL indicates /live (not FYP card badge).
+ * Scroll past LIVE/stream without clicking or hovering the video (keyboard only).
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {string} reason short tag for log details
+ */
+async function scrollPastLiveNoPointer(page, log, shouldHalt, reason) {
+  const n = randomInt(6, 11)
+  for (let i = 0; i < n; i++) {
+    await haltIfNeeded(shouldHalt)
+    await page.keyboard.press('ArrowDown')
+    await sleep(65 + randomInt(0, 95))
+  }
+  await page.keyboard.press('PageDown').catch(() => {})
+  await page.keyboard.press('PageDown').catch(() => {})
+  log('SCROLL', `live-skip keyboard-only reason=${reason} ArrowDown×${n}+PageDown×2`)
+}
+
+/**
+ * Leave full-page LIVE room without `goto` / reload: Escape, back, then keyboard-only feed advance.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
@@ -172,13 +191,15 @@ async function recoverFromLiveSurface(page, log, shouldHalt) {
     return true
   }
 
-  const fyp = 'https://www.tiktok.com/foryou'
-  try {
-    await page.goto(fyp, { waitUntil: 'commit', timeout: 28_000 })
-    log('TIKTOK_LIVE_EXIT', `recovery goto ${fyp}`)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    log('TIKTOK_LIVE_EXIT_FAILED', msg.slice(0, 200))
+  log('LIVE_SKIPPED', 'still on /live — keyboard scroll only (no goto/reload)')
+  for (let wave = 0; wave < 4 && pageInLiveRoomUrl(page); wave++) {
+    await scrollPastLiveNoPointer(page, log, shouldHalt, 'exit_live_room')
+    await interruptibleRandomDelay(350, 700, shouldHalt)
+  }
+  if (pageInLiveRoomUrl(page)) {
+    log('TIKTOK_LIVE_EXIT_FAILED', 'still /live after keyboard-only recovery waves')
+  } else {
+    log('TIKTOK_LIVE_EXIT', `after keyboard-only url=${page.url().slice(0, 200)}`)
   }
   return true
 }
@@ -491,7 +512,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     log('LIVE_DETECTED', 'feed card or /live room — skip watch/linger/profile/click; scroll down')
     log('LIVE_SKIPPED', 'no VIEW_VIDEO linger; immediate scroll past LIVE')
     await maybeLiveDebugScreenshot(page, debugShots, shotDir, 'debug-live-skipped.png')
-    await scrollFeedStep(page, 'down', log)
+    await scrollPastLiveNoPointer(page, log, shouldHalt, 'feed_live_card')
     await haltIfNeeded(shouldHalt)
     skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, 2)
     consecutiveLingerStreak = 0
