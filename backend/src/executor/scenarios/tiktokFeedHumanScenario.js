@@ -1,7 +1,8 @@
 /**
  * One "human" iteration on TikTok FYP: watch → keyboard scroll (feed-focused) → optional video center-click.
  * No page.goto / reload in the normal path — caller opens TikTok once.
- * Full-page LIVE room (`/live` URL): leave with Escape + strong keyboard-only down scroll — no goBack, no `goto` / reload (goBack was ping-ponging back to the same LIVE).
+ * FYP LIVE card: double strong keyboard scroll, no clicks/linger/scroll_back; suppress rich actions briefly after.
+ * Full-page `/live` URL: Escape, then `goBack()` (primary); `goto` /foryou only as fallback (`LIVE_RECOVERY_*`).
  *
  * Mouse wheel at screen edge often hovers the sidebar avatar (flicker). Keyboard scroll + center focus avoids that.
  * Captcha/verify: we pause and log so you can solve manually; we do not auto-solve.
@@ -19,6 +20,15 @@ function bumpSkipScrollBackAfterLive(n) {
   const k = Number(n)
   if (!Number.isFinite(k) || k < 1) return
   skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, Math.floor(k))
+}
+
+/** After FYP LIVE skip: suppress CLICK_VIDEO / OPEN_PROFILE / LIKE for this many iterations. */
+let skipClickProfileAfterLive = 0
+
+function bumpSkipClickProfileAfterLive(n) {
+  const k = Number(n)
+  if (!Number.isFinite(k) || k < 1) return
+  skipClickProfileAfterLive = Math.max(skipClickProfileAfterLive, Math.floor(k))
 }
 
 /** Consecutive same-card detection (anti stuck / LIVE ping-pong). */
@@ -158,7 +168,7 @@ function pageInLiveRoomUrl(page) {
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  * @param {string} reason short tag for log details
- * @param {{ pressesMin?: number; pressesMax?: number; pageDowns?: number }} [opts]
+ * @param {{ pressesMin?: number; pressesMax?: number; pageDowns?: number; skipInternalScrollLog?: boolean }} [opts]
  */
 async function scrollPastLiveNoPointer(page, log, shouldHalt, reason, opts = {}) {
   const pMin = Number(opts.pressesMin)
@@ -175,12 +185,13 @@ async function scrollPastLiveNoPointer(page, log, shouldHalt, reason, opts = {})
   for (let j = 0; j < pd; j++) {
     await page.keyboard.press('PageDown').catch(() => {})
   }
-  log('SCROLL', `live-skip keyboard-only reason=${reason} ArrowDown×${n}+PageDown×${pd}`)
+  if (!opts.skipInternalScrollLog) {
+    log('SCROLL', `live-skip keyboard-only reason=${reason} ArrowDown×${n}+PageDown×${pd}`)
+  }
 }
 
 /**
- * Leave full-page LIVE room without `goto` / reload: Escape, then strong keyboard-only feed advance.
- * Intentionally no `history.back()`: it often returns to the same LIVE tile and causes LIVE↔video ping-pong.
+ * Leave full-page `/live` URL: Escape, then **goBack** (primary). **goto** /foryou only if still on /live.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
@@ -195,25 +206,31 @@ async function recoverFromLiveSurface(page, log, shouldHalt) {
   await interruptibleRandomDelay(400, 900, shouldHalt)
   if (!pageInLiveRoomUrl(page)) {
     log('TIKTOK_LIVE_EXIT', `after Escape url=${page.url().slice(0, 200)}`)
-    bumpSkipScrollBackAfterLive(5)
+    bumpSkipScrollBackAfterLive(3)
+    bumpSkipClickProfileAfterLive(2)
     return true
   }
 
-  log('LIVE_SKIPPED', 'still on /live — keyboard-only down scroll (no goBack/goto)')
-  for (let wave = 0; wave < 6 && pageInLiveRoomUrl(page); wave++) {
-    await scrollPastLiveNoPointer(page, log, shouldHalt, 'exit_live_room', {
-      pressesMin: 12,
-      pressesMax: 20,
-      pageDowns: 3,
-    })
-    await interruptibleRandomDelay(400, 800, shouldHalt)
+  log('LIVE_RECOVERY_GOBACK', 'history.back from /live')
+  await page.goBack({ waitUntil: 'commit', timeout: 18_000 }).catch(() => {})
+  await interruptibleRandomDelay(500, 1100, shouldHalt)
+  if (!pageInLiveRoomUrl(page)) {
+    log('TIKTOK_LIVE_EXIT', `after goBack url=${page.url().slice(0, 200)}`)
+    bumpSkipScrollBackAfterLive(3)
+    bumpSkipClickProfileAfterLive(2)
+    return true
   }
-  if (pageInLiveRoomUrl(page)) {
-    log('TIKTOK_LIVE_EXIT_FAILED', 'still /live after keyboard-only recovery waves')
-  } else {
-    log('TIKTOK_LIVE_EXIT', `after keyboard-only url=${page.url().slice(0, 200)}`)
+
+  log('LIVE_RECOVERY_FALLBACK', 'goto https://www.tiktok.com/foryou — still on /live after goBack')
+  try {
+    await page.goto('https://www.tiktok.com/foryou', { waitUntil: 'commit', timeout: 28_000 })
+  } catch (e) {
+    const m = e instanceof Error ? e.message : String(e)
+    log('LIVE_RECOVERY_FALLBACK', `goto failed ${m.slice(0, 200)}`)
   }
-  bumpSkipScrollBackAfterLive(5)
+  await interruptibleRandomDelay(400, 800, shouldHalt)
+  bumpSkipScrollBackAfterLive(3)
+  bumpSkipClickProfileAfterLive(2)
   return true
 }
 
@@ -502,12 +519,35 @@ async function ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeScroll
 }
 
 /**
- * LIVE stream card on For You (not the same as `/live` room URL).
+ * After LIVE double-scroll: if `getFeedStableKey` unchanged, force extra keyboard scroll away from LIVE tile.
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {string} stableBefore from `getFeedStableKey` before LIVE skip scrolls
+ */
+async function ensureAdvancedOrForceAfterLive(page, log, shouldHalt, stableBefore) {
+  await sleepAfterScrollForAdvanceCheck(shouldHalt)
+  await haltIfNeeded(shouldHalt)
+  const after = await getFeedStableKey(page)
+  if (String(stableBefore).trim() && String(after).trim() && after !== stableBefore) return
+  if (!String(stableBefore).trim() && String(after).trim()) return
+
+  log('FEED_STUCK_AFTER_LIVE', 'stable key unchanged after LIVE double scroll')
+  log('FORCE_SCROLL_AFTER_LIVE', 'extra keyboard burst past LIVE tile')
+  await scrollPastLiveNoPointer(page, log, shouldHalt, 'after_live_stuck', {
+    pressesMin: 12,
+    pressesMax: 20,
+    pageDowns: 4,
+  })
+  await sleepAfterScrollForAdvanceCheck(shouldHalt)
+  await haltIfNeeded(shouldHalt)
+}
+
+/**
+ * LIVE stream **card** on For You only (does not use `/live` URL — full-page live is handled separately).
  * @param {import('playwright').Page} page
  */
 async function detectFeedCardLive(page) {
-  if (pageInLiveRoomUrl(page)) return true
-
   const root = page.locator('[data-e2e="feed-active-video"]').first()
   if ((await root.count()) === 0) return false
 
@@ -542,6 +582,25 @@ async function detectFeedCardLive(page) {
   if (textIndicatesLiveCard(blob)) return true
 
   return false
+}
+
+/**
+ * LIVE tile on For You (not full-page `/live` URL).
+ * @param {import('playwright').Page} page
+ */
+async function isLiveFeedCardOnly(page) {
+  if (pageInLiveRoomUrl(page)) return false
+  return detectFeedCardLive(page)
+}
+
+/**
+ * Block like / video click / profile: LIVE card, /live URL, or post-LIVE cooldown iterations.
+ * @param {import('playwright').Page} page
+ */
+async function shouldBlockRichActionsForLive(page) {
+  if (skipClickProfileAfterLive > 0) return true
+  if (pageInLiveRoomUrl(page)) return true
+  return detectFeedCardLive(page)
 }
 
 /**
@@ -671,34 +730,39 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
       feedRepeatStreak = 0
       lastFeedStableKey = ''
       consecutiveLingerStreak = 0
-      bumpSkipScrollBackAfterLive(5)
+      bumpSkipScrollBackAfterLive(3)
     }
   } else {
     feedRepeatStreak = 0
     lastFeedStableKey = ''
   }
 
-  const cardLive = await detectFeedCardLive(page)
-  if (cardLive) {
-    log('LIVE_DETECTED', 'feed card or /live room — skip watch/linger/profile/click; scroll down')
-    log('LIVE_SKIPPED', 'no VIEW_VIDEO linger; immediate scroll past LIVE')
-    const beforeLiveScroll = await getVideoAdvanceKey(page)
+  const liveCardOnly = await isLiveFeedCardOnly(page)
+  if (liveCardOnly) {
+    log('LIVE_DETECTED', 'FYP LIVE card — skip watch/linger/click/profile/scroll_back; double strong scroll down')
+    log('LIVE_SKIPPED', 'immediate keyboard-only scroll past LIVE')
+    const stableBeforeLive = await getFeedStableKey(page)
     await maybeLiveDebugScreenshot(page, debugShots, shotDir, 'debug-live-skipped.png')
-    await scrollPastLiveNoPointer(page, log, shouldHalt, 'feed_live_card', {
-      pressesMin: 12,
-      pressesMax: 18,
-      pageDowns: 3,
+    await scrollPastLiveNoPointer(page, log, shouldHalt, 'LIVE_SKIP_SCROLL_1', {
+      pressesMin: 14,
+      pressesMax: 22,
+      pageDowns: 4,
+      skipInternalScrollLog: true,
     })
-    await interruptibleRandomDelay(250, 500, shouldHalt)
-    await scrollPastLiveNoPointer(page, log, shouldHalt, 'feed_live_card_extra', {
-      pressesMin: 8,
-      pressesMax: 14,
-      pageDowns: 2,
+    log('LIVE_SKIP_SCROLL_1', 'strong keyboard scroll past LIVE')
+    await interruptibleRandomDelay(280, 550, shouldHalt)
+    await scrollPastLiveNoPointer(page, log, shouldHalt, 'LIVE_SKIP_SCROLL_2', {
+      pressesMin: 14,
+      pressesMax: 22,
+      pageDowns: 4,
+      skipInternalScrollLog: true,
     })
+    log('LIVE_SKIP_SCROLL_2', 'second strong keyboard scroll past LIVE')
     await haltIfNeeded(shouldHalt)
-    await ensureFeedAdvancedAfterScroll(page, log, shouldHalt, beforeLiveScroll)
+    await ensureAdvancedOrForceAfterLive(page, log, shouldHalt, stableBeforeLive)
     await haltIfNeeded(shouldHalt)
-    bumpSkipScrollBackAfterLive(5)
+    bumpSkipScrollBackAfterLive(3)
+    bumpSkipClickProfileAfterLive(2)
     consecutiveLingerStreak = 0
     return
   }
@@ -736,6 +800,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     }
   }
   if (skipScrollBackAfterLive > 0) skipScrollBackAfterLive -= 1
+  if (skipClickProfileAfterLive > 0) skipClickProfileAfterLive -= 1
 
   await haltIfNeeded(shouldHalt)
 
@@ -749,9 +814,9 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     await haltIfNeeded(shouldHalt)
   }
 
-  const liveForActions = (await detectFeedCardLive(page)) || pageInLiveRoomUrl(page)
+  const blockRich = await shouldBlockRichActionsForLive(page)
 
-  if (shouldTryLike() && !liveForActions) {
+  if (shouldTryLike() && !blockRich) {
     await focusFeedColumn(page, log)
     const likeSelectors = [
       '[data-e2e="browse-like-icon"]',
@@ -785,10 +850,10 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
   }
 
   if (randomChance(15)) {
-    const liveNow = (await detectFeedCardLive(page)) || pageInLiveRoomUrl(page)
+    const blockClick = await shouldBlockRichActionsForLive(page)
     const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
-    if (liveNow) {
-      log('LIVE_SKIPPED', 'CLICK_VIDEO blocked — LIVE/stream card')
+    if (blockClick) {
+      log('LIVE_SKIPPED', 'CLICK_VIDEO blocked — LIVE or post-LIVE cooldown')
     } else if ((await vid.count()) === 0) {
       log('CLICK_VIDEO', 'skipped — no video')
     } else {
@@ -820,9 +885,9 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
 
   const profilePct = profilePeekPercent()
   if (profilePct > 0 && randomChance(profilePct)) {
-    const liveNow = (await detectFeedCardLive(page)) || pageInLiveRoomUrl(page)
-    if (liveNow) {
-      log('LIVE_SKIPPED', 'OPEN_PROFILE blocked — LIVE/stream card')
+    const blockProfile = await shouldBlockRichActionsForLive(page)
+    if (blockProfile) {
+      log('LIVE_SKIPPED', 'OPEN_PROFILE blocked — LIVE or post-LIVE cooldown')
     } else {
       const author = page.locator('[data-e2e="video-author-uniqueid"]').first()
       try {
