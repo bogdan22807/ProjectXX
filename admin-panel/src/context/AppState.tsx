@@ -32,7 +32,6 @@ import type {
   Platform,
   ProfileStatus,
   Proxy,
-  ProxyStatus,
 } from '../types/domain'
 
 interface AppStateValue {
@@ -141,12 +140,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setLogs(l.map(mapLog))
   }, [])
 
-  const refreshAccountsAndLogs = useCallback(async () => {
-    const [a, l] = await Promise.all([
+  const refreshAccountsLogsProxies = useCallback(async () => {
+    const [a, p, l] = await Promise.all([
       apiGet<ApiAccount[]>('/accounts'),
+      apiGet<ApiProxy[]>('/proxies'),
       apiGet<ApiLog[]>('/logs'),
     ])
     setAccounts(a.map(mapAccount))
+    setProxies(p.map(mapProxy))
     setLogs(l.map(mapLog))
   }, [])
 
@@ -161,13 +162,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const id = window.setInterval(() => {
-      void refreshAccountsAndLogs().catch((e) => {
+      void refreshAccountsLogsProxies().catch((e) => {
         console.error('Poll failed', e)
         setLastError(formatApiFailure(e))
       })
     }, POLL_MS)
     return () => window.clearInterval(id)
-  }, [refreshAccountsAndLogs])
+  }, [refreshAccountsLogsProxies])
 
   const appendLog = useCallback(async (action: string, details: string) => {
     try {
@@ -342,7 +343,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           port: input.port,
           username: input.username,
           password: input.password,
-          status: 'Needs Check',
         }
         if (input.proxyScheme?.trim()) {
           body.proxy_scheme = input.proxyScheme.trim().toLowerCase()
@@ -387,13 +387,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         : new Set(proxies.map((p) => p.id))
     if (targetIds.size === 0) return
     try {
-      const nextStatus: ProxyStatus = 'Active'
-      const now = new Date().toISOString()
       for (const id of targetIds) {
-        await apiPatch(`/proxies/${id}`, { status: nextStatus, last_check: now })
+        await apiPost(`/proxies/${id}/check`, {})
       }
       await refreshAll()
-      await appendLog('Check proxies', `Marked ${targetIds.size} proxy row(s) as ${nextStatus}`)
+      await appendLog('Check proxies', `Started check for ${targetIds.size} proxy row(s)`)
     } catch (e) {
       console.error('checkSelectedProxies failed', e)
       setLastError(formatApiFailure(e))
@@ -458,7 +456,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           headless: options?.headless,
         })
         await appendLog('Playwright test-run', `Запущен для аккаунта ${accountId}`)
-        void refreshAccountsAndLogs()
+        void refreshAccountsLogsProxies()
       } catch (e) {
         console.error('startPlaywrightTestRun failed', e)
         setLastError(formatApiFailure(e))
@@ -470,7 +468,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         })
       }
     },
-    [testRunPending, appendLog, refreshAccountsAndLogs],
+    [testRunPending, appendLog, refreshAccountsLogsProxies],
   )
 
   const abortPlaywrightTestRun = useCallback(
@@ -478,13 +476,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       try {
         await apiPost('/warmup/test-run/abort', { accountId })
         await appendLog('Playwright test-run abort', accountId)
-        void refreshAccountsAndLogs()
+        void refreshAccountsLogsProxies()
       } catch (e) {
         console.error('abortPlaywrightTestRun failed', e)
         setLastError(formatApiFailure(e))
       }
     },
-    [appendLog, refreshAccountsAndLogs],
+    [appendLog, refreshAccountsLogsProxies],
   )
 
   const startWarmupSelected = useCallback(async () => {

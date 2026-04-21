@@ -1,6 +1,14 @@
 export type AccountStatus = 'New' | 'Starting' | 'Ready' | 'Running' | 'Error'
 
-export type ProxyStatus = 'Active' | 'Needs Check' | 'Dead'
+/** Stored in DB `proxies.status` — human labels in UI */
+export type ProxyStatus =
+  | 'unknown'
+  | 'checking'
+  | 'ok'
+  | 'auth_failed'
+  | 'timeout'
+  | 'network'
+  | 'bad_request'
 
 export type ProfileStatus = 'Ready' | 'In Use' | 'Error'
 
@@ -27,6 +35,8 @@ export interface Proxy {
   /** http | https | socks5 | socks4 — empty = http */
   proxyScheme: string
   status: ProxyStatus
+  /** JSON: { outboundIp?: string } or { error?, message? } */
+  checkResult: string
 }
 
 export interface BrowserProfile {

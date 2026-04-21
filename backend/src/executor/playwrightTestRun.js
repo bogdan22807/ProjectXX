@@ -605,6 +605,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         } catch (err) {
           if (isExecutorHaltError(err)) {
             if (err.reason === 'max_duration') {
+              logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()} phase=scenario`)
               state.lifecycle = 'max_duration_reached'
               loopExitReason = 'max_duration_reached'
             } else {

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
+import { runProxyConnectivityCheck } from '../executor/proxyConnectivityCheck.js'
 import { proxyCreatePayload, proxyPatchPayload } from '../requestFields.js'
 import { sendJsonData, sendJsonError, sendJsonRow, sendJsonSuccess } from '../sendJson.js'
 
@@ -34,14 +35,17 @@ router.post('/', (req, res) => {
   const prov = provider != null ? String(provider).trim() : ''
   const u = username != null ? String(username).trim() : ''
   const pw = password != null ? String(password).trim() : ''
-  const st = status != null ? String(status).trim() : 'Needs Check'
+  const st = 'checking'
   const assigned = assigned_to != null ? String(assigned_to).trim() : ''
   const scheme = proxy_scheme != null ? String(proxy_scheme).trim().toLowerCase() : ''
   db.prepare(
-    `INSERT INTO proxies (id, provider, host, port, username, password, proxy_scheme, status, assigned_to, last_check)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(id, prov, h, p, u, pw, scheme, st, assigned, last_check ?? null)
+    `INSERT INTO proxies (id, provider, host, port, username, password, proxy_scheme, status, assigned_to, last_check, check_result)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  ).run(id, prov, h, p, u, pw, scheme, st, assigned, last_check ?? null, '')
   const row = db.prepare('SELECT * FROM proxies WHERE id = ?').get(id)
+  void runProxyConnectivityCheck(id).catch((err) => {
+    console.error('[proxy check]', id, err)
+  })
   return sendJsonRow(res, 201, row, 'Proxy missing after insert')
 })
 
@@ -60,6 +64,7 @@ router.patch('/:id', (req, res) => {
     'status',
     'assigned_to',
     'last_check',
+    'check_result',
   ]
   const normalized = proxyPatchPayload(req.body)
   const updates = {}
@@ -78,6 +83,7 @@ router.patch('/:id', (req, res) => {
     'status',
     'assigned_to',
     'last_check',
+    'check_result',
   ])
   for (const key of Object.keys(updates)) {
     const v = updates[key]
@@ -97,6 +103,19 @@ router.delete('/:id', (req, res) => {
   const r = db.prepare('DELETE FROM proxies WHERE id = ?').run(id)
   if (r.changes === 0) return sendJsonError(res, 404, 'Not found')
   return sendJsonSuccess(res)
+})
+
+/** Re-run connectivity check (Playwright → ipify). */
+router.post('/:id/check', (req, res) => {
+  const { id } = req.params
+  const existing = db.prepare('SELECT * FROM proxies WHERE id = ?').get(id)
+  if (!existing) return sendJsonError(res, 404, 'Not found')
+  db.prepare(`UPDATE proxies SET status = 'checking', check_result = '' WHERE id = ?`).run(id)
+  void runProxyConnectivityCheck(id).catch((err) => {
+    console.error('[proxy check]', id, err)
+  })
+  const row = db.prepare('SELECT * FROM proxies WHERE id = ?').get(id)
+  return sendJsonData(res, 202, { started: true, proxy: row })
 })
 
 export default router

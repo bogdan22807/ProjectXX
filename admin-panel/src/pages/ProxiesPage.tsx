@@ -4,7 +4,7 @@ import { Button } from '../components/ui/Button'
 import { checkboxClass, fieldClass } from '../components/ui/field-classes'
 import { EmptyState } from '../components/ui/EmptyState'
 import { Modal } from '../components/ui/Modal'
-import { StatusBadge } from '../components/ui/StatusBadge'
+import { ProxyStatusLine } from '../components/ProxyStatusLine'
 import { useAppState } from '../context/AppState'
 
 /** POST /api/proxies: provider, host, port, username, password, proxy_scheme */
@@ -170,7 +170,7 @@ export function ProxiesPage() {
                       {p.proxyScheme?.trim() || 'http'}
                     </td>
                     <td className="px-4 py-3">
-                      <StatusBadge status={p.status} />
+                      <ProxyStatusLine proxy={p} />
                     </td>
                     <td className="px-4 py-3 text-zinc-400">{assignedTo(p.id)}</td>
                   </tr>

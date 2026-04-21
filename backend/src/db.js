@@ -79,7 +79,17 @@ ensureColumn('proxies', 'status', "TEXT NOT NULL DEFAULT 'Needs Check'")
 ensureColumn('proxies', 'assigned_to', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('proxies', 'last_check', 'TEXT')
 ensureColumn('proxies', 'proxy_scheme', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('proxies', 'check_result', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('proxies', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))")
+
+/** Legacy proxy status labels → simple machine statuses for UI */
+try {
+  db.prepare(`UPDATE proxies SET status = 'unknown' WHERE status = 'Needs Check'`).run()
+  db.prepare(`UPDATE proxies SET status = 'ok' WHERE status = 'Active'`).run()
+  db.prepare(`UPDATE proxies SET status = 'network' WHERE status = 'Dead'`).run()
+} catch {
+  /* ignore */
+}
 
 ensureColumn('browser_profiles', 'name', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('browser_profiles', 'linked_proxy_id', 'TEXT')
