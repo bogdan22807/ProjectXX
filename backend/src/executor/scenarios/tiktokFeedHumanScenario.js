@@ -19,6 +19,9 @@ let skipScrollBackAfterLive = 0
 let lastFeedStableKey = ''
 let feedRepeatStreak = 0
 
+/** Consecutive iterations that chose the linger branch (30% random). At 2, next iteration forces scroll. */
+let consecutiveLingerStreak = 0
+
 function defaultScreenshotDir() {
   return path.join(process.cwd(), 'playwright-debug')
 }
@@ -475,6 +478,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
       await haltIfNeeded(shouldHalt)
       feedRepeatStreak = 0
       lastFeedStableKey = ''
+      consecutiveLingerStreak = 0
       skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, 2)
     }
   } else {
@@ -490,6 +494,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     await scrollFeedStep(page, 'down', log)
     await haltIfNeeded(shouldHalt)
     skipScrollBackAfterLive = Math.max(skipScrollBackAfterLive, 2)
+    consecutiveLingerStreak = 0
     return
   }
 
@@ -497,11 +502,18 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
   await delayWithCaptchaInterruption(page, log, shouldHalt, 5000, 15000)
   await haltIfNeeded(shouldHalt)
 
-  if (randomChance(30)) {
+  if (consecutiveLingerStreak >= 2) {
+    log('FORCE_SCROLL_AFTER_LINGER_STREAK', 'two lingers in a row — skip linger; scroll down')
+    await scrollFeedStep(page, 'down', log)
+    await haltIfNeeded(shouldHalt)
+    consecutiveLingerStreak = 0
+  } else if (randomChance(30)) {
     log('VIEW_VIDEO', 'linger 3–8s (no scroll this beat)')
     await delayWithCaptchaInterruption(page, log, shouldHalt, 3000, 8000)
+    consecutiveLingerStreak += 1
   } else {
     await scrollFeedStep(page, 'down', log)
+    consecutiveLingerStreak = 0
     if (randomChance(25)) {
       if (skipScrollBackAfterLive > 0) {
         log('LIVE_SKIPPED', 'SCROLL_BACK suppressed (after LIVE)')
