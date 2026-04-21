@@ -1,8 +1,9 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
 import {
-  abortPlaywrightTestRun,
+  getPlaywrightRunMeta,
   isPlaywrightTestRunActive,
+  requestPlaywrightStop,
   runPlaywrightTestRun,
 } from '../executor/playwrightTestRun.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
@@ -117,19 +118,26 @@ router.post('/stop', async (req, res) => {
 
   const wasFake = clearWarmupJob(accountId)
   const hadPlaywright = isPlaywrightTestRunActive(accountId)
+  let playwrightStopRequested = false
   if (hadPlaywright) {
-    await abortPlaywrightTestRun(accountId)
+    playwrightStopRequested = requestPlaywrightStop(accountId)
   }
 
-  const stoppedSomething = wasFake || hadPlaywright
-  if (stoppedSomething) {
+  const stoppedSomething = wasFake || playwrightStopRequested
+  const runMeta = getPlaywrightRunMeta(accountId)
+  if (wasFake) {
     db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Ready', accountId)
     insertLog(accountId, 'stopped by user', '')
+  } else if (playwrightStopRequested) {
+    insertLog(accountId, 'stopped by user', 'Playwright: graceful stop requested — status Ready when run ends')
   }
 
   return sendJsonData(res, 200, {
     state: stoppedSomething ? 'stopped' : 'idle',
     accountId,
+    playwrightGraceful: playwrightStopRequested || undefined,
+    runId: runMeta?.runId,
+    executorLifecycle: runMeta?.lifecycle,
   })
 })
 

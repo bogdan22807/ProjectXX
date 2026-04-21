@@ -4,6 +4,7 @@
  */
 
 import { randomInt, sleepRandom } from './asyncUtils.js'
+import { ExecutorHaltError } from './executorHalt.js'
 
 /**
  * @typedef {{
@@ -16,6 +17,7 @@ import { randomInt, sleepRandom } from './asyncUtils.js'
  *   scrollBackMin?: number
  *   scrollBackMax?: number
  *   scrollLog?: { started?: string; completed?: string; waitBetweenSteps?: string; step?: string }
+ *   shouldAbort?: () => false | 'stop' | 'max_duration' | Promise<false | 'stop' | 'max_duration'>
  * }} SmoothScrollPageOptions
  */
 
@@ -57,8 +59,15 @@ export async function smoothScrollPage(page, logger, options = {}) {
     ].join(' | '),
   )
 
+  const shouldAbort = typeof options.shouldAbort === 'function' ? options.shouldAbort : null
+
   const steps = randomInt(o.minSteps, o.maxSteps)
   for (let i = 0; i < steps; i++) {
+    if (shouldAbort) {
+      const halt = await shouldAbort()
+      if (halt === 'stop') throw new ExecutorHaltError('stop')
+      if (halt === 'max_duration') throw new ExecutorHaltError('max_duration')
+    }
     const dy = randomInt(o.minDistance, o.maxDistance)
     await page.mouse.wheel(0, dy)
     log(stepAction, `dy=${dy}px`)
