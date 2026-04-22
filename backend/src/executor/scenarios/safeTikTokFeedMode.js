@@ -4,7 +4,7 @@
  * Rules: single initial `goto` is outside this module (playwrightTestRun). Here: no goto/reload/goBack,
  * no PageUp/ArrowUp/wheel dy<0, no video click, no profile. VIEW_VIDEO (6–14s) → SCROLL_DOWN → rare like (3–5%).
  * LIVE card: double wheel + PageDown + stable-key check + optional FORCE_SCROLL_AFTER_LIVE.
- * LIVE surface (/live): only escapeLiveSurface(); no normal feed scroll while on surface.
+ * LIVE surface (/live): only navigate to For You tab (clicks); no wheel/keyboard scroll on stream, no VIEW_VIDEO/LIKE.
  * Challenge: log + status `challenge_detected` + throw ExecutorHaltError('challenge') to end run.
  */
 
@@ -54,6 +54,18 @@ function pageInLiveSurfaceUrl(page) {
     return new URL(page.url()).pathname.toLowerCase().includes('/live')
   } catch {
     return String(page.url()).toLowerCase().includes('/live')
+  }
+}
+
+/** TikTok host and not still on /live path (after For You navigation). */
+function isTikTokNotLiveSurface(page) {
+  try {
+    const u = new URL(page.url())
+    if (!u.hostname.toLowerCase().includes('tiktok.com')) return false
+    return !u.pathname.toLowerCase().includes('/live')
+  } catch {
+    const s = String(page.url()).toLowerCase()
+    return s.includes('tiktok.com') && !s.includes('/live')
   }
 }
 
@@ -172,11 +184,6 @@ async function scrollDownOnce(page, log) {
 }
 
 /**
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- */
-/**
  * After LIVE_SKIP: force feed to advance past stuck first slot (down only).
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
@@ -221,40 +228,51 @@ async function runPostLiveRecovery(page, log, shouldHalt) {
   }
 }
 
+/**
+ * Click "For You" nav to leave LIVE room — no scrolling the stream (no wheel / ArrowDown / PageDown on feed).
+ * @param {import('playwright').Page} page
+ */
+async function tryClickForYouNav(page) {
+  const candidates = [
+    page.locator('a[href*="/foryou"]').first(),
+    page.locator('[data-e2e="nav-for-you"]').first(),
+    page.getByRole('link', { name: /^For You$/i }).first(),
+    page.locator('a', { hasText: /^For You$/ }).first(),
+  ]
+  for (const loc of candidates) {
+    try {
+      if ((await loc.count()) === 0) continue
+      if (!(await loc.isVisible().catch(() => false))) continue
+      await loc.click({ timeout: 7000 })
+      return true
+    } catch {
+      /* try next selector */
+    }
+  }
+  return false
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
 async function escapeLiveSurface(page, log, shouldHalt) {
-  log('LIVE_SURFACE_DETECTED', page.url().slice(0, 240))
-  log('LIVE_SURFACE_ESCAPE_STARTED', 'Escape + PageDown + ArrowDown — no feed scroll')
+  log('LIVE_SURFACE_DETECTED', page.url().slice(0, 280))
 
-  await page.keyboard.press('Escape').catch(() => {})
-  await sleepMsHaltable(shouldHalt, randomInt(400, 800))
-  await haltIfNeeded(shouldHalt)
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    log('NAVIGATE_TO_FORYOU', `attempt=${attempt}`)
+    await tryClickForYouNav(page)
+    await sleepMsHaltable(shouldHalt, randomInt(800, 1500))
+    await haltIfNeeded(shouldHalt)
 
-  if (!pageInLiveSurfaceUrl(page)) {
-    log('LIVE_SURFACE_EXITED', page.url().slice(0, 240))
-    return
+    if (isTikTokNotLiveSurface(page)) {
+      log('FORYOU_OPENED', page.url().slice(0, 280))
+      return
+    }
   }
 
-  await page.keyboard.press('PageDown').catch(() => {})
-  log('BLOCKED_FEED_SCROLL_IN_LIVE', 'PageDown only')
-  await sleepMsHaltable(shouldHalt, randomInt(400, 800))
-  await haltIfNeeded(shouldHalt)
-
-  if (!pageInLiveSurfaceUrl(page)) {
-    log('LIVE_SURFACE_EXITED', page.url().slice(0, 240))
-    return
-  }
-
-  await page.keyboard.press('ArrowDown').catch(() => {})
-  await page.keyboard.press('ArrowDown').catch(() => {})
-  await sleepMsHaltable(shouldHalt, randomInt(300, 600))
-  await haltIfNeeded(shouldHalt)
-
-  if (!pageInLiveSurfaceUrl(page)) {
-    log('LIVE_SURFACE_EXITED', page.url().slice(0, 240))
-    return
-  }
-
-  log('LIVE_HARD_STUCK', 'still on /live surface — end iteration without feed loop')
+  log('LIVE_HARD_STUCK', `still on LIVE surface url=${page.url().slice(0, 280)}`)
 }
 
 /**
