@@ -342,14 +342,15 @@ async function delayWithCaptchaInterruption(page, log, shouldHalt, minMs, maxMs)
 }
 
 /**
+ * Strict text hints only — avoid false LIVE from unrelated copy (e.g. "delivery", "archive").
  * @param {string} blob
  */
 function textIndicatesLiveCard(blob) {
   const s = String(blob ?? '')
   if (!s.trim()) return false
-  const upper = s.toUpperCase()
   if (/\bLIVE NOW\b/i.test(s)) return true
-  if (/\bLIVE\b/.test(upper)) return true
+  if (/\bGO\s+LIVE\b/i.test(s)) return true
+  if (/\bSTART(?:ED)?\s+LIVE\b/i.test(s)) return true
   return false
 }
 
@@ -373,6 +374,66 @@ async function readActiveFeedCardText(page) {
     })
   } catch {
     return ''
+  }
+}
+
+/**
+ * LIVE stream **card** on For You only (does not use `/live` URL — full-page live is handled separately).
+ * @param {import('playwright').Page} page
+ */
+async function detectFeedCardLive(page) {
+  const root = page.locator('[data-e2e="feed-active-video"]').first()
+  if ((await root.count()) === 0) return false
+
+  try {
+    if (
+      (await root.locator('[data-e2e="live-tag"], [data-e2e="video-live-tag"]').first().isVisible().catch(() => false))
+    ) {
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    if (await root.getByText(/^LIVE$/i).first().isVisible().catch(() => false)) return true
+    if (await root.getByText(/\bLIVE\s+now\b/i).first().isVisible().catch(() => false)) return true
+  } catch {
+    /* ignore */
+  }
+
+  try {
+    const ariaLive = root.locator('[aria-label*="live" i]').first()
+    if (await ariaLive.isVisible().catch(() => false)) {
+      const lab = ((await ariaLive.getAttribute('aria-label').catch(() => '')) ?? '').toLowerCase()
+      if (lab.includes('live stream') || lab.includes('live now') || lab.includes('watching live')) return true
+    }
+  } catch {
+    /* ignore */
+  }
+
+  const blob = await readActiveFeedCardText(page)
+  if (textIndicatesLiveCard(blob)) return true
+
+  return false
+}
+
+/**
+ * Keep scrolling down until LIVE card UI is gone (TikTok sometimes snaps back one slot).
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function ironOutLiveCardIfStillShowing(page, log, shouldHalt) {
+  for (let i = 0; i < 6 && (await detectFeedCardLive(page)); i++) {
+    log('LIVE_ORIGIN_STILL_VISIBLE', `extra down burst wave=${i + 1}`)
+    await scrollPastLiveNoPointer(page, log, shouldHalt, 'live_iron_out', {
+      pressesMin: 10,
+      pressesMax: 16,
+      pageDowns: 3,
+    })
+    await sleepMsHaltable(shouldHalt, randomInt(280, 520))
+    await haltIfNeeded(shouldHalt)
   }
 }
 
@@ -424,7 +485,6 @@ async function sleepAfterScrollForAdvanceCheck(shouldHalt) {
 async function wheelOnActiveVideo(page, log, minDy, maxDy, label) {
   const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
   if ((await vid.count()) === 0) return
-  await vid.scrollIntoViewIfNeeded().catch(() => {})
   const box = await vid.boundingBox()
   if (!box || box.width < 40 || box.height < 40) return
   const cx = box.x + box.width / 2
@@ -531,47 +591,6 @@ async function ensureStableKeyAdvancedAfterScroll(page, log, shouldHalt, beforeS
 }
 
 /**
- * LIVE stream **card** on For You only (does not use `/live` URL — full-page live is handled separately).
- * @param {import('playwright').Page} page
- */
-async function detectFeedCardLive(page) {
-  const root = page.locator('[data-e2e="feed-active-video"]').first()
-  if ((await root.count()) === 0) return false
-
-  try {
-    if (
-      (await root.locator('[data-e2e="live-tag"], [data-e2e="video-live-tag"]').first().isVisible().catch(() => false))
-    ) {
-      return true
-    }
-  } catch {
-    /* ignore */
-  }
-
-  try {
-    if (await root.getByText(/^LIVE$/i).first().isVisible().catch(() => false)) return true
-    if (await root.getByText(/\bLIVE\s+now\b/i).first().isVisible().catch(() => false)) return true
-  } catch {
-    /* ignore */
-  }
-
-  try {
-    const ariaLive = root.locator('[aria-label*="live" i]').first()
-    if (await ariaLive.isVisible().catch(() => false)) {
-      const lab = ((await ariaLive.getAttribute('aria-label').catch(() => '')) ?? '').toLowerCase()
-      if (lab.includes('live')) return true
-    }
-  } catch {
-    /* ignore */
-  }
-
-  const blob = await readActiveFeedCardText(page)
-  if (textIndicatesLiveCard(blob)) return true
-
-  return false
-}
-
-/**
  * Block like / video click / profile: LIVE card, /live URL, or post-LIVE cooldown iterations.
  * @param {import('playwright').Page} page
  */
@@ -607,7 +626,6 @@ async function scrollFeedStep(page, log, opts = {}) {
   const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
   try {
     if ((await vid.count()) > 0) {
-      await vid.scrollIntoViewIfNeeded().catch(() => {})
       const box = await vid.boundingBox()
       if (box && box.width > 40 && box.height > 40) {
         const cx = box.x + box.width / 2
@@ -631,7 +649,6 @@ async function scrollFeedStep(page, log, opts = {}) {
     /* fall through */
   }
 
-  await focusFeedColumn(page, log)
   const times = forceLarge ? randomInt(6, 10) : randomInt(2, 5)
   for (let i = 0; i < times; i++) {
     await page.keyboard.press('ArrowDown')
@@ -707,6 +724,8 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     await skipLiveFeedCardAggressive(page, log, shouldHalt)
     await haltIfNeeded(shouldHalt)
     await ensureStableKeyAdvancedAfterScroll(page, log, shouldHalt, stableBeforeLive)
+    await haltIfNeeded(shouldHalt)
+    await ironOutLiveCardIfStillShowing(page, log, shouldHalt)
     await haltIfNeeded(shouldHalt)
     bumpSkipClickProfileAfterLive(2)
     consecutiveLingerStreak = 0
