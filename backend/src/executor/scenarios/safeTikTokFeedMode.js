@@ -176,6 +176,51 @@ async function scrollDownOnce(page, log) {
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
+/**
+ * After LIVE_SKIP: force feed to advance past stuck first slot (down only).
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function runPostLiveRecovery(page, log, shouldHalt) {
+  const stableKeyBefore = await getStableVideoKey(page)
+  log('POST_LIVE_RECOVERY', `stableKey_before_len=${String(stableKeyBefore).length}`)
+
+  await wheelOnActiveVideo(page, log, 800, 1200, 'post_live_recovery')
+  await sleepMsHaltable(shouldHalt, randomInt(600, 1200))
+  await haltIfNeeded(shouldHalt)
+  let stableKeyAfter = await getStableVideoKey(page)
+  if (stableKeyBefore && stableKeyAfter && stableKeyAfter !== stableKeyBefore) {
+    log('POST_LIVE_RECOVERY_OK', 'key changed after wheel')
+    return
+  }
+
+  log('POST_LIVE_RECOVERY', 'PageDown phase')
+  await page.keyboard.press('PageDown').catch(() => {})
+  await sleepMsHaltable(shouldHalt, randomInt(600, 1200))
+  await haltIfNeeded(shouldHalt)
+  stableKeyAfter = await getStableVideoKey(page)
+  if (stableKeyBefore && stableKeyAfter && stableKeyAfter !== stableKeyBefore) {
+    log('POST_LIVE_RECOVERY_OK', 'key changed after PageDown')
+    return
+  }
+
+  log('POST_LIVE_RECOVERY_FORCE', 'ArrowDown×3')
+  for (let i = 0; i < 3; i++) {
+    await haltIfNeeded(shouldHalt)
+    await page.keyboard.press('ArrowDown')
+    await sleep(100 + randomInt(0, 80))
+  }
+  await sleepMsHaltable(shouldHalt, 600)
+  await haltIfNeeded(shouldHalt)
+  stableKeyAfter = await getStableVideoKey(page)
+  if (stableKeyBefore && stableKeyAfter && stableKeyAfter !== stableKeyBefore) {
+    log('POST_LIVE_RECOVERY_OK', 'key changed after ArrowDown')
+  } else {
+    log('POST_LIVE_RECOVERY_FORCE', 'key still unchanged after recovery steps')
+  }
+}
+
 async function escapeLiveSurface(page, log, shouldHalt) {
   log('LIVE_SURFACE_DETECTED', page.url().slice(0, 240))
   log('LIVE_SURFACE_ESCAPE_STARTED', 'Escape + PageDown + ArrowDown — no feed scroll')
@@ -218,8 +263,6 @@ async function escapeLiveSurface(page, log, shouldHalt) {
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
 async function handleLiveFeedCard(page, log, shouldHalt) {
-  const before = await getStableVideoKey(page)
-
   log('LIVE_DETECTED', 'FYP LIVE card')
   await wheelOnActiveVideo(page, log, 1000, 1400, 'LIVE_SKIP_SCROLL_1')
   log('LIVE_SKIP_SCROLL_1', 'wheel 1000–1400')
@@ -235,26 +278,8 @@ async function handleLiveFeedCard(page, log, shouldHalt) {
   await sleepMsHaltable(shouldHalt, randomInt(500, 1200))
   await haltIfNeeded(shouldHalt)
 
-  let after = await getStableVideoKey(page)
-  if (before && after && after !== before) {
-    log('LIVE_SKIPPED', 'stable key changed after LIVE skip')
-    return
-  }
-
-  log('FEED_STUCK_AFTER_LIVE', 'stable key unchanged after LIVE skip')
-  await wheelOnActiveVideo(page, log, 1200, 1600, 'FORCE_SCROLL_AFTER_LIVE')
-  log('FORCE_SCROLL_AFTER_LIVE', 'wheel 1200–1600')
-  await page.keyboard.press('PageDown').catch(() => {})
-  log('FORCE_SCROLL_AFTER_LIVE', 'PageDown')
-  await sleepMsHaltable(shouldHalt, randomInt(500, 1200))
-  await haltIfNeeded(shouldHalt)
-
-  after = await getStableVideoKey(page)
-  if (before && after && after !== before) {
-    log('LIVE_SKIPPED', 'stable key changed after FORCE_SCROLL_AFTER_LIVE')
-  } else {
-    log('LIVE_SKIPPED', 'LIVE skip done (key may still match — continue next iteration)')
-  }
+  await runPostLiveRecovery(page, log, shouldHalt)
+  log('LIVE_SKIPPED', 'LIVE card handled — POST_LIVE_RECOVERY done')
 }
 
 /**
