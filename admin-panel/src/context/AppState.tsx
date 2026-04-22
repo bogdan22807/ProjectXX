@@ -265,7 +265,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc || acc.status === 'Running' || acc.status === 'Starting') return
-      if (acc.status !== 'New' && acc.status !== 'Ready') return
+      if (acc.status !== 'New' && acc.status !== 'Ready' && acc.status !== 'challenge_detected') return
       if (warmupPending[id]) return
       setWarmupPending((p) => ({ ...p, [id]: 'start' }))
       try {

@@ -366,7 +366,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     let browser
     let context
     let page
-    /** Default visible browser for real-site debug unless overridden. */
+    /** Default headless unless caller passes headless: false (e.g. test-run with visible window). */
     const headlessForSession =
       options.headless === true
         ? true
@@ -374,7 +374,9 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           ? false
           : String(process.env.PLAYWRIGHT_HEADLESS ?? '').trim() === '1'
             ? true
-            : false
+            : String(process.env.PLAYWRIGHT_HEADLESS ?? '').trim() === '0'
+              ? false
+              : true
 
     const debugScreenshots =
       options.debugScreenshots === true ||

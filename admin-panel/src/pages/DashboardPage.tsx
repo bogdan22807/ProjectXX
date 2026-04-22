@@ -22,7 +22,14 @@ import { useAppState } from '../context/AppState'
 import { formatTime } from '../utils/format'
 import type { Account, AccountStatus } from '../types/domain'
 
-const accountStatuses: AccountStatus[] = ['New', 'Starting', 'Ready', 'Running', 'Error']
+const accountStatuses: AccountStatus[] = [
+  'New',
+  'Starting',
+  'Ready',
+  'Running',
+  'Error',
+  'challenge_detected',
+]
 
 type FormState = {
   name: string
@@ -390,16 +397,18 @@ export function DashboardPage() {
                       {a.status === 'Ready' && 'Готово'}
                       {a.status === 'Running' && 'Работает'}
                       {a.status === 'Error' && 'Ошибка'}
+                      {a.status === 'challenge_detected' && 'Капча'}
                     </StatusBadge>
                   </td>
                   <td className={`${tableCellClass} text-right`}>
                     <div className="flex flex-wrap items-center justify-end gap-1.5">
-                      {a.status === 'New' || a.status === 'Ready' ? (
+                      {a.status === 'New' || a.status === 'Ready' || a.status === 'challenge_detected' ? (
                         <Button
                           className={tableActionButtonClass}
                           variant="primary"
                           disabled={warmupPending[a.id] === 'start'}
                           onClick={() => startAccount(a.id)}
+                          title="Запуск в фоне (headless), без отдельного окна браузера"
                         >
                           {warmupPending[a.id] === 'start' ? 'Запуск…' : 'Прогрев'}
                         </Button>
@@ -414,7 +423,11 @@ export function DashboardPage() {
                         </Button>
                       ) : null}
                       <Button
-                        className={tableActionButtonClass}
+                        className={`${tableActionButtonClass} ${
+                          a.status === 'challenge_detected'
+                            ? 'border-amber-500/80 bg-amber-950/90 text-amber-100 shadow-[0_0_0_1px_rgba(245,158,11,0.35)] hover:bg-amber-900/90 hover:border-amber-400/80'
+                            : ''
+                        }`}
                         variant="secondary"
                         disabled={
                           testRunPending[a.id] === true ||
@@ -422,11 +435,13 @@ export function DashboardPage() {
                           a.status === 'Starting'
                         }
                         title={
-                          a.status === 'Running' || a.status === 'Starting'
-                            ? 'Сначала остановите прогрев — иначе Playwright уже занят'
-                            : 'POST /warmup/test-run'
+                          a.status === 'challenge_detected'
+                            ? 'Обнаружена капча — откройте окно браузера и пройдите проверку вручную'
+                            : a.status === 'Running' || a.status === 'Starting'
+                              ? 'Сначала остановите прогрев — иначе Playwright уже занят'
+                              : 'Видимый браузер (headed) для ручной проверки'
                         }
-                        onClick={() => void startPlaywrightTestRun(a.id)}
+                        onClick={() => void startPlaywrightTestRun(a.id, { headless: false })}
                       >
                         {testRunPending[a.id] ? 'Тест…' : 'Тест Playwright'}
                       </Button>
