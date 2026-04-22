@@ -59,7 +59,7 @@ function beginWarmupChain(accountId) {
           db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('Ready', accountId)
           jobs.delete(accountId)
           if (process.env.WARMUP_PLAYWRIGHT_AFTER_FAKE === '1' && !isPlaywrightTestRunActive(accountId)) {
-            void runPlaywrightTestRun(accountId).catch((err) => {
+            void runPlaywrightTestRun(accountId, { headless: true }).catch((err) => {
               console.error('[warmup → playwright]', err)
             })
           }
@@ -108,7 +108,9 @@ router.post('/start', (req, res) => {
             String(safeRaw ?? '').toLowerCase() === 'false'
           ? false
           : undefined
-    void runPlaywrightTestRun(accountId, safeTikTokFeedMode != null ? { safeTikTokFeedMode } : {}).catch((err) => {
+    const pwOpts = { headless: true }
+    if (safeTikTokFeedMode != null) pwOpts.safeTikTokFeedMode = safeTikTokFeedMode
+    void runPlaywrightTestRun(accountId, pwOpts).catch((err) => {
       console.error('[warmup → playwright]', err)
     })
   }

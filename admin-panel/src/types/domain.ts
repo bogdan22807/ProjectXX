@@ -1,4 +1,11 @@
-export type AccountStatus = 'New' | 'Starting' | 'Ready' | 'Running' | 'Error'
+export type AccountStatus =
+  | 'New'
+  | 'Starting'
+  | 'Ready'
+  | 'Running'
+  | 'Error'
+  /** TikTok captcha / verify — run stopped; open visible test browser to solve manually */
+  | 'challenge_detected'
 
 /** Stored in DB `proxies.status` — human labels in UI */
 export type ProxyStatus =

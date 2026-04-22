@@ -52,7 +52,7 @@ router.post('/', (req, res) => {
           headlessRaw === 0 ||
           String(headlessRaw ?? '').toLowerCase() === 'false'
         ? false
-        : undefined
+        : false
   void runPlaywrightTestRun(accountId, {
     targetUrl: targetUrl != null ? String(targetUrl) : undefined,
     readySelector: readySelector != null ? String(readySelector) : undefined,

@@ -9,6 +9,7 @@ const styles: Record<string, string> = {
   Ready: 'bg-sky-950/80 text-sky-300 border-sky-800/60',
   Running: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60',
   Error: 'bg-red-950/80 text-red-300 border-red-800/60',
+  challenge_detected: 'bg-amber-950/85 text-amber-200 border-amber-600/70',
   Active: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60',
   'Needs Check': 'bg-amber-950/80 text-amber-300 border-amber-800/60',
   Dead: 'bg-zinc-800 text-zinc-400 border-zinc-700',
