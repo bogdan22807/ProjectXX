@@ -4,7 +4,7 @@
  */
 export class ExecutorHaltError extends Error {
   /**
-   * @param {'stop' | 'max_duration'} reason
+   * @param {'stop' | 'max_duration' | 'challenge'} reason
    */
   constructor(reason) {
     super(`ExecutorHalt:${reason}`)
