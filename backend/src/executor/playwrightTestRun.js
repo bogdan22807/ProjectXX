@@ -19,6 +19,7 @@ import {
   runViewAndScrollScenario,
 } from './scenarios/viewAndScrollScenario.js'
 import { runTikTokHumanFeedIteration } from './scenarios/tiktokFeedHumanScenario.js'
+import { runSafeTikTokFeedIteration } from './scenarios/safeTikTokFeedMode.js'
 import { ExecutorHaltError, isExecutorHaltError } from './executorHalt.js'
 import { interruptibleRandomDelay, randomDelay, sleepRandom } from './asyncUtils.js'
 
@@ -228,7 +229,7 @@ function resolveMaxDurationMs(options) {
 
 /**
  * @param {string} accountId
- * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean; headless?: boolean; maxDurationMs?: number; tiktokHumanFeedLoop?: boolean; screenshotDir?: string }} [options]
+ * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean; headless?: boolean; maxDurationMs?: number; tiktokHumanFeedLoop?: boolean; safeTikTokFeedMode?: boolean; screenshotDir?: string }} [options]
  */
 export async function runPlaywrightTestRun(accountId, options = {}) {
   if (playwrightRuns.has(accountId)) {
@@ -288,11 +289,17 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       pageUrl.hostname.includes('tiktok.com') &&
       options.tiktokHumanFeedLoop !== false
 
+    /** SAFE_TIKTOK_FEED_MODE is default for TikTok FYP loop; set `TIKTOK_LEGACY_HUMAN_FEED=1` or pass `safeTikTokFeedMode: false` for old human feed. */
+    const useSafeTikTokFeedMode =
+      useTikTokFeedLoop &&
+      options.safeTikTokFeedMode !== false &&
+      String(process.env.TIKTOK_LEGACY_HUMAN_FEED ?? '').trim() !== '1'
+
     updateStatus(accountId, 'Running')
     logStep(
       accountId,
       'EXECUTOR_STARTED',
-      `url=${runConfig.startUrl} | runId=${runId} | maxDurationMs=${maxDurationMs}`,
+      `url=${runConfig.startUrl} | runId=${runId} | maxDurationMs=${maxDurationMs}${useSafeTikTokFeedMode ? ' | SAFE_TIKTOK_FEED_MODE=1' : ''}`,
     )
 
     const elapsedMs = () => Date.now() - startedAt
@@ -649,21 +656,46 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
         if (useTikTokFeedLoop) {
           try {
-            await runTikTokHumanFeedIteration(
-              page,
-              (action, details) => logStep(accountId, action, details ?? ''),
-              shouldHalt,
-              {
-                debugScreenshots,
-                screenshotDir: options.screenshotDir,
-              },
-            )
+            if (useSafeTikTokFeedMode) {
+              await runSafeTikTokFeedIteration(
+                page,
+                (action, details) => logStep(accountId, action, details ?? ''),
+                shouldHalt,
+                {
+                  debugScreenshots,
+                  screenshotDir: options.screenshotDir,
+                },
+              )
+            } else {
+              await runTikTokHumanFeedIteration(
+                page,
+                (action, details) => logStep(accountId, action, details ?? ''),
+                shouldHalt,
+                {
+                  debugScreenshots,
+                  screenshotDir: options.screenshotDir,
+                },
+              )
+            }
           } catch (err) {
             if (isExecutorHaltError(err)) {
               if (err.reason === 'max_duration') {
                 logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()} phase=tiktok_feed`)
                 state.lifecycle = 'max_duration_reached'
                 loopExitReason = 'max_duration_reached'
+              } else if (err.reason === 'challenge') {
+                logStep(
+                  accountId,
+                  'EXECUTOR_STOPPED',
+                  `reason=challenge_detected runId=${runId} phase=tiktok_feed`,
+                )
+                try {
+                  updateStatus(accountId, 'challenge_detected')
+                } catch {
+                  /* account removed */
+                }
+                state.lifecycle = 'stopped'
+                loopExitReason = 'stopped'
               } else {
                 state.lifecycle = 'stopped'
                 loopExitReason = 'stopped'

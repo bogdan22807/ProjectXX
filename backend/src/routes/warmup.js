@@ -96,7 +96,19 @@ router.post('/start', (req, res) => {
   if (useFakeOnly) {
     beginWarmupChain(accountId)
   } else {
-    void runPlaywrightTestRun(accountId).catch((err) => {
+    const safeRaw = body.safeTikTokFeedMode ?? body.safe_tiktok_feed_mode
+    const safeTikTokFeedMode =
+      safeRaw === true ||
+      safeRaw === 1 ||
+      String(safeRaw ?? '').toLowerCase() === 'true' ||
+      String(safeRaw ?? '').trim() === '1'
+        ? true
+        : safeRaw === false ||
+            safeRaw === 0 ||
+            String(safeRaw ?? '').toLowerCase() === 'false'
+          ? false
+          : undefined
+    void runPlaywrightTestRun(accountId, safeTikTokFeedMode != null ? { safeTikTokFeedMode } : {}).catch((err) => {
       console.error('[warmup → playwright]', err)
     })
   }
