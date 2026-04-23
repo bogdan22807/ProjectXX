@@ -4,6 +4,7 @@
  */
 
 import { db, newId } from '../db.js'
+import { formatStructuredErrorDetails } from './errorLogFormat.js'
 
 /** @typedef {Record<string, unknown>} AccountRow */
 /** @typedef {Record<string, unknown>} ProxyRow */
@@ -63,6 +64,27 @@ export function getExecutionContext(accountId) {
  * @param {string} action
  * @param {string} [details]
  */
+const LOG_DETAILS_CHUNK = 120_000
+
+/**
+ * Append long text across multiple log rows so nothing is truncated in the UI.
+ * @param {string | null} accountId
+ * @param {string} action
+ * @param {string} text
+ */
+export function logStepChunked(accountId, action, text) {
+  const body = String(text ?? '')
+  if (body.length <= LOG_DETAILS_CHUNK) {
+    logStep(accountId, action, body)
+    return
+  }
+  const total = Math.ceil(body.length / LOG_DETAILS_CHUNK)
+  for (let i = 0; i < total; i += 1) {
+    const part = body.slice(i * LOG_DETAILS_CHUNK, (i + 1) * LOG_DETAILS_CHUNK)
+    logStep(accountId, `${action}_PART_${i + 1}_OF_${total}`, part)
+  }
+}
+
 export function logStep(accountId, action, details = '') {
   const id = newId('log')
   db.prepare(`INSERT INTO logs (id, account_id, action, details) VALUES (?, ?, ?, ?)`).run(
@@ -71,6 +93,22 @@ export function logStep(accountId, action, details = '') {
     String(action ?? '').trim() || '(empty)',
     String(details ?? ''),
   )
+}
+
+/**
+ * @param {string | null} accountId
+ * @param {string} action
+ * @param {unknown} err
+ * @param {{ runId?: string | null; scope?: string }} [meta]
+ */
+export function logStructuredExecutorError(accountId, action, err, meta = {}) {
+  const details = formatStructuredErrorDetails({
+    err,
+    scope: meta.scope ?? '',
+    accountId,
+    runId: meta.runId ?? null,
+  })
+  logStepChunked(accountId, action, details)
 }
 
 /**

@@ -12,8 +12,16 @@ import {
 import { buildExecutorRunConfigFromContext } from './executorRunConfig.js'
 import { parseCookiesForUrlStrict } from './cookieParse.js'
 import { launchBrowserSession } from './launchBrowserSession.js'
+import { normalizeBrowserEngine } from './browserEngine.js'
 import { db, newId } from '../db.js'
-import { getExecutionContext, logStep, updateStatus } from './runner.js'
+import {
+  getExecutionContext,
+  logStep,
+  logStepChunked,
+  logStructuredExecutorError,
+  updateStatus,
+} from './runner.js'
+import { errorMessage, errorStack, serializeErrorJson } from './errorLogFormat.js'
 import {
   inferTikTokAuthState,
   runViewAndScrollScenario,
@@ -46,15 +54,28 @@ import { interruptibleRandomDelay, randomDelay, sleepRandom } from './asyncUtils
 /** @type {Map<string, PlaywrightRunState>} */
 const playwrightRuns = new Map()
 
-/** Log + status for executor failures (not user stop). */
-function failRun(accountId, state, action, details) {
+/**
+ * Log + status for executor failures (not user stop).
+ * @param {{ err?: unknown; runId?: string | null; diagnosticAction?: string; skipStructured?: boolean }} [opts]
+ */
+function failRun(accountId, state, action, details, opts = {}) {
   if (state.abortedByUser) return
   state.lifecycle = 'failed'
-  logStep(accountId, action, String(details ?? '').slice(0, 2000))
+  logStepChunked(accountId, action, String(details ?? ''))
+  if (opts.err != null && opts.skipStructured !== true) {
+    logStructuredExecutorError(accountId, opts.diagnosticAction ?? 'EXECUTOR_ERROR', opts.err, {
+      runId: opts.runId ?? state.runId,
+      scope: String(action ?? ''),
+    })
+  }
   try {
     updateStatus(accountId, 'Error')
-  } catch {
-    /* account removed */
+  } catch (statusErr) {
+    logStepChunked(
+      accountId,
+      'UPDATE_STATUS_FAILED',
+      `${errorMessage(statusErr)}\n${errorStack(statusErr)}\n${serializeErrorJson(statusErr)}`,
+    )
   }
 }
 
@@ -138,7 +159,7 @@ function classifyProxyConnectivityFailure(msg, phase = '') {
   if (lower.includes('proxy')) {
     return 'proxy'
   }
-  return 'unknown'
+  return 'unclassified'
 }
 
 const DEFAULT_TEST_PAGE_URL = 'https://www.tiktok.com/'
@@ -150,7 +171,10 @@ export function getDefaultSocialTestUrl() {
   const u = String(raw).trim()
   try {
     if (new URL(u).hostname === 'example.com') return fallback
-  } catch {
+  } catch (urlErr) {
+    console.error('[getDefaultSocialTestUrl] invalid URL, using fallback', u, errorMessage(urlErr))
+    console.error(errorStack(urlErr))
+    console.error(serializeErrorJson(urlErr))
     return fallback
   }
   return u
@@ -285,8 +309,11 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     let pageUrl
     try {
       pageUrl = new URL(runConfig.startUrl)
-    } catch {
-      throw new Error(`Invalid target URL: ${runConfig.startUrl}`)
+    } catch (urlErr) {
+      console.error('[runPlaywrightTestRun] invalid start URL', runConfig.startUrl, errorMessage(urlErr))
+      console.error(errorStack(urlErr))
+      console.error(serializeErrorJson(urlErr))
+      throw new Error(`Invalid target URL: ${runConfig.startUrl} (${errorMessage(urlErr)})`)
     }
 
     /**
@@ -368,7 +395,10 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     const rawCookies = String(runConfig.cookies ?? '').trim()
     const parsed = parseCookiesForUrlStrict(rawCookies, pageUrl)
     if (parsed.invalid) {
-      failRun(accountId, state, 'cookies invalid', parsed.invalid)
+      failRun(accountId, state, 'cookies invalid', parsed.invalid, {
+        err: new Error(String(parsed.invalid)),
+        runId,
+      })
       return
     }
 
@@ -434,16 +464,41 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
             logStep(accountId, action, d ?? '')
           },
         },
-        { accountId, logStep },
+        { accountId, logStep, runId },
       ))
       logStep(accountId, 'PLAYWRIGHT_LAUNCHED', 'launchBrowserSession finished')
     } catch (err) {
+      console.error('[launchBrowserSession caller]', errorMessage(err))
+      console.error(errorStack(err))
+      console.error(serializeErrorJson(err))
+      logStructuredExecutorError(accountId, 'PLAYWRIGHT_ERROR', err, {
+        runId,
+        scope: 'launchBrowserSession',
+      })
+      const engineNorm = normalizeBrowserEngine(runConfig.browserEngine)
+      if (engineNorm === 'fox') {
+        /** @type {{ foxStderr?: string; foxStdout?: string }} */
+        const foxErr = err
+        const stderr = foxErr?.foxStderr != null ? String(foxErr.foxStderr) : ''
+        const stdout = foxErr?.foxStdout != null ? String(foxErr.foxStdout) : ''
+        logStepChunked(
+          accountId,
+          'FOX_PYTHON_ERROR',
+          stderr || `stderr empty; stdout=\n${stdout}\nserialized=\n${serializeErrorJson(err)}`,
+        )
+        logStepChunked(
+          accountId,
+          'PYTHON_TRACEBACK',
+          stderr || `no python stderr captured; ${serializeErrorJson(err)}`,
+        )
+        logStructuredExecutorError(accountId, 'FOX_RUNNER_ERROR', err, { runId, scope: 'fox_launch' })
+      }
       const msg = err instanceof Error ? err.message : String(err)
       if (parsed.cookies.length > 0 || rawCookies) {
-        failRun(accountId, state, 'cookies invalid', msg)
+        failRun(accountId, state, 'cookies invalid', msg, { err, runId, skipStructured: true })
       } else {
         const { action, details } = classifyError(err, { phase: 'launch' })
-        failRun(accountId, state, action, details)
+        failRun(accountId, state, action, details, { err, runId, skipStructured: true })
       }
       return
     }
@@ -491,6 +546,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
             state,
             'proxy authentication rejected',
             'HTTP 407 from proxy on HTTPS request — Chromium did not get a valid authenticated tunnel. Fix credentials/session (SOAX sub-user, whitelist IP) or proxy product type; not a page.goto URL bug.',
+            { err: new Error('HTTP 407 from proxy on ipify'), runId },
           )
           return
         }
@@ -519,6 +575,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
             state,
             'proxy authentication rejected',
             'HTTP 407 from proxy on HTTPS request (httpbin) — check credentials or whitelist.',
+            { err: new Error('HTTP 407 from proxy on httpbin'), runId },
           )
           return
         }
@@ -542,13 +599,17 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           state,
           action === 'page load timeout' ? 'proxy connectivity failed (ipify/httpbin)' : action,
           `${details} — if credentials/host/port are correct, the proxy is likely unreachable, wrong scheme (try PLAYWRIGHT_PROXY_SCHEME=socks5), or blocked.`,
+          { err, runId },
         )
         return
       } finally {
         try {
           await diagPage?.close()
-        } catch {
-          /* ignore */
+        } catch (closeErr) {
+          logStructuredExecutorError(accountId, 'PLAYWRIGHT_ERROR', closeErr, {
+            runId,
+            scope: 'diagPage.close',
+          })
         }
       }
     }
@@ -706,8 +767,11 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
                 )
                 try {
                   updateStatus(accountId, 'challenge_detected')
-                } catch {
-                  /* account removed */
+                } catch (statusErr) {
+                  logStructuredExecutorError(accountId, 'EXECUTOR_ERROR', statusErr, {
+                    runId,
+                    scope: 'updateStatus(challenge_detected)',
+                  })
                 }
                 state.lifecycle = 'stopped'
                 loopExitReason = 'stopped'
@@ -718,7 +782,11 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
               break
             }
             const msg = err instanceof Error ? err.message : String(err)
-            logStep(accountId, 'TIKTOK_FEED_ERROR', msg.slice(0, 500))
+            logStepChunked(accountId, 'TIKTOK_FEED_ERROR', msg)
+            logStructuredExecutorError(accountId, 'PLAYWRIGHT_ERROR', err, {
+              runId,
+              scope: 'tiktok_feed_iteration',
+            })
           }
         } else if (runConfig.platform === 'TikTok') {
           try {
@@ -839,7 +907,11 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           const { treatAsUserStop } = classifyError(err, { phase: 'goto' })
           if (treatAsUserStop) return
           const msg = err instanceof Error ? err.message : String(err)
-          failRun(accountId, state, 'EXECUTOR_FAILED', msg)
+          logStructuredExecutorError(accountId, 'PLAYWRIGHT_ERROR', err, {
+            runId,
+            scope: 'runViewAndScrollScenario',
+          })
+          failRun(accountId, state, 'EXECUTOR_FAILED', msg, { err, runId, skipStructured: true })
           loopExitReason = 'failed'
           return
         }
@@ -879,13 +951,20 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     logStep(accountId, 'completed', runConfig.startUrl)
     updateStatus(accountId, 'Ready')
   } catch (err) {
+    console.error('[runPlaywrightTestRun]', errorMessage(err))
+    console.error(errorStack(err))
+    console.error(serializeErrorJson(err))
     if (state.abortedByUser) {
       return
     }
+    logStructuredExecutorError(accountId, 'PLAYWRIGHT_ERROR', err, {
+      runId,
+      scope: 'runPlaywrightTestRun',
+    })
     const msg = err instanceof Error ? err.message : String(err)
     const { action, details, treatAsUserStop } = classifyError(err, { phase: 'unknown' })
     if (treatAsUserStop) return
-    failRun(accountId, state, action, details)
+    failRun(accountId, state, action, details, { err, runId, skipStructured: true })
   } finally {
     const run = playwrightRuns.get(accountId)
     if (run) {
@@ -893,13 +972,19 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       run.sleepWake = null
       try {
         await run.context?.close()
-      } catch {
-        /* ignore */
+      } catch (closeErr) {
+        logStructuredExecutorError(accountId, 'PLAYWRIGHT_ERROR', closeErr, {
+          runId: run.runId,
+          scope: 'finally.context.close',
+        })
       }
       try {
         await run.browser?.close()
-      } catch {
-        /* ignore */
+      } catch (closeErr) {
+        logStructuredExecutorError(accountId, 'PLAYWRIGHT_ERROR', closeErr, {
+          runId: run.runId,
+          scope: 'finally.browser.close',
+        })
       }
     }
     playwrightRuns.delete(accountId)
@@ -920,13 +1005,19 @@ export async function abortPlaywrightTestRun(accountId) {
   run.sleepWake?.()
   try {
     await run.context?.close()
-  } catch {
-    /* ignore */
+  } catch (closeErr) {
+    logStructuredExecutorError(accountId, 'PLAYWRIGHT_ERROR', closeErr, {
+      runId: run.runId,
+      scope: 'abort.context.close',
+    })
   }
   try {
     await run.browser?.close()
-  } catch {
-    /* ignore */
+  } catch (closeErr) {
+    logStructuredExecutorError(accountId, 'PLAYWRIGHT_ERROR', closeErr, {
+      runId: run.runId,
+      scope: 'abort.browser.close',
+    })
   }
   logStep(accountId, 'EXECUTOR_STOPPED', `reason=force_abort runId=${run.runId}`)
   return true
