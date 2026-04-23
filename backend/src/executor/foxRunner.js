@@ -30,6 +30,7 @@ function defaultPythonBin() {
  *   onPhase?: (phase: string, detail?: string) => void
  *   foxUsername?: string
  *   foxActions?: unknown
+ *   foxLog?: (action: string, details?: string) => void
  * }} config
  * @returns {Promise<{ browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page; _camoufoxServerPid?: number }>}
  */
@@ -38,11 +39,16 @@ export async function launchFoxBrowserSession(config) {
     typeof config.onPhase === 'function'
       ? /** @type {(p: string, d?: string) => void} */ (config.onPhase)
       : () => {}
+  const foxLog =
+    typeof config.foxLog === 'function'
+      ? /** @type {(a: string, d?: string) => void} */ (config.foxLog)
+      : () => {}
 
   const userName = String(config.foxUsername ?? 'user').trim() || 'user'
   const headless = config.headless !== undefined ? Boolean(config.headless) : true
   const proxy = config.proxy ?? null
 
+  foxLog('FOX_RUNNER_START', `CreateBrowse.py user=${userName} headless=${headless ? 1 : 0} hasProxy=${proxy ? 1 : 0}`)
   phase('fox_createbrowser_start', `CreateBrowse.py user=${userName} headless=${headless ? 1 : 0}`)
 
   const payload = JSON.stringify({
@@ -123,12 +129,14 @@ export async function launchFoxBrowserSession(config) {
   })
 
   const wsEndpoint = String(/** @type {{ wsEndpoint: string }} */ (result).wsEndpoint)
+  foxLog('FOX_WS_ENDPOINT_READY', `${wsEndpoint.slice(0, 72)}${wsEndpoint.length > 72 ? '…' : ''}`)
   phase('fox_ws_ready', wsEndpoint.slice(0, 48) + '…')
 
   const connectTimeoutMs =
     Number(process.env.CAMOUFOX_WS_TIMEOUT_MS) > 0 ? Number(process.env.CAMOUFOX_WS_TIMEOUT_MS) : 90_000
 
   const browser = await firefox.connect(wsEndpoint, { timeout: connectTimeoutMs })
+  foxLog('FOX_CONNECTED', `timeoutMs=${connectTimeoutMs}`)
   phase('fox_server_connected', 'playwright firefox.connect ok')
 
   let context =
@@ -153,11 +161,14 @@ export async function launchFoxBrowserSession(config) {
     }
     if (parsed.cookies.length > 0) {
       await context.addCookies(parsed.cookies)
+      foxLog('FOX_COOKIES_APPLIED', `count=${parsed.cookies.length} url=${pageUrl.origin}`)
       phase('cookies_applied', `${parsed.cookies.length}`)
     } else {
+      foxLog('FOX_COOKIES_APPLIED', 'count=0 (parsed empty)')
       phase('cookies_empty_after_parse', '')
     }
   } else {
+    foxLog('FOX_COOKIES_APPLIED', 'skipped no cookie string')
     phase('cookies_skipped', 'no cookie string')
   }
 

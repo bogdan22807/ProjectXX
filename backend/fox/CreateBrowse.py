@@ -19,9 +19,12 @@ import os
 import re
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
-_WS_LINE_RE = re.compile(r"Websocket endpoint:\s*(ws://[^\s\x1b]+)", re.I)
+# launchServer prints ANSI between label and URL: "endpoint:\x1b[93m ws://..."
+_WS_LINE_RE = re.compile(r"Websocket endpoint:.*?(ws://[^\s\x1b]+)", re.I | re.DOTALL)
 
 _DIR = Path(__file__).resolve().parent
 _BRIDGE_SCRIPT = _DIR / "camoufox_bridge.py"
@@ -48,7 +51,7 @@ def _emit_ws_bridge_from_data(data: dict) -> None:
     from camoufox_bridge import build_launch_config_b64
 
     config_b64 = build_launch_config_b64(
-        {"headless": headless, "humanize": 0.4, "geoip": True, "os": "windows", "proxy": proxy}
+        {"headless": headless, "humanize": 0.4, "geoip": False, "os": "windows", "proxy": proxy}
     )
 
     paths = _get_launch_paths()
@@ -72,23 +75,27 @@ def _emit_ws_bridge_from_data(data: dict) -> None:
     ws_endpoint = None
     assert proc.stdout
 
-    def _drain_stdout():
-        nonlocal buf, ws_endpoint
-        while True:
-            chunk = proc.stdout.read(256)
-            if not chunk:
-                break
-            buf += chunk
-            m = _WS_LINE_RE.search(buf)
-            if m:
-                ws_endpoint = m.group(1).strip()
-                break
+    def _reader():
+        nonlocal buf
+        try:
+            for line in iter(proc.stdout.readline, ""):
+                buf += line
+        except Exception:
+            pass
 
-    import threading
-
-    t = threading.Thread(target=_drain_stdout, daemon=True)
-    t.start()
-    t.join(timeout=120.0)
+    wait_s = float(os.environ.get("FOX_BRIDGE_SERVER_WAIT_S", "600"))
+    th = threading.Thread(target=_reader, daemon=True)
+    th.start()
+    deadline = time.monotonic() + wait_s
+    while time.monotonic() < deadline:
+        m = _WS_LINE_RE.search(buf)
+        if m:
+            ws_endpoint = m.group(1).strip()
+            break
+        if proc.poll() is not None:
+            break
+        time.sleep(0.1)
+    th.join(timeout=0.5)
 
     if not ws_endpoint:
         try:
@@ -151,7 +158,7 @@ async def CreateBrowser(UserName: str, actions=None):
     options = {
         "headless": headless,
         "humanize": 0.4,
-        "geoip": True,
+        "geoip": False,
         "os": "windows",
         "enable_cache": True,
         "block_webrtc": True,

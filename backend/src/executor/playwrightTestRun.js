@@ -421,6 +421,10 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       cookies_skipped: 'COOKIES_SKIPPED',
       first_page_created: 'FIRST_PAGE_READY',
     }
+    const isFoxEngine = String(runConfig.browserEngine ?? 'chromium').toLowerCase() === 'fox'
+    const foxLog = (action, details = '') => {
+      if (isFoxEngine) logStep(accountId, action, details)
+    }
     try {
       ;({ browser, context, page } = await launchBrowserSession(
         runConfig.browserEngine,
@@ -435,6 +439,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           },
           foxUsername: String(ctx.account.login ?? ctx.account.name ?? accountId).trim() || accountId,
           foxActions: { mode: 'executorNode', accountId, runId },
+          foxLog,
         },
         { accountId, logStep },
       ))
@@ -483,6 +488,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         const ipStatus = ipResp?.status() ?? null
         if (ipStatus === 407) {
           const errType = 'invalid_auth'
+          foxLog('FOX_PROXY_CONNECTIVITY_FAILED', `phase=ipify type=${errType} HTTP 407`)
           logStep(
             accountId,
             'PROXY_CONNECTIVITY_FAILED',
@@ -511,6 +517,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         const hbStatus = hbResp?.status() ?? null
         if (hbStatus === 407) {
           const errType = 'invalid_auth'
+          foxLog('FOX_PROXY_CONNECTIVITY_FAILED', `phase=httpbin type=${errType} HTTP 407`)
           logStep(
             accountId,
             'PROXY_CONNECTIVITY_FAILED',
@@ -532,10 +539,12 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           `url=${DEBUG_PROXY_IP_URL} HTTP ${hbStatus ?? '?'} body=${hbSnippet || '(empty)'}`,
         )
         logStep(accountId, 'PROXY_CONNECTIVITY_OK', 'ipify_then_httpbin')
+        foxLog('FOX_PROXY_CONNECTIVITY_OK', 'ipify_then_httpbin')
       } catch (err) {
         if (state.abortedByUser) return
         const msg = err instanceof Error ? err.message : String(err)
         const errType = classifyProxyConnectivityFailure(msg, 'goto')
+        foxLog('FOX_PROXY_CONNECTIVITY_FAILED', `phase=ipify_or_httpbin type=${errType} ${msg}`)
         logStep(accountId, 'PROXY_CONNECTIVITY_FAILED', `phase=ipify_or_httpbin type=${errType} ${msg}`)
         const { action, details, treatAsUserStop } = classifyError(err, { phase: 'goto' })
         if (treatAsUserStop) return
@@ -572,8 +581,11 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         const ti = (await page.title().catch(() => '')) ?? ''
         logStep(accountId, 'CURRENT_URL', u)
         logStep(accountId, 'PAGE_TITLE', ti || '(empty)')
+        foxLog('FOX_CURRENT_URL', u)
+        foxLog('FOX_PAGE_TITLE', ti || '(empty)')
         const auth0 = inferTikTokAuthState('TikTok', u, ti)
         logStep(accountId, 'AUTH_STATE', auth0)
+        foxLog('FOX_AUTH_STATE', auth0)
         if (auth0 === 'redirected_to_login') {
           logStep(
             accountId,

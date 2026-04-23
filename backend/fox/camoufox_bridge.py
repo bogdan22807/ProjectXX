@@ -42,10 +42,11 @@ def build_launch_config_b64(inp: dict) -> str:
     if proxy is not None and isinstance(proxy, dict) and not proxy.get("server"):
         proxy = None
     humanize = inp.get("humanize", 0.4)
-    geoip = inp.get("geoip", True)
+    # Default False: geoip=True requires `pip install camoufox[geoip]` (MaxMind DB).
+    geoip = inp.get("geoip", False)
     os_name = inp.get("os", "windows")
 
-    opts = launch_options(
+    launch_kw = dict(
         headless=headless,
         humanize=humanize,
         geoip=geoip,
@@ -53,8 +54,13 @@ def build_launch_config_b64(inp: dict) -> str:
         enable_cache=True,
         block_webrtc=True,
         i_know_what_im_doing=True,
-        proxy=proxy,
     )
+    if proxy is not None:
+        launch_kw["proxy"] = proxy
+    opts = launch_options(**launch_kw)
+    # launchServer rejects JSON null for proxy — omit key when unset
+    if opts.get("proxy") is None:
+        opts.pop("proxy", None)
     data = __import__("orjson").dumps(to_camel_case_dict(opts))
     return base64.b64encode(data).decode()
 
