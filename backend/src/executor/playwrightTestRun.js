@@ -332,6 +332,8 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       options.safeTikTokFeedMode !== false &&
       String(process.env.TIKTOK_LEGACY_HUMAN_FEED ?? '').trim() !== '1'
 
+    const browserEngineNorm = normalizeBrowserEngine(runConfig.browserEngine)
+
     updateStatus(accountId, 'Running')
     logStep(
       accountId,
@@ -542,7 +544,11 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
     if (state.cancelled) return
 
-    const engineForProxyCheck = normalizeBrowserEngine(runConfig.browserEngine)
+    if (useSafeTikTokFeedMode && browserEngineNorm === 'fox') {
+      logStep(accountId, 'SAFE_TIKTOK_FEED_MODE_BROWSER', 'fox')
+    }
+
+    const engineForProxyCheck = browserEngineNorm
     if (launchProxy && engineForProxyCheck !== 'fox') {
       const ipifyMs = Math.min(
         30_000,
@@ -636,31 +642,52 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       }
     }
 
-    /** TikTok FYP: single navigation; loop uses scroll only (no goto/reload). */
+    /** TikTok FYP: single navigation; loop uses scroll only (no goto/reload). Fox: already opened in foxRunner — skip duplicate goto. */
     if (useTikTokFeedLoop) {
       try {
-        const nav = await page.goto(runConfig.startUrl, {
-          waitUntil: gotoWaitUntil(),
-          timeout: gotoTimeoutMs(),
-        })
-        const st = nav?.status() ?? null
-        if (st === 407) {
-          logStep(accountId, 'TIKTOK_OPEN_ERROR', 'HTTP 407')
-        } else if (st != null && st >= 400) {
-          logStep(accountId, 'TIKTOK_OPEN_ERROR', `HTTP ${st}`)
-        }
-        const u = page.url()
-        const ti = (await page.title().catch(() => '')) ?? ''
-        logStep(accountId, 'CURRENT_URL', u)
-        logStep(accountId, 'PAGE_TITLE', ti || '(empty)')
-        const auth0 = inferTikTokAuthState('TikTok', u, ti)
-        logStep(accountId, 'AUTH_STATE', auth0)
-        if (auth0 === 'redirected_to_login') {
+        if (browserEngineNorm === 'fox') {
           logStep(
             accountId,
-            'TIKTOK_AUTH_REDIRECT',
-            'cookies invalid or session expired — login/verify/captcha flow detected',
+            'FOX_TIKTOK_FEED_ENTRY',
+            'skip initial goto — TikTok already opened in fox runner (same page for SAFE_TIKTOK_FEED_MODE)',
           )
+          const u = page.url()
+          const ti = (await page.title().catch(() => '')) ?? ''
+          logStep(accountId, 'CURRENT_URL', u)
+          logStep(accountId, 'PAGE_TITLE', ti || '(empty)')
+          const auth0 = inferTikTokAuthState('TikTok', u, ti)
+          logStep(accountId, 'AUTH_STATE', auth0)
+          if (auth0 === 'redirected_to_login') {
+            logStep(
+              accountId,
+              'TIKTOK_AUTH_REDIRECT',
+              'cookies invalid or session expired — login/verify/captcha flow detected',
+            )
+          }
+        } else {
+          const nav = await page.goto(runConfig.startUrl, {
+            waitUntil: gotoWaitUntil(),
+            timeout: gotoTimeoutMs(),
+          })
+          const st = nav?.status() ?? null
+          if (st === 407) {
+            logStep(accountId, 'TIKTOK_OPEN_ERROR', 'HTTP 407')
+          } else if (st != null && st >= 400) {
+            logStep(accountId, 'TIKTOK_OPEN_ERROR', `HTTP ${st}`)
+          }
+          const u = page.url()
+          const ti = (await page.title().catch(() => '')) ?? ''
+          logStep(accountId, 'CURRENT_URL', u)
+          logStep(accountId, 'PAGE_TITLE', ti || '(empty)')
+          const auth0 = inferTikTokAuthState('TikTok', u, ti)
+          logStep(accountId, 'AUTH_STATE', auth0)
+          if (auth0 === 'redirected_to_login') {
+            logStep(
+              accountId,
+              'TIKTOK_AUTH_REDIRECT',
+              'cookies invalid or session expired — login/verify/captcha flow detected',
+            )
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
