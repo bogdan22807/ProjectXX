@@ -9,13 +9,115 @@ import { firefox } from 'playwright'
 import {
   errorMessage,
   errorStack,
-  errorType,
   formatStructuredErrorDetails,
   serializeErrorJson,
 } from './errorLogFormat.js'
+import { logFoxProxyDiagnostics, normalizePlaywrightProxyForFox } from './foxProxyBridge.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CREATE_BROWSER_SCRIPT = path.join(__dirname, 'CreateBrowse.py')
+
+const IPIFY_URL = 'https://api.ipify.org/?format=json'
+const HTTPBIN_IP_URL = 'https://httpbin.org/ip'
+
+function gotoTimeoutMs() {
+  const n = Number(process.env.PLAYWRIGHT_GOTO_TIMEOUT_MS)
+  return Number.isFinite(n) && n > 0 ? n : 60_000
+}
+
+function gotoWaitUntil() {
+  const w = String(process.env.PLAYWRIGHT_GOTO_WAIT_UNTIL ?? '').trim().toLowerCase()
+  if (w === 'domcontentloaded' || w === 'load' || w === 'networkidle' || w === 'commit') {
+    return /** @type {'commit' | 'domcontentloaded' | 'load' | 'networkidle'} */ (w)
+  }
+  return 'commit'
+}
+
+/**
+ * @param {string} msg
+ * @param {string} [phase]
+ */
+function classifyFoxProxyConnectivityFailure(msg, phase = '') {
+  const lower = msg.toLowerCase()
+  const p = phase.toLowerCase()
+  if (lower.includes('407') || lower.includes('proxy authentication')) {
+    return 'invalid_auth'
+  }
+  if (lower.includes('net::err_invalid_auth_credentials')) {
+    return 'invalid_auth'
+  }
+  if (lower.includes('econnrefused') || lower.includes('enotfound') || lower.includes('eaddrnotavail')) {
+    return 'network'
+  }
+  if (lower.includes('err_proxy') || lower.includes('tunnel') || lower.includes('proxy connection')) {
+    return 'proxy'
+  }
+  if (lower.includes('timeout') || p.includes('timeout')) {
+    return 'timeout'
+  }
+  if (lower.includes('proxy')) {
+    return 'proxy'
+  }
+  return 'unclassified'
+}
+
+/**
+ * @param {import('playwright').BrowserContext} context
+ * @param {string} accountId
+ * @param {(id: string, action: string, details?: string) => void} logStep
+ */
+async function runFoxProxyConnectivityCheck(context, accountId, logStep) {
+  const ipifyMs = Math.min(30_000, Math.max(5_000, Math.floor(gotoTimeoutMs() * 0.5)))
+  let diagPage
+  try {
+    diagPage = await context.newPage()
+    const ipResp = await diagPage.goto(IPIFY_URL, {
+      waitUntil: gotoWaitUntil(),
+      timeout: ipifyMs,
+    })
+    const ipStatus = ipResp?.status() ?? null
+    if (ipStatus === 407) {
+      logStep(accountId, 'FOX_PROXY_CONNECTIVITY_FAILED', `phase=ipify type=invalid_auth HTTP 407`)
+      throw new Error('HTTP 407 from proxy on ipify')
+    }
+    const ipText = (await diagPage.textContent('body').catch(() => '')) ?? ''
+    const ipSnippet = String(ipText).replace(/\s+/g, ' ').trim().slice(0, 500)
+    logStep(
+      accountId,
+      'FOX_PROXY_IP_CHECK',
+      `url=${IPIFY_URL} HTTP ${ipStatus ?? '?'} body=${ipSnippet || '(empty)'}`,
+    )
+
+    const hbResp = await diagPage.goto(HTTPBIN_IP_URL, {
+      waitUntil: gotoWaitUntil(),
+      timeout: gotoTimeoutMs(),
+    })
+    const hbStatus = hbResp?.status() ?? null
+    if (hbStatus === 407) {
+      logStep(accountId, 'FOX_PROXY_CONNECTIVITY_FAILED', `phase=httpbin type=invalid_auth HTTP 407`)
+      throw new Error('HTTP 407 from proxy on httpbin')
+    }
+    const hbBody = (await diagPage.textContent('body').catch(() => null)) ?? ''
+    const hbSnippet = String(hbBody).replace(/\s+/g, ' ').trim().slice(0, 2000)
+    logStep(
+      accountId,
+      'FOX_PROXY_IP_CHECK',
+      `url=${HTTPBIN_IP_URL} HTTP ${hbStatus ?? '?'} body=${hbSnippet || '(empty)'}`,
+    )
+    logStep(accountId, 'FOX_PROXY_CONNECTIVITY_OK', 'ipify_then_httpbin')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    const errType = classifyFoxProxyConnectivityFailure(msg, 'goto')
+    logStep(accountId, 'FOX_PROXY_CONNECTIVITY_FAILED', `phase=ipify_or_httpbin type=${errType} ${msg}`)
+    throw err
+  } finally {
+    try {
+      await diagPage?.close()
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 /**
  * @param {import('playwright').Browser} browser
@@ -69,7 +171,13 @@ function extractLastJsonLine(buf) {
  *   userAgent?: string
  *   onPhase?: (phase: string, detail?: string) => void
  * }} config
- * @param {{ accountId?: string | null; runId?: string | null }} [ctx]
+ * @param {{
+ *   accountId?: string | null
+ *   runId?: string | null
+ *   logStep?: (accountId: string, action: string, details?: string) => void
+ *   proxySource?: 'database' | 'env' | 'none'
+ *   proxyRow?: Record<string, unknown> | null
+ * }} [ctx]
  * @returns {Promise<{ browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page }>}
  */
 export async function launchFoxBrowserSession(config, ctx = {}) {
@@ -80,6 +188,9 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
 
   const accountId = ctx.accountId ?? null
   const runId = ctx.runId ?? null
+  const logStep = ctx.logStep
+  const proxySource = ctx.proxySource ?? 'none'
+  const proxyRow = ctx.proxyRow ?? null
 
   const logFox = (line) => {
     console.error(`[foxRunner] ${line}`)
@@ -108,10 +219,24 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
       }
     }
 
+    const rawProxy = config.proxy ?? null
+    const { normalized: foxProxy, note: proxyNormalizeNote } = normalizePlaywrightProxyForFox(rawProxy)
+
+    if (accountId && typeof logStep === 'function') {
+      logFoxProxyDiagnostics(accountId, logStep, {
+        proxySource,
+        proxyRow,
+        launchProxy: foxProxy,
+      })
+      if (proxyNormalizeNote) {
+        logStep(accountId, 'FOX_PROXY_DETAIL_VERBOSE', `normalize_note=${proxyNormalizeNote}`)
+      }
+    }
+
     const bridgePayload = {
       username,
       headless,
-      proxy: config.proxy ?? null,
+      proxy: foxProxy,
       userAgent: config.userAgent && String(config.userAgent).trim() ? String(config.userAgent).trim() : null,
       actions,
     }
@@ -214,6 +339,10 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
     const page = pages[0] ?? (await context.newPage())
 
     phase('fox_ws_connected', `pid=${serverPid ?? 'unknown'}`)
+
+    if (foxProxy?.server && accountId && typeof logStep === 'function') {
+      await runFoxProxyConnectivityCheck(context, accountId, logStep)
+    }
 
     return { browser, context, page }
   } catch (err) {

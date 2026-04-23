@@ -464,7 +464,13 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
             logStep(accountId, action, d ?? '')
           },
         },
-        { accountId, logStep, runId },
+        {
+          accountId,
+          logStep,
+          runId,
+          proxySource: sourceLabel,
+          proxyRow: ctx.proxy,
+        },
       ))
       logStep(accountId, 'PLAYWRIGHT_LAUNCHED', 'launchBrowserSession finished')
     } catch (err) {
@@ -521,7 +527,8 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
     if (state.cancelled) return
 
-    if (launchProxy) {
+    const engineForProxyCheck = normalizeBrowserEngine(runConfig.browserEngine)
+    if (launchProxy && engineForProxyCheck !== 'fox') {
       const ipifyMs = Math.min(
         30_000,
         Math.max(5_000, Math.floor(gotoTimeoutMs() * 0.5)),
