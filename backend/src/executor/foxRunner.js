@@ -58,7 +58,6 @@ export async function launchFoxBrowserSession(config) {
   const child = spawn(pyBin, [script, '--bridge-node'], {
     env: {
       ...process.env,
-      FOX_BRIDGE_STDOUT: '1',
       PYTHONUTF8: '1',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
