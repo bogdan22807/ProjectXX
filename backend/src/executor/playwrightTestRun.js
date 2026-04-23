@@ -433,6 +433,8 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
             const action = sessionPhaseToAction[p] ?? 'BROWSER_SESSION_PHASE'
             logStep(accountId, action, d ?? '')
           },
+          foxUsername: String(ctx.account.login ?? ctx.account.name ?? accountId).trim() || accountId,
+          foxActions: { mode: 'executorNode', accountId, runId },
         },
         { accountId, logStep },
       ))

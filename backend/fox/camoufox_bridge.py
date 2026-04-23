@@ -32,12 +32,11 @@ def cmd_paths() -> None:
     print(json.dumps({"nodejs": nodejs, "launchScript": launch, "packageCwd": pkg}), flush=True)
 
 
-def cmd_config() -> None:
+def build_launch_config_b64(inp: dict) -> str:
+    """Same payload as camoufox.server stdin for launchServer.js (reused by CreateBrowse)."""
     from camoufox.server import to_camel_case_dict
     from camoufox.utils import launch_options
 
-    raw = sys.stdin.read() or "{}"
-    inp = json.loads(raw)
     headless = bool(inp.get("headless", True))
     proxy = inp.get("proxy")
     if proxy is not None and isinstance(proxy, dict) and not proxy.get("server"):
@@ -57,7 +56,13 @@ def cmd_config() -> None:
         proxy=proxy,
     )
     data = __import__("orjson").dumps(to_camel_case_dict(opts))
-    sys.stdout.write(base64.b64encode(data).decode())
+    return base64.b64encode(data).decode()
+
+
+def cmd_config() -> None:
+    raw = sys.stdin.read() or "{}"
+    inp = json.loads(raw)
+    sys.stdout.write(build_launch_config_b64(inp))
     sys.stdout.flush()
 
 

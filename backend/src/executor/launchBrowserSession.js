@@ -15,7 +15,7 @@ import { launchFoxBrowserSession } from './foxRunner.js'
 export async function launchBrowserSession(engine, sessionConfig, ctx) {
   const e = normalizeBrowserEngine(engine)
   if (e === 'fox') {
-    ctx.logStep(ctx.accountId, 'FOX_LAUNCH_ROUTED', 'camoufox server + playwright firefox.connect')
+    ctx.logStep(ctx.accountId, 'FOX_LAUNCH_ROUTED', 'CreateBrowse.py bridge → firefox.connect')
     return launchFoxBrowserSession(sessionConfig)
   }
   return createBrowserSession(sessionConfig)
