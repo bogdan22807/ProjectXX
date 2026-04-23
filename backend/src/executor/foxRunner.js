@@ -1,11 +1,11 @@
 /**
- * Fox / Camoufox path — separate core from Chromium.
- * Spawns Python `CreateBrowse.py`; parent attaches via Playwright when wired.
+ * Fox / Camoufox path — Python bridge launches Camoufox WS server; Node connects via Playwright firefox.connect.
  */
 
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { firefox } from 'playwright'
 import {
   errorMessage,
   errorStack,
@@ -18,6 +18,49 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CREATE_BROWSER_SCRIPT = path.join(__dirname, 'CreateBrowse.py')
 
 /**
+ * @param {import('playwright').Browser} browser
+ * @param {number | null} serverPid
+ */
+function wrapBrowserCloseForFoxServer(browser, serverPid) {
+  if (serverPid == null || serverPid <= 0) return
+  const orig = browser.close.bind(browser)
+  browser.close = async (...args) => {
+    try {
+      await orig(...args)
+    } finally {
+      try {
+        process.kill(serverPid, 'SIGTERM')
+      } catch {
+        /* process may already exit */
+      }
+    }
+  }
+}
+
+/**
+ * Last complete JSON object on a line in buffer (for stdout parsing).
+ * @param {string} buf
+ * @returns {{ obj: Record<string, unknown> | null; rest: string }}
+ */
+function extractLastJsonLine(buf) {
+  const lines = buf.split('\n')
+  let rest = ''
+  /** @type {Record<string, unknown> | null} */
+  let last = null
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i].trim()
+    if (!line) continue
+    try {
+      last = /** @type {Record<string, unknown>} */ (JSON.parse(line))
+      rest = lines.slice(i + 1).join('\n')
+    } catch {
+      /* not JSON — keep scanning */
+    }
+  }
+  return { obj: last, rest }
+}
+
+/**
  * @param {{
  *   headless?: boolean
  *   proxy?: import('playwright').BrowserContextOptions['proxy'] | null
@@ -25,14 +68,14 @@ const CREATE_BROWSER_SCRIPT = path.join(__dirname, 'CreateBrowse.py')
  *   cookieUrl?: string
  *   userAgent?: string
  *   onPhase?: (phase: string, detail?: string) => void
- * }} _config
+ * }} config
  * @param {{ accountId?: string | null; runId?: string | null }} [ctx]
  * @returns {Promise<{ browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page }>}
  */
-export async function launchFoxBrowserSession(_config, ctx = {}) {
+export async function launchFoxBrowserSession(config, ctx = {}) {
   const phase =
-    typeof _config?.onPhase === 'function'
-      ? /** @type {(p: string, d?: string) => void} */ (_config.onPhase)
+    typeof config?.onPhase === 'function'
+      ? /** @type {(p: string, d?: string) => void} */ (config.onPhase)
       : () => {}
 
   const accountId = ctx.accountId ?? null
@@ -47,26 +90,58 @@ export async function launchFoxBrowserSession(_config, ctx = {}) {
 
     const pyBin = String(process.env.FOX_PYTHON ?? process.env.PYTHON ?? 'python3').trim() || 'python3'
 
+    const username =
+      String(process.env.FOX_USERNAME ?? ctx.accountId ?? 'default').trim() || 'default'
+    const headless =
+      config.headless !== undefined
+        ? Boolean(config.headless)
+        : String(process.env.FOX_HEADLESS ?? '1').trim() !== '0'
+
+    const actionsRaw = String(process.env.FOX_ACTIONS_JSON ?? '').trim()
+    /** @type {unknown} */
+    let actions = null
+    if (actionsRaw) {
+      try {
+        actions = JSON.parse(actionsRaw)
+      } catch (e) {
+        throw new Error(`FOX_ACTIONS_JSON is not valid JSON: ${errorMessage(e)}`)
+      }
+    }
+
+    const bridgePayload = {
+      username,
+      headless,
+      proxy: config.proxy ?? null,
+      userAgent: config.userAgent && String(config.userAgent).trim() ? String(config.userAgent).trim() : null,
+      actions,
+    }
+
     const child = spawn(pyBin, [CREATE_BROWSER_SCRIPT], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: {
+        ...process.env,
+        FOX_BRIDGE_JSON: JSON.stringify(bridgePayload),
+      },
     })
+
+    const payloadLine = `${JSON.stringify(bridgePayload)}\n`
+    child.stdin?.write(payloadLine)
+    child.stdin?.end()
 
     let stdoutBuf = ''
     let stderrBuf = ''
 
-    child.stdout?.on('data', (chunk) => {
-      const s = chunk.toString()
-      stdoutBuf += s
-      logFox(`PYTHON_STDOUT_CHUNK ${s}`)
-    })
-    child.stderr?.on('data', (chunk) => {
-      const s = chunk.toString()
-      stderrBuf += s
-      logFox(`PYTHON_STDERR_CHUNK ${s}`)
-    })
-
     const exitCode = await new Promise((resolve, reject) => {
+      child.stdout?.on('data', (chunk) => {
+        const s = chunk.toString()
+        stdoutBuf += s
+        logFox(`PYTHON_STDOUT_CHUNK ${s}`)
+      })
+      child.stderr?.on('data', (chunk) => {
+        const s = chunk.toString()
+        stderrBuf += s
+        logFox(`PYTHON_STDERR_CHUNK ${s}`)
+      })
       child.on('error', reject)
       child.on('close', (code) => resolve(code ?? 0))
     })
@@ -74,13 +149,19 @@ export async function launchFoxBrowserSession(_config, ctx = {}) {
     logFox(`PYTHON_STDOUT_FULL\n${stdoutBuf || '(empty)'}`)
     logFox(`PYTHON_STDERR_FULL\n${stderrBuf || '(empty)'}`)
 
-    if (exitCode !== 0) {
+    const { obj: parsed } = extractLastJsonLine(stdoutBuf)
+
+    if (exitCode !== 0 || !parsed || typeof parsed.error === 'string') {
       const synthetic = new Error(
         `Fox Python exited with code ${exitCode}. See FOX_PYTHON_ERROR / PYTHON_TRACEBACK logs.`,
       )
       synthetic.name = 'FoxPythonExitError'
+      const errMsg = parsed && typeof parsed.error === 'string' ? parsed.error : ''
+      const errTrace = parsed && typeof parsed.trace === 'string' ? parsed.trace : ''
       const details = [
         `FOX_PYTHON_ERROR exitCode=${exitCode}`,
+        errMsg && `PARSED_ERROR=${errMsg}`,
+        errTrace && `PARSED_TRACE=${errTrace}`,
         `STDERR=\n${stderrBuf || '(empty)'}`,
         `STDOUT=\n${stdoutBuf || '(empty)'}`,
         formatStructuredErrorDetails({
@@ -89,7 +170,9 @@ export async function launchFoxBrowserSession(_config, ctx = {}) {
           accountId,
           runId,
         }),
-      ].join('\n')
+      ]
+        .filter(Boolean)
+        .join('\n')
       logFox(details)
       phase('fox_python_failed', `exit=${exitCode}`)
       const err = new Error(details)
@@ -101,12 +184,38 @@ export async function launchFoxBrowserSession(_config, ctx = {}) {
       throw enriched
     }
 
-    phase('fox_python_ok', 'process exited 0 (Playwright attach not implemented)')
-    const notWired = new Error(
-      'FOX_PLAYWRIGHT_ATTACH_NOT_IMPLEMENTED: Python exited successfully but Node has no CDP/socket wiring yet.',
+    const wsEndpoint = parsed.wsEndpoint
+    const camPid = parsed.camoufoxServerPid
+    if (typeof wsEndpoint !== 'string' || !wsEndpoint.startsWith('ws')) {
+      const bad = new Error(
+        `Fox bridge returned invalid payload (missing wsEndpoint): ${JSON.stringify(parsed)}`,
+      )
+      bad.name = 'FoxBridgePayloadError'
+      throw bad
+    }
+
+    phase('fox_python_ok', `wsEndpoint=${wsEndpoint.slice(0, 48)}…`)
+
+    const connectTimeout = Math.min(
+      120_000,
+      Math.max(10_000, Number(process.env.FOX_WS_CONNECT_TIMEOUT_MS) || 60_000),
     )
-    notWired.name = 'FoxPlaywrightAttachError'
-    throw notWired
+    const browser = await firefox.connect(wsEndpoint, { timeout: connectTimeout })
+    const serverPid = typeof camPid === 'number' && Number.isFinite(camPid) ? camPid : null
+    wrapBrowserCloseForFoxServer(browser, serverPid)
+
+    const existing = browser.contexts()[0]
+    const context =
+      existing ??
+      (await browser.newContext({
+        ignoreHTTPSErrors: process.env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS === '1',
+      }))
+    const pages = context.pages()
+    const page = pages[0] ?? (await context.newPage())
+
+    phase('fox_ws_connected', `pid=${serverPid ?? 'unknown'}`)
+
+    return { browser, context, page }
   } catch (err) {
     const msg = errorMessage(err)
     const stack = errorStack(err)

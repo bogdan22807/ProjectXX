@@ -4,3 +4,5 @@ data/app.db-wal
 data/app.db-shm
 node_modules/
 playwright-debug/
+__pycache__/
+*.py[cod]
