@@ -1,39 +1,22 @@
 #!/usr/bin/env python3
 """
-Fox / Camoufox browser bootstrap (subprocess from foxRunner.js).
-On failure: full traceback to stderr and stdout, plus one-line JSON on stdout for the parent.
+Fox / Camoufox bridge entrypoint (spawned from foxRunner.js).
+
+Reads bridge JSON from stdin, or FOX_BRIDGE_JSON / FOX_USERNAME + related env vars.
+On success prints one stdout line: {"wsEndpoint":"ws://...","camoufoxServerPid":<int>}
+On failure prints one stdout line: {"error":"...","trace":"..."} and exits 1.
 """
 
 from __future__ import annotations
 
-import json
 import sys
-import traceback
+from pathlib import Path
 
+_ROOT = Path(__file__).resolve().parent
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
 
-def CreateBrowser() -> None:
-    """
-    Wire Camoufox / Playwright connection here. Until implemented, this raises so
-    Node logs FOX_PYTHON_ERROR with full stderr/stdout.
-    """
-    raise RuntimeError(
-        "FOX_BROWSER_NOT_IMPLEMENTED: Camoufox/Python runner is not fully wired. "
-        "Implement CreateBrowser() or set account browser_engine to chromium."
-    )
-
-
-def main() -> None:
-    try:
-        CreateBrowser()
-        print(json.dumps({"ok": True}), flush=True)
-    except BaseException as exc:  # noqa: BLE001 — intentional: log everything
-        trace = traceback.format_exc()
-        print(trace, file=sys.stderr, flush=True)
-        print(trace, flush=True)
-        payload = {"error": str(exc), "trace": trace}
-        print(json.dumps(payload), flush=True)
-        sys.exit(1)
-
+from fox_core.runner import main_bridge  # noqa: E402
 
 if __name__ == "__main__":
-    main()
+    main_bridge()
