@@ -140,6 +140,11 @@ def _to_camel_case_dict(data: Dict[str, Any]) -> Dict[str, Any]:
     return {_camel_case(k): v for k, v in data.items()}
 
 
+def _strip_none_values(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Camoufox launchServer rejects JSON null for some fields (e.g. proxy must be absent, not null)."""
+    return {k: v for k, v in data.items() if v is not None}
+
+
 def _camoufox_launch_server_js() -> Path:
     import camoufox
 
@@ -172,7 +177,8 @@ def _spawn_ws_server(from_options: Dict[str, Any]) -> Tuple[str, int]:
     if not cwd.is_dir():
         raise FileNotFoundError(f"Playwright driver package dir missing: {cwd}")
 
-    data = orjson.dumps(_to_camel_case_dict(from_options))
+    payload = _strip_none_values(_to_camel_case_dict(from_options))
+    data = orjson.dumps(payload)
     b64 = base64.b64encode(data).decode("ascii")
 
     proc = subprocess.Popen(  # noqa: S603

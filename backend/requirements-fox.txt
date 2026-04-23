@@ -1,4 +1,5 @@
 # Optional: Fox / Camoufox Python bridge (CreateBrowse.py → fox_core).
 # Install in the same environment as FOX_PYTHON / python3, then run `camoufox fetch` if needed.
 camoufox>=0.4.11
-playwright>=1.40.0
+# Must match Node `playwright` in package.json — Camoufox launchServer uses Python driver version.
+playwright==1.58.0
