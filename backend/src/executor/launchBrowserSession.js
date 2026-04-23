@@ -16,6 +16,8 @@ import { errorMessage, errorStack, serializeErrorJson } from './errorLogFormat.j
  *   logStep: (accountId: string, action: string, details?: string) => void
  *   proxySource?: 'database' | 'env' | 'none'
  *   proxyRow?: Record<string, unknown> | null
+ *   platform?: string
+ *   sessionUsername?: string
  * }} ctx
  * @returns {Promise<{ browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page }>}
  */
@@ -30,6 +32,8 @@ export async function launchBrowserSession(engine, sessionConfig, ctx) {
         logStep: ctx.logStep,
         proxySource: ctx.proxySource ?? 'none',
         proxyRow: ctx.proxyRow ?? null,
+        platform: ctx.platform,
+        sessionUsername: ctx.sessionUsername,
       })
     }
     return await createBrowserSession(sessionConfig)

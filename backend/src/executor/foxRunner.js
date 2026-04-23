@@ -13,6 +13,7 @@ import {
   serializeErrorJson,
 } from './errorLogFormat.js'
 import { logFoxProxyDiagnostics, normalizePlaywrightProxyForFox } from './foxProxyBridge.js'
+import { applyFoxSessionCookies, openFoxTikTokAndVerifyAuth } from './foxTikTokSession.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const CREATE_BROWSER_SCRIPT = path.join(__dirname, 'CreateBrowse.py')
@@ -177,6 +178,8 @@ function extractLastJsonLine(buf) {
  *   logStep?: (accountId: string, action: string, details?: string) => void
  *   proxySource?: 'database' | 'env' | 'none'
  *   proxyRow?: Record<string, unknown> | null
+ *   platform?: string
+ *   sessionUsername?: string
  * }} [ctx]
  * @returns {Promise<{ browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page }>}
  */
@@ -191,6 +194,8 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
   const logStep = ctx.logStep
   const proxySource = ctx.proxySource ?? 'none'
   const proxyRow = ctx.proxyRow ?? null
+  const platform = String(ctx.platform ?? '').trim() || 'Other'
+  const sessionUsername = String(ctx.sessionUsername ?? '').trim()
 
   const logFox = (line) => {
     console.error(`[foxRunner] ${line}`)
@@ -201,8 +206,8 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
 
     const pyBin = String(process.env.FOX_PYTHON ?? process.env.PYTHON ?? 'python3').trim() || 'python3'
 
-    const username =
-      String(process.env.FOX_USERNAME ?? ctx.accountId ?? 'default').trim() || 'default'
+    const fromEnv = String(process.env.FOX_USERNAME ?? '').trim()
+    const username = (fromEnv || sessionUsername || String(ctx.accountId ?? '').trim() || 'default')
     const headless =
       config.headless !== undefined
         ? Boolean(config.headless)
@@ -340,8 +345,31 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
 
     phase('fox_ws_connected', `pid=${serverPid ?? 'unknown'}`)
 
+    const cookieUrl = String(config.cookieUrl ?? '').trim() || undefined
+    const startUrl = cookieUrl || 'https://www.tiktok.com/'
+    const step = typeof logStep === 'function' && accountId ? logStep : () => {}
+    const aid = accountId ?? 'unknown'
+
+    await applyFoxSessionCookies(context, {
+      cookies: config.cookies,
+      cookieUrl,
+      startUrl,
+      accountId: aid,
+      logStep: step,
+      onPhase: phase,
+    })
+
     if (foxProxy?.server && accountId && typeof logStep === 'function') {
       await runFoxProxyConnectivityCheck(context, accountId, logStep)
+    }
+
+    if (platform === 'TikTok') {
+      await openFoxTikTokAndVerifyAuth(page, {
+        startUrl,
+        platform,
+        accountId: aid,
+        logStep: step,
+      })
     }
 
     return { browser, context, page }

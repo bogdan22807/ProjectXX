@@ -13,6 +13,7 @@ import { buildExecutorRunConfigFromContext } from './executorRunConfig.js'
 import { parseCookiesForUrlStrict } from './cookieParse.js'
 import { launchBrowserSession } from './launchBrowserSession.js'
 import { normalizeBrowserEngine } from './browserEngine.js'
+import { FoxTikTokSessionInvalidError } from './foxTikTokSession.js'
 import { db, newId } from '../db.js'
 import {
   getExecutionContext,
@@ -450,6 +451,9 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       cookies_empty_after_parse: 'COOKIES_EMPTY_AFTER_PARSE',
       cookies_skipped: 'COOKIES_SKIPPED',
       first_page_created: 'FIRST_PAGE_READY',
+      fox_cookies_applied: 'COOKIES_APPLIED',
+      fox_cookies_empty_after_parse: 'COOKIES_EMPTY_AFTER_PARSE',
+      fox_cookies_skipped: 'COOKIES_SKIPPED',
     }
     try {
       ;({ browser, context, page } = await launchBrowserSession(
@@ -470,6 +474,9 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           runId,
           proxySource: sourceLabel,
           proxyRow: ctx.proxy,
+          platform: runConfig.platform,
+          sessionUsername:
+            String(ctx.account?.name ?? '').trim() || accountId,
         },
       ))
       logStep(accountId, 'PLAYWRIGHT_LAUNCHED', 'launchBrowserSession finished')
@@ -481,6 +488,14 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         runId,
         scope: 'launchBrowserSession',
       })
+      if (err instanceof FoxTikTokSessionInvalidError) {
+        failRun(accountId, state, 'TIKTOK_AUTH_REDIRECT', errorMessage(err), {
+          err,
+          runId,
+          skipStructured: true,
+        })
+        return
+      }
       const engineNorm = normalizeBrowserEngine(runConfig.browserEngine)
       if (engineNorm === 'fox') {
         /** @type {{ foxStderr?: string; foxStdout?: string }} */
