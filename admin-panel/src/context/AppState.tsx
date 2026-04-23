@@ -27,6 +27,7 @@ import {
 import type {
   Account,
   AccountStatus,
+  BrowserEngine,
   BrowserProfile,
   LogEntry,
   Platform,
@@ -52,6 +53,7 @@ interface AppStateValue {
     platform: Platform
     proxyId: string | null
     profileId: string | null
+    browserEngine: BrowserEngine
     status: AccountStatus
   }) => Promise<boolean>
   updateAccount: (id: string, patch: Partial<Omit<Account, 'id'>>) => Promise<void>
@@ -192,6 +194,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       platform: Platform
       proxyId: string | null
       profileId: string | null
+      browserEngine: BrowserEngine
       status: AccountStatus
     }) => {
       try {
@@ -204,6 +207,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             platform: input.platform,
             proxyId: input.proxyId,
             profileId: input.profileId,
+            browserEngine: input.browserEngine,
             status: input.status,
           }),
         )

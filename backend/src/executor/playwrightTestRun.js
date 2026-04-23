@@ -11,7 +11,7 @@ import {
 } from './proxyConfig.js'
 import { buildExecutorRunConfigFromContext } from './executorRunConfig.js'
 import { parseCookiesForUrlStrict } from './cookieParse.js'
-import { createBrowserSession } from './createBrowserSession.js'
+import { launchBrowserSession } from './launchBrowserSession.js'
 import { db, newId } from '../db.js'
 import { getExecutionContext, logStep, updateStatus } from './runner.js'
 import {
@@ -229,7 +229,7 @@ function resolveMaxDurationMs(options) {
 
 /**
  * @param {string} accountId
- * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean; headless?: boolean; maxDurationMs?: number; tiktokHumanFeedLoop?: boolean; safeTikTokFeedMode?: boolean; screenshotDir?: string }} [options]
+ * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean; headless?: boolean; maxDurationMs?: number; tiktokHumanFeedLoop?: boolean; safeTikTokFeedMode?: boolean; screenshotDir?: string; browserEngine?: string }} [options]
  */
 export async function runPlaywrightTestRun(accountId, options = {}) {
   if (playwrightRuns.has(accountId)) {
@@ -271,7 +271,16 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       ...(explicitTargetOverride ? { targetUrl: String(options.targetUrl).trim() } : {}),
       readySelector,
       debugCheckProxy: options.debugCheckProxy === true,
+      ...(options.browserEngine != null && String(options.browserEngine).trim() !== ''
+        ? { browserEngine: String(options.browserEngine).trim() }
+        : {}),
     })
+
+    logStep(
+      accountId,
+      'BROWSER_ENGINE_SELECTED',
+      String(runConfig.browserEngine ?? 'chromium'),
+    )
 
     let pageUrl
     try {
@@ -401,7 +410,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     logStep(
       accountId,
       'PLAYWRIGHT_LAUNCHING',
-      `createBrowserSession headless=${headlessForSession ? 1 : 0} cookies=${parsed.cookies.length} hasProxy=${launchProxy ? 1 : 0}`,
+      `launchBrowserSession engine=${runConfig.browserEngine} headless=${headlessForSession ? 1 : 0} cookies=${parsed.cookies.length} hasProxy=${launchProxy ? 1 : 0}`,
     )
     const sessionPhaseToAction = {
       chromium_launch_start: 'CHROMIUM_LAUNCH_START',
@@ -413,17 +422,21 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       first_page_created: 'FIRST_PAGE_READY',
     }
     try {
-      ;({ browser, context, page } = await createBrowserSession({
-        headless: headlessForSession,
-        proxy: launchProxy,
-        cookies: rawCookies || undefined,
-        cookieUrl: runConfig.startUrl,
-        onPhase: (p, d) => {
-          const action = sessionPhaseToAction[p] ?? 'BROWSER_SESSION_PHASE'
-          logStep(accountId, action, d ?? '')
+      ;({ browser, context, page } = await launchBrowserSession(
+        runConfig.browserEngine,
+        {
+          headless: headlessForSession,
+          proxy: launchProxy,
+          cookies: rawCookies || undefined,
+          cookieUrl: runConfig.startUrl,
+          onPhase: (p, d) => {
+            const action = sessionPhaseToAction[p] ?? 'BROWSER_SESSION_PHASE'
+            logStep(accountId, action, d ?? '')
+          },
         },
-      }))
-      logStep(accountId, 'PLAYWRIGHT_LAUNCHED', 'createBrowserSession finished')
+        { accountId, logStep },
+      ))
+      logStep(accountId, 'PLAYWRIGHT_LAUNCHED', 'launchBrowserSession finished')
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (parsed.cookies.length > 0 || rawCookies) {

@@ -105,6 +105,7 @@ ensureColumn('accounts', 'proxy_id', 'TEXT')
 ensureColumn('accounts', 'browser_profile_id', 'TEXT')
 ensureColumn('accounts', 'status', "TEXT NOT NULL DEFAULT 'New'")
 ensureColumn('accounts', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))")
+ensureColumn('accounts', 'browser_engine', "TEXT NOT NULL DEFAULT 'chromium'")
 
 export function newId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`

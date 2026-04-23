@@ -21,6 +21,9 @@ export type ProfileStatus = 'Ready' | 'In Use' | 'Error'
 
 export type Platform = 'TikTok'
 
+/** Backend automation engine: Playwright Chromium vs future Camoufox ("fox") */
+export type BrowserEngine = 'chromium' | 'fox'
+
 export interface Account {
   id: string
   name: string
@@ -29,6 +32,7 @@ export interface Account {
   platform: Platform
   proxyId: string | null
   profileId: string | null
+  browserEngine: BrowserEngine
   status: AccountStatus
 }
 

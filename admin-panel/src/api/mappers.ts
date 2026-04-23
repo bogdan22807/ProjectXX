@@ -1,4 +1,4 @@
-import type { Account, BrowserProfile, LogEntry, Platform, Proxy } from '../types/domain'
+import type { Account, BrowserEngine, BrowserProfile, LogEntry, Platform, Proxy } from '../types/domain'
 
 export type ApiAccount = {
   id: string
@@ -8,6 +8,7 @@ export type ApiAccount = {
   platform: string
   proxy_id: string | null
   browser_profile_id: string | null
+  browser_engine?: string
   status: Account['status']
   created_at?: string
 }
@@ -48,6 +49,11 @@ function asPlatform(_p: string): Platform {
   return 'TikTok'
 }
 
+function asBrowserEngine(raw: string | undefined): BrowserEngine {
+  const s = String(raw ?? '').trim().toLowerCase()
+  return s === 'fox' ? 'fox' : 'chromium'
+}
+
 export function mapAccount(row: ApiAccount): Account {
   return {
     id: row.id,
@@ -57,6 +63,7 @@ export function mapAccount(row: ApiAccount): Account {
     platform: asPlatform(row.platform),
     proxyId: row.proxy_id ?? null,
     profileId: row.browser_profile_id ?? null,
+    browserEngine: asBrowserEngine(row.browser_engine),
     status: row.status,
   }
 }
@@ -118,6 +125,7 @@ export function accountToApiBody(input: {
   platform: Platform
   proxyId: string | null
   profileId: string | null
+  browserEngine: BrowserEngine
   status: Account['status']
 }) {
   return {
@@ -127,6 +135,7 @@ export function accountToApiBody(input: {
     platform: input.platform,
     proxy_id: input.proxyId,
     browser_profile_id: input.profileId,
+    browser_engine: input.browserEngine,
     status: input.status,
   }
 }
@@ -139,6 +148,7 @@ export function accountPatchToApi(patch: Partial<Omit<Account, 'id'>>) {
   if (patch.platform !== undefined) body.platform = patch.platform
   if (patch.proxyId !== undefined) body.proxy_id = patch.proxyId
   if (patch.profileId !== undefined) body.browser_profile_id = patch.profileId
+  if (patch.browserEngine !== undefined) body.browser_engine = patch.browserEngine
   if (patch.status !== undefined) body.status = patch.status
   return body
 }
