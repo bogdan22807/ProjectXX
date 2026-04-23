@@ -1,3 +1,7 @@
+import { registerProcessGlobalErrorHandlers } from './executor/processGlobalErrorHandlers.js'
+
+registerProcessGlobalErrorHandlers()
+
 import express from 'express'
 import accountsRouter from './routes/accounts.js'
 import proxiesRouter from './routes/proxies.js'

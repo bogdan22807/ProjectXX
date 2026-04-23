@@ -2,6 +2,26 @@ import { formatTime } from '../utils/format'
 import { EmptyState } from '../components/ui/EmptyState'
 import { useAppState } from '../context/AppState'
 
+function parseStructuredErrorDetails(details: string): {
+  errorType?: string
+  errorMessage?: string
+  errorStack?: string
+  context?: string
+} | null {
+  const lines = details.split('\n')
+  const pick = (prefix: string) => {
+    const line = lines.find((l) => l.startsWith(prefix))
+    if (!line) return undefined
+    return line.slice(prefix.length).trim() || undefined
+  }
+  const errorType = pick('ERROR_TYPE=')
+  const errorMessage = pick('ERROR_MESSAGE=')
+  const errorStack = pick('ERROR_STACK=')
+  const context = pick('CONTEXT=')
+  if (!errorType && !errorMessage && !errorStack && !context) return null
+  return { errorType, errorMessage, errorStack, context }
+}
+
 export function LogsPage() {
   const { logs } = useAppState()
 
@@ -24,7 +44,9 @@ export function LogsPage() {
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-800/80">
-            {logs.map((l) => (
+            {logs.map((l) => {
+              const parsed = parseStructuredErrorDetails(l.details)
+              return (
               <tr
                 key={l.id}
                 className="transition-[background-color] duration-200 ease-out hover:bg-zinc-900/40"
@@ -33,9 +55,48 @@ export function LogsPage() {
                   {formatTime(l.time)}
                 </td>
                 <td className="px-4 py-3 font-medium text-zinc-200">{l.action}</td>
-                <td className="px-4 py-3 text-zinc-400">{l.details}</td>
+                <td className="px-4 py-3 text-zinc-400">
+                  {parsed ? (
+                    <div className="space-y-2">
+                      <dl className="grid gap-1 rounded-md border border-red-900/40 bg-red-950/20 p-3 font-mono text-xs text-red-100/90">
+                        {parsed.errorType != null ? (
+                          <div>
+                            <dt className="text-red-400/80">ERROR_TYPE</dt>
+                            <dd className="whitespace-pre-wrap break-all">{parsed.errorType}</dd>
+                          </div>
+                        ) : null}
+                        {parsed.errorMessage != null ? (
+                          <div>
+                            <dt className="text-red-400/80">ERROR_MESSAGE</dt>
+                            <dd className="whitespace-pre-wrap break-all">{parsed.errorMessage}</dd>
+                          </div>
+                        ) : null}
+                        {parsed.errorStack != null ? (
+                          <div>
+                            <dt className="text-red-400/80">ERROR_STACK</dt>
+                            <dd className="max-h-48 overflow-y-auto whitespace-pre-wrap break-all text-zinc-300">
+                              {parsed.errorStack}
+                            </dd>
+                          </div>
+                        ) : null}
+                        {parsed.context != null ? (
+                          <div>
+                            <dt className="text-red-400/80">CONTEXT</dt>
+                            <dd className="whitespace-pre-wrap break-all">{parsed.context}</dd>
+                          </div>
+                        ) : null}
+                      </dl>
+                      <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-all text-xs text-zinc-500">
+                        {l.details}
+                      </pre>
+                    </div>
+                  ) : (
+                    <span className="whitespace-pre-wrap break-all">{l.details}</span>
+                  )}
+                </td>
               </tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
         )}

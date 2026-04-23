@@ -6,6 +6,7 @@
 
 import { chromium } from 'playwright'
 import { parseCookiesForUrlStrict } from './cookieParse.js'
+import { errorMessage, errorStack, serializeErrorJson } from './errorLogFormat.js'
 
 function launchTimeoutMs() {
   const n = Number(process.env.PLAYWRIGHT_LAUNCH_TIMEOUT_MS)
@@ -28,6 +29,21 @@ function launchTimeoutMs() {
  * @returns {Promise<{ browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page }>}
  */
 export async function createBrowserSession(config = {}) {
+  try {
+    return await createBrowserSessionInner(config)
+  } catch (err) {
+    const msg = errorMessage(err)
+    console.error('[createBrowserSession]', msg)
+    console.error(errorStack(err))
+    console.error(serializeErrorJson(err))
+    throw err
+  }
+}
+
+/**
+ * @param {CreateBrowserSessionConfig} config
+ */
+async function createBrowserSessionInner(config = {}) {
   const phase =
     typeof config.onPhase === 'function'
       ? /** @type {(p: string, d?: string) => void} */ (config.onPhase)
@@ -84,8 +100,12 @@ export async function createBrowserSession(config = {}) {
       let pageUrl
       try {
         pageUrl = new URL(base)
-      } catch {
-        throw new Error(`Invalid cookieUrl: ${base}`)
+      } catch (urlErr) {
+        const msg = errorMessage(urlErr)
+        console.error('[createBrowserSession] invalid cookieUrl', base, msg)
+        console.error(errorStack(urlErr))
+        console.error(serializeErrorJson(urlErr))
+        throw new Error(`Invalid cookieUrl: ${base} (${msg})`)
       }
       const parsed = parseCookiesForUrlStrict(rawCookies, pageUrl)
       if (parsed.invalid) {
@@ -105,8 +125,14 @@ export async function createBrowserSession(config = {}) {
     phase('first_page_created', '')
     return { browser, context, page }
   } catch (err) {
-    await context?.close().catch(() => {})
-    await browser?.close().catch(() => {})
+    await context?.close().catch((closeErr) => {
+      console.error('[createBrowserSession] context.close during rollback', errorMessage(closeErr))
+      console.error(errorStack(closeErr))
+    })
+    await browser?.close().catch((closeErr) => {
+      console.error('[createBrowserSession] browser.close during rollback', errorMessage(closeErr))
+      console.error(errorStack(closeErr))
+    })
     throw err
   }
 }
