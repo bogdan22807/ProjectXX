@@ -19,6 +19,8 @@ export function accountFieldsFromBody(body) {
   else if (has(b, 'proxyId')) out.proxy_id = b.proxyId
   if (has(b, 'browser_profile_id')) out.browser_profile_id = b.browser_profile_id
   else if (has(b, 'browserProfileId')) out.browser_profile_id = b.browserProfileId
+  if (has(b, 'browser_engine')) out.browser_engine = b.browser_engine
+  else if (has(b, 'browserEngine')) out.browser_engine = b.browserEngine
   if (has(b, 'status')) out.status = b.status
   return out
 }
@@ -33,6 +35,7 @@ export function accountCreatePayload(body) {
     platform: 'TikTok',
     proxy_id: null,
     browser_profile_id: null,
+    browser_engine: 'chromium',
     status: 'New',
   }
   const merged = { ...defaults, ...raw }

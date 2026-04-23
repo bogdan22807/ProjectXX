@@ -20,7 +20,7 @@ import {
 import { StatusBadge } from '../components/ui/StatusBadge'
 import { useAppState } from '../context/AppState'
 import { formatTime } from '../utils/format'
-import type { Account, AccountStatus } from '../types/domain'
+import type { Account, AccountStatus, BrowserEngine } from '../types/domain'
 
 const accountStatuses: AccountStatus[] = [
   'New',
@@ -37,6 +37,7 @@ type FormState = {
   cookies: string
   proxyId: string
   profileId: string
+  browserEngine: BrowserEngine
   status: AccountStatus
 }
 
@@ -46,6 +47,7 @@ const emptyForm = (): FormState => ({
   cookies: '',
   proxyId: '',
   profileId: '',
+  browserEngine: 'chromium',
   status: 'New',
 })
 
@@ -56,6 +58,7 @@ function formFromAccount(a: Account): FormState {
     cookies: a.cookies,
     proxyId: a.proxyId ?? '',
     profileId: a.profileId ?? '',
+    browserEngine: a.browserEngine,
     status: a.status,
   }
 }
@@ -135,6 +138,19 @@ function AccountFields({
         </select>
       </label>
       <label className="block text-xs font-medium text-zinc-400">
+        Движок браузера (browser_engine)
+        <select
+          className={fieldClass}
+          value={form.browserEngine}
+          onChange={(e) =>
+            setForm((f) => ({ ...f, browserEngine: e.target.value as BrowserEngine }))
+          }
+        >
+          <option value="chromium">Chromium (Playwright)</option>
+          <option value="fox">Fox / Camoufox (скоро)</option>
+        </select>
+      </label>
+      <label className="block text-xs font-medium text-zinc-400">
         Статус
         <select
           className={fieldClass}
@@ -201,6 +217,7 @@ export function DashboardPage() {
       platform: 'TikTok',
       proxyId: editForm.proxyId || null,
       profileId: editForm.profileId || null,
+      browserEngine: editForm.browserEngine,
       status: editForm.status,
     })
     closeEdit()
@@ -219,6 +236,7 @@ export function DashboardPage() {
         platform: 'TikTok',
         proxyId: addForm.proxyId || null,
         profileId: addForm.profileId || null,
+        browserEngine: addForm.browserEngine,
         status: addForm.status,
       })
       if (ok) {
@@ -327,21 +345,23 @@ export function DashboardPage() {
               }
             />
           ) : (
-          <table className={`${tableClass} min-w-[1080px] table-fixed border-collapse`}>
+          <table className={`${tableClass} min-w-[1180px] table-fixed border-collapse`}>
             <colgroup>
+              <col className="w-[14%]" />
               <col className="w-[15%]" />
-              <col className="w-[17%]" />
-              <col className="w-[11%]" />
-              <col className="w-[20%]" />
-              <col className="w-[15%]" />
-              <col className="w-[10%]" />
-              <col className="w-[12%]" />
+              <col className="w-[9%]" />
+              <col className="w-[9%]" />
+              <col className="w-[18%]" />
+              <col className="w-[13%]" />
+              <col className="w-[9%]" />
+              <col className="w-[13%]" />
             </colgroup>
             <thead>
               <tr className={tableHeadRowClass}>
                 <th className={tableCellHeaderClass}>Аккаунт</th>
                 <th className={tableCellHeaderClass}>Логин</th>
                 <th className={tableCellHeaderClass}>Платф.</th>
+                <th className={tableCellHeaderClass}>Движок</th>
                 <th className={tableCellHeaderClass}>Прокси</th>
                 <th className={tableCellHeaderClass}>Профиль</th>
                 <th className={tableCellHeaderClass}>Статус</th>
@@ -368,6 +388,14 @@ export function DashboardPage() {
                   <td className={`${tableCellClass} text-zinc-400`}>
                     <span className="block truncate" title={a.platform}>
                       {a.platform}
+                    </span>
+                  </td>
+                  <td className={`${tableCellClass} text-zinc-400`}>
+                    <span
+                      className="block truncate font-mono text-[12px] uppercase"
+                      title={a.browserEngine}
+                    >
+                      {a.browserEngine}
                     </span>
                   </td>
                   <td className={`${tableCellClass} text-zinc-400`}>

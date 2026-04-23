@@ -6,6 +6,8 @@ export { sleep, randomInt, sleepRandom } from './asyncUtils.js'
 export { smoothScrollPage } from './smoothScrollPage.js'
 export { safeClick } from './safeClick.js'
 export { createBrowserSession } from './createBrowserSession.js'
+export { normalizeBrowserEngine } from './browserEngine.js'
+export { launchBrowserSession } from './launchBrowserSession.js'
 export {
   getDefaultExecutorRunConfig,
   mergeExecutorRunConfig,

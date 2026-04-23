@@ -4,6 +4,7 @@
  */
 
 import { buildPlaywrightProxyConfig } from './proxyConfig.js'
+import { normalizeBrowserEngine } from './browserEngine.js'
 
 const TIKTOK_START = 'https://www.tiktok.com/'
 
@@ -68,6 +69,7 @@ function proxyFromEnv() {
  *   proxySource: 'none' | 'database' | 'env'
  *   platform: string
  *   startUrlSource: 'platform' | 'env' | 'override' | 'default'
+ *   browserEngine: import('./browserEngine.js').BrowserEngine
  * }} ExecutorRunConfig
  */
 
@@ -85,6 +87,7 @@ export function getDefaultExecutorRunConfig() {
     proxySource: 'none',
     platform: 'TikTok',
     startUrlSource: 'default',
+    browserEngine: 'chromium',
   }
 }
 
@@ -105,13 +108,14 @@ export function mergeExecutorRunConfig(base, patch) {
     proxySource: p.proxySource ?? b.proxySource,
     platform: p.platform ?? b.platform,
     startUrlSource: p.startUrlSource ?? b.startUrlSource,
+    browserEngine: p.browserEngine != null ? normalizeBrowserEngine(p.browserEngine) : b.browserEngine,
   }
 }
 
 /**
  * Build config from DB account + linked proxy (proxy slot filled here for future use).
  * @param {{ account: Record<string, unknown>, proxy: Record<string, unknown> | null }} ctx
- * @param {{ targetUrl?: string, readySelector?: string, clickTarget?: string, debugCheckProxy?: boolean }} [routeOptions]
+ * @param {{ targetUrl?: string, readySelector?: string, clickTarget?: string, debugCheckProxy?: boolean, browserEngine?: string }} [routeOptions]
  * @returns {ExecutorRunConfig}
  */
 export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
@@ -174,6 +178,10 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
     String(process.env.PLAYWRIGHT_DEBUG_PROXY_IP_CHECK ?? '').trim() === '1' ||
     true
 
+  const browserEngine = normalizeBrowserEngine(
+    routeOptions.browserEngine ?? ctx.account.browser_engine,
+  )
+
   return {
     startUrl,
     headless: envHeadless(),
@@ -186,5 +194,6 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
     proxySource,
     platform,
     startUrlSource,
+    browserEngine,
   }
 }

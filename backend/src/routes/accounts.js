@@ -18,14 +18,15 @@ router.post('/', (req, res) => {
     platform,
     proxy_id,
     browser_profile_id,
+    browser_engine,
     status,
   } = accountCreatePayload(req.body)
   const id = newId('acc')
   try {
     db.prepare(
-      `INSERT INTO accounts (id, name, login, cookies, platform, proxy_id, browser_profile_id, status)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-    ).run(id, name, login, cookies, platform, proxy_id, browser_profile_id, status)
+      `INSERT INTO accounts (id, name, login, cookies, platform, proxy_id, browser_profile_id, browser_engine, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(id, name, login, cookies, platform, proxy_id, browser_profile_id, browser_engine, status)
   } catch (e) {
     const code = e && typeof e === 'object' && 'code' in e ? String(/** @type {{ code?: string }} */ (e).code) : ''
     const msg = e instanceof Error ? e.message : String(e)
@@ -55,6 +56,7 @@ router.patch('/:id', (req, res) => {
     'platform',
     'proxy_id',
     'browser_profile_id',
+    'browser_engine',
     'status',
   ]
   const normalized = accountPatchPayload(req.body)
