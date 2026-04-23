@@ -2,4 +2,4 @@
 # Install in the same environment as FOX_PYTHON / python3, then run `camoufox fetch` if needed.
 camoufox>=0.4.11
 # Must match Node `playwright` in package.json — Camoufox launchServer uses Python driver version.
-playwright==1.58.0
+playwright==1.58.2
