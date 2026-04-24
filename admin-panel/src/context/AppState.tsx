@@ -77,7 +77,6 @@ interface AppStateValue {
       headless?: boolean
     },
   ) => Promise<void>
-  abortPlaywrightTestRun: (accountId: string) => Promise<void>
   addProxy: (input: {
     provider: string
     host: string
@@ -511,20 +510,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [testRunPending, appendLog, refreshAccountsLogsProxies],
   )
 
-  const abortPlaywrightTestRun = useCallback(
-    async (accountId: string) => {
-      try {
-        await apiPost('/warmup/test-run/abort', { accountId })
-        await appendLog('Playwright test-run abort', accountId)
-        void refreshAccountsLogsProxies()
-      } catch (e) {
-        console.error('abortPlaywrightTestRun failed', e)
-        setLastError(formatApiFailure(e))
-      }
-    },
-    [appendLog, refreshAccountsLogsProxies],
-  )
-
   const startWarmupSelected = useCallback(async () => {
     const targets = accounts.filter((a) => selectedAccountIds.has(a.id) && a.status === 'New')
     if (targets.length === 0) {
@@ -578,7 +563,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       testRunPending,
       deleteSelectedAccounts,
       startPlaywrightTestRun,
-      abortPlaywrightTestRun,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,
@@ -609,7 +593,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       testRunPending,
       deleteSelectedAccounts,
       startPlaywrightTestRun,
-      abortPlaywrightTestRun,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,
