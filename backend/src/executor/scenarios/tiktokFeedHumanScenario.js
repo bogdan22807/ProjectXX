@@ -10,6 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
+import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
 
 function emergencyGotoEnabled() {
   return String(process.env.TIKTOK_EMERGENCY_GOTO ?? '').trim() === '1'
@@ -513,7 +514,17 @@ async function skipLiveFeedCardAggressive(page, log, shouldHalt) {
 
   await page.keyboard.press('PageDown').catch(() => {})
   log('LIVE_SKIP_PAGEDOWN', 'PageDown after LIVE wheels')
-  log('LIVE_SKIPPED', 'LIVE card skip complete — iteration ends')
+
+  await sleepMsHaltable(shouldHalt, randomInt(500, 1200))
+  await haltIfNeeded(shouldHalt)
+
+  log('LIVE_SKIPPED', 'LIVE card skip complete — starting POST_LIVE_HARD_SCROLL')
+  await runPostLiveHardScrollSequence({
+    page,
+    log,
+    shouldHalt,
+    getStableKey: () => getFeedStableKey(page),
+  })
 }
 
 /**

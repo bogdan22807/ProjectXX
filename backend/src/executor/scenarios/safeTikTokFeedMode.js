@@ -3,13 +3,14 @@
  *
  * Rules: single initial `goto` is outside this module (playwrightTestRun). Here: no goto/reload/goBack,
  * no PageUp/ArrowUp/wheel dy<0, no video click, no profile. VIEW_VIDEO (6–14s) → SCROLL_DOWN → rare like (3–5%).
- * LIVE card: double wheel + PageDown + stable-key check + optional FORCE_SCROLL_AFTER_LIVE.
+ * LIVE card: double wheel + PageDown, then POST_LIVE_HARD_SCROLL (stable key after each sub-step).
  * LIVE surface (/live): only navigate to For You tab (clicks); no wheel/keyboard scroll on stream, no VIEW_VIDEO/LIKE.
  * Challenge: log + status `challenge_detected` + throw ExecutorHaltError('challenge') to end run.
  */
 
 import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
+import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
 
 /**
  * @param {import('playwright').Page} page
@@ -184,51 +185,6 @@ async function scrollDownOnce(page, log) {
 }
 
 /**
- * After LIVE_SKIP: force feed to advance past stuck first slot (down only).
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- */
-async function runPostLiveRecovery(page, log, shouldHalt) {
-  const stableKeyBefore = await getStableVideoKey(page)
-  log('POST_LIVE_RECOVERY', `stableKey_before_len=${String(stableKeyBefore).length}`)
-
-  await wheelOnActiveVideo(page, log, 800, 1200, 'post_live_recovery')
-  await sleepMsHaltable(shouldHalt, randomInt(600, 1200))
-  await haltIfNeeded(shouldHalt)
-  let stableKeyAfter = await getStableVideoKey(page)
-  if (stableKeyBefore && stableKeyAfter && stableKeyAfter !== stableKeyBefore) {
-    log('POST_LIVE_RECOVERY_OK', 'key changed after wheel')
-    return
-  }
-
-  log('POST_LIVE_RECOVERY', 'PageDown phase')
-  await page.keyboard.press('PageDown').catch(() => {})
-  await sleepMsHaltable(shouldHalt, randomInt(600, 1200))
-  await haltIfNeeded(shouldHalt)
-  stableKeyAfter = await getStableVideoKey(page)
-  if (stableKeyBefore && stableKeyAfter && stableKeyAfter !== stableKeyBefore) {
-    log('POST_LIVE_RECOVERY_OK', 'key changed after PageDown')
-    return
-  }
-
-  log('POST_LIVE_RECOVERY_FORCE', 'ArrowDown×3')
-  for (let i = 0; i < 3; i++) {
-    await haltIfNeeded(shouldHalt)
-    await page.keyboard.press('ArrowDown')
-    await sleep(100 + randomInt(0, 80))
-  }
-  await sleepMsHaltable(shouldHalt, 600)
-  await haltIfNeeded(shouldHalt)
-  stableKeyAfter = await getStableVideoKey(page)
-  if (stableKeyBefore && stableKeyAfter && stableKeyAfter !== stableKeyBefore) {
-    log('POST_LIVE_RECOVERY_OK', 'key changed after ArrowDown')
-  } else {
-    log('POST_LIVE_RECOVERY_FORCE', 'key still unchanged after recovery steps')
-  }
-}
-
-/**
  * Click "For You" nav to leave LIVE room — no scrolling the stream (no wheel / ArrowDown / PageDown on feed).
  * @param {import('playwright').Page} page
  */
@@ -296,8 +252,13 @@ async function handleLiveFeedCard(page, log, shouldHalt) {
   await sleepMsHaltable(shouldHalt, randomInt(500, 1200))
   await haltIfNeeded(shouldHalt)
 
-  await runPostLiveRecovery(page, log, shouldHalt)
-  log('LIVE_SKIPPED', 'LIVE card handled — POST_LIVE_RECOVERY done')
+  log('LIVE_SKIPPED', 'LIVE card handled — starting POST_LIVE_HARD_SCROLL')
+  await runPostLiveHardScrollSequence({
+    page,
+    log,
+    shouldHalt,
+    getStableKey: () => getStableVideoKey(page),
+  })
 }
 
 /**
