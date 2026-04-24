@@ -29,6 +29,7 @@ const accountStatuses: AccountStatus[] = [
   'Running',
   'Error',
   'challenge_detected',
+  'auth_required',
 ]
 
 type FormState = {
@@ -181,6 +182,8 @@ export function DashboardPage() {
     startAccount,
     stopAccount,
     warmupPending,
+    foxProfileLoginPending,
+    startFoxProfileLogin,
     testRunPending,
     startPlaywrightTestRun,
     abortPlaywrightTestRun,
@@ -330,7 +333,8 @@ export function DashboardPage() {
         <div className={cardSectionHeaderClass}>
           <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Аккаунты</h2>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-            POST /accounts, PATCH /accounts/:id · прогрев: POST /warmup/start|stop · тест: POST /warmup/test-run
+            POST /accounts, PATCH /accounts/:id · прогрев: POST /warmup/start|stop · Fox login:
+            POST /warmup/fox-profile-login · тест: POST /warmup/test-run
           </p>
         </div>
         <div className={tableScrollClass}>
@@ -426,11 +430,15 @@ export function DashboardPage() {
                       {a.status === 'Running' && 'Работает'}
                       {a.status === 'Error' && 'Ошибка'}
                       {a.status === 'challenge_detected' && 'Капча'}
+                      {a.status === 'auth_required' && 'Нужен вход'}
                     </StatusBadge>
                   </td>
                   <td className={`${tableCellClass} text-right`}>
                     <div className="flex flex-wrap items-center justify-end gap-1.5">
-                      {a.status === 'New' || a.status === 'Ready' || a.status === 'challenge_detected' ? (
+                      {a.status === 'New' ||
+                      a.status === 'Ready' ||
+                      a.status === 'challenge_detected' ||
+                      a.status === 'auth_required' ? (
                         <Button
                           className={tableActionButtonClass}
                           variant="primary"
@@ -481,6 +489,21 @@ export function DashboardPage() {
                       >
                         Стоп теста
                       </Button>
+                      {a.browserEngine === 'fox' ? (
+                        <Button
+                          className={tableActionButtonClass}
+                          variant="secondary"
+                          disabled={
+                            foxProfileLoginPending[a.id] === true ||
+                            a.status === 'Running' ||
+                            a.status === 'Starting'
+                          }
+                          title="Camoufox: окно для ручного входа в TikTok (профиль на диске)"
+                          onClick={() => void startFoxProfileLogin(a.id)}
+                        >
+                          {foxProfileLoginPending[a.id] ? 'Fox…' : 'Open Fox for login'}
+                        </Button>
+                      ) : null}
                       <Button
                         className={tableActionButtonClass}
                         onClick={() => openEdit(a)}

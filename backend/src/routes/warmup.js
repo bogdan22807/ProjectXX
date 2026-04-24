@@ -155,4 +155,36 @@ router.post('/stop', async (req, res) => {
   })
 })
 
+/**
+ * Open Camoufox (fox) with persistent user_data_dir for this account + proxy — user logs into TikTok manually.
+ * POST body: { accountId } — requires browser_engine=fox.
+ */
+router.post('/fox-profile-login', (req, res) => {
+  const body = req.body ?? {}
+  const accountId = body.accountId ?? body.account_id
+  if (!accountId || String(accountId).trim() === '') {
+    return sendJsonError(res, 400, 'accountId is required')
+  }
+
+  const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId)
+  if (!account) {
+    return sendJsonError(res, 404, 'Account not found')
+  }
+
+  const engine = String(account.browser_engine ?? 'chromium').trim().toLowerCase()
+  if (engine !== 'fox') {
+    return sendJsonError(res, 400, 'Open Fox for login requires browser_engine=fox on this account')
+  }
+
+  if (isPlaywrightTestRunActive(accountId)) {
+    return sendJsonError(res, 409, 'Playwright run already active for this account')
+  }
+
+  void runPlaywrightTestRun(accountId, { foxProfileLogin: true }).catch((err) => {
+    console.error('[warmup/fox-profile-login → playwright]', err)
+  })
+
+  return sendJsonData(res, 200, { state: 'started', accountId, mode: 'fox_profile_login' })
+})
+
 export default router
