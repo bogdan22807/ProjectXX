@@ -52,6 +52,10 @@ const emptyForm = (): FormState => ({
   status: 'New',
 })
 
+function browserEngineDisplay(e: BrowserEngine): string {
+  return e === 'fox' ? 'Camoufox' : 'Chromium'
+}
+
 function formFromAccount(a: Account): FormState {
   return {
     name: a.name,
@@ -392,10 +396,10 @@ export function DashboardPage() {
                   </td>
                   <td className={`${tableCellClass} text-zinc-400`}>
                     <span
-                      className="block truncate font-mono text-[12px] uppercase"
+                      className="block truncate text-[13px] leading-snug"
                       title={a.browserEngine}
                     >
-                      {a.browserEngine}
+                      {browserEngineDisplay(a.browserEngine)}
                     </span>
                   </td>
                   <td className={`${tableCellClass} text-zinc-400`}>

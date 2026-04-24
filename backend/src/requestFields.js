@@ -35,7 +35,7 @@ export function accountCreatePayload(body) {
     platform: 'TikTok',
     proxy_id: null,
     browser_profile_id: null,
-    browser_engine: 'chromium',
+    browser_engine: 'fox',
     status: 'New',
   }
   const merged = { ...defaults, ...raw }
