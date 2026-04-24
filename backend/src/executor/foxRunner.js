@@ -60,6 +60,40 @@ function extractLastJsonLine(buf) {
   return { obj: last, rest }
 }
 
+const DEFAULT_FOX_OUTER_W = 1366
+const DEFAULT_FOX_OUTER_H = 768
+
+/**
+ * TikTok-friendly layout: outer window 1366×768, inner viewport 1280×720 or 1366×768, DPR 1.
+ * Env: FOX_VIEWPORT_PRESET = `1280x720` | `1366x768` (default 1366x768).
+ * Env: FOX_WINDOW_WIDTH, FOX_WINDOW_HEIGHT (default 1366×768) — passed to Python for Camoufox fingerprint screen/window.
+ * @returns {{ outerW: number; outerH: number; viewportW: number; viewportH: number }}
+ */
+function parseFoxDisplayLayout() {
+  const outerW = Math.min(
+    3840,
+    Math.max(800, Number(process.env.FOX_WINDOW_WIDTH) || DEFAULT_FOX_OUTER_W),
+  )
+  const outerH = Math.min(
+    2160,
+    Math.max(600, Number(process.env.FOX_WINDOW_HEIGHT) || DEFAULT_FOX_OUTER_H),
+  )
+  const preset = String(process.env.FOX_VIEWPORT_PRESET ?? '1366x768')
+    .trim()
+    .toLowerCase()
+    .replace(/×/g, 'x')
+    .replace(/\s+/g, '')
+  let viewportW = outerW
+  let viewportH = outerH
+  if (preset === '1280x720') {
+    viewportW = 1280
+    viewportH = 720
+  }
+  viewportW = Math.min(viewportW, outerW)
+  viewportH = Math.min(viewportH, outerH)
+  return { outerW, outerH, viewportW, viewportH }
+}
+
 /**
  * @param {{
  *   headless?: boolean
@@ -124,11 +158,23 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
 
     const launchProxy = config.proxy ?? null
 
+    const { outerW, outerH, viewportW, viewportH } = parseFoxDisplayLayout()
+    phase(
+      'fox_window_config',
+      `outer=${outerW}x${outerH} (FOX_WINDOW_WIDTH/HEIGHT; Camoufox launch_options window + screen)`,
+    )
+    phase(
+      'fox_viewport_config',
+      `viewport=${viewportW}x${viewportH} deviceScaleFactor=1 (Playwright context; FOX_VIEWPORT_PRESET)`,
+    )
+
     const child = spawn(pyBin, [CREATE_BROWSER_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
         FOX_BRIDGE_JSON: JSON.stringify(bridgePayload),
+        FOX_WINDOW_WIDTH: String(outerW),
+        FOX_WINDOW_HEIGHT: String(outerH),
       },
     })
 
@@ -212,12 +258,22 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
     const serverPid = typeof camPid === 'number' && Number.isFinite(camPid) ? camPid : null
     wrapBrowserCloseForFoxServer(browser, serverPid)
 
-    const existing = browser.contexts()[0]
-    const context =
-      existing ??
-      (await browser.newContext({
-        ignoreHTTPSErrors: process.env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS === '1',
-      }))
+    for (const c of browser.contexts()) {
+      try {
+        await c.close()
+      } catch {
+        /* ignore */
+      }
+    }
+
+    /** @type {import('playwright').BrowserContextOptions} */
+    const foxContextOpts = {
+      ignoreHTTPSErrors: process.env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS === '1',
+      viewport: { width: viewportW, height: viewportH },
+      deviceScaleFactor: 1,
+      screen: { width: outerW, height: outerH },
+    }
+    const context = await browser.newContext(foxContextOpts)
 
     if (launchProxy) {
       phase('fox_proxy_connected', 'proxy active on Camoufox launch')

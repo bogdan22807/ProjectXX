@@ -484,6 +484,8 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       fox_python_ok: 'FOX_PYTHON_OK',
       fox_python_failed: 'FOX_PYTHON_FAILED',
       fox_ws_connected: 'FOX_WS_CONNECTED',
+      fox_window_config: 'FOX_WINDOW_CONFIG',
+      fox_viewport_config: 'FOX_VIEWPORT_CONFIG',
     }
     try {
       ;({ browser, context, page } = await launchBrowserSession(
