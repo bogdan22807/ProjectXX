@@ -186,7 +186,6 @@ export function DashboardPage() {
     startFoxProfileLogin,
     testRunPending,
     startPlaywrightTestRun,
-    abortPlaywrightTestRun,
   } = useAppState()
 
   const recentLogs = logs.slice(0, 8)
@@ -444,9 +443,9 @@ export function DashboardPage() {
                           variant="primary"
                           disabled={warmupPending[a.id] === 'start'}
                           onClick={() => startAccount(a.id)}
-                          title="Запуск в фоне (headless), без отдельного окна браузера"
+                          title="Фоновый запуск (headless)"
                         >
-                          {warmupPending[a.id] === 'start' ? 'Запуск…' : 'Прогрев'}
+                          {warmupPending[a.id] === 'start' ? 'Запуск…' : 'Запуск'}
                         </Button>
                       ) : null}
                       {a.status === 'Running' || a.status === 'Starting' ? (
@@ -455,7 +454,7 @@ export function DashboardPage() {
                           disabled={warmupPending[a.id] === 'stop'}
                           onClick={() => stopAccount(a.id)}
                         >
-                          {warmupPending[a.id] === 'stop' ? 'Остановка…' : 'Стоп прогрева'}
+                          {warmupPending[a.id] === 'stop' ? 'Стоп…' : 'Стоп'}
                         </Button>
                       ) : null}
                       <Button
@@ -472,22 +471,14 @@ export function DashboardPage() {
                         }
                         title={
                           a.status === 'challenge_detected'
-                            ? 'Обнаружена капча — откройте окно браузера и пройдите проверку вручную'
+                            ? 'Капча — откройте окно и пройдите проверку'
                             : a.status === 'Running' || a.status === 'Starting'
-                              ? 'Сначала остановите прогрев — иначе Playwright уже занят'
-                              : 'Видимый браузер (headed) для ручной проверки'
+                              ? 'Сначала нажмите «Стоп»'
+                              : 'Окно браузера (headed)'
                         }
                         onClick={() => void startPlaywrightTestRun(a.id, { headless: false })}
                       >
-                        {testRunPending[a.id] ? 'Тест…' : 'Тест Playwright'}
-                      </Button>
-                      <Button
-                        className={tableActionButtonClass}
-                        variant="ghost"
-                        onClick={() => void abortPlaywrightTestRun(a.id)}
-                        title="POST /warmup/test-run/abort"
-                      >
-                        Стоп теста
+                        {testRunPending[a.id] ? 'Открытие…' : 'Открыть браузер'}
                       </Button>
                       {a.browserEngine === 'fox' ? (
                         <Button
@@ -501,7 +492,7 @@ export function DashboardPage() {
                           title="Camoufox: окно для ручного входа в TikTok (профиль на диске)"
                           onClick={() => void startFoxProfileLogin(a.id)}
                         >
-                          {foxProfileLoginPending[a.id] ? 'Fox…' : 'Open Fox for login'}
+                          {foxProfileLoginPending[a.id] ? 'Fox…' : 'Fox'}
                         </Button>
                       ) : null}
                       <Button
