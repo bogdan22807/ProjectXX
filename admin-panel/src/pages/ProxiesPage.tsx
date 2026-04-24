@@ -170,7 +170,7 @@ export function ProxiesPage() {
                       {p.proxyScheme?.trim() || 'http'}
                     </td>
                     <td className="px-4 py-3">
-                      <ProxyStatusLine proxy={p} />
+                      <ProxyStatusLine proxy={p} showOutboundIp={false} />
                     </td>
                     <td className="px-4 py-3 text-zinc-400">{assignedTo(p.id)}</td>
                   </tr>

@@ -32,15 +32,26 @@ function parseOutboundIp(checkResult: string): string | null {
   return null
 }
 
-export function ProxyStatusLine({ proxy }: { proxy: Proxy }) {
+export function ProxyStatusLine({
+  proxy,
+  showOutboundIp = true,
+}: {
+  proxy: Proxy
+  /** When false, show only the status label (e.g. «Работает»); IP stays in title tooltip. */
+  showOutboundIp?: boolean
+}) {
   const st = proxy.status
   const label = LABELS[st] ?? LABELS.unknown
   const color = COLORS[st] ?? COLORS.unknown
   const ip = st === 'ok' ? parseOutboundIp(proxy.checkResult) : null
-  const text = ip ? `${label} · ${ip}` : label
+  const text = showOutboundIp && ip ? `${label} · ${ip}` : label
+  const title =
+    proxy.checkResult?.trim() ||
+    (ip ? `outbound IP: ${ip}` : undefined) ||
+    undefined
 
   return (
-    <span className="text-sm font-medium" style={{ color }} title={proxy.checkResult || undefined}>
+    <span className="text-sm font-medium" style={{ color }} title={title}>
       {text}
     </span>
   )
