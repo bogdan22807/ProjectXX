@@ -14,6 +14,7 @@ import { errorMessage, errorStack, serializeErrorJson } from './errorLogFormat.j
  *   accountId: string
  *   runId?: string | null
  *   logStep: (accountId: string, action: string, details?: string) => void
+ *   profileLabel?: string | null
  * }} ctx
  * @returns {Promise<{ browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page }>}
  */
@@ -25,6 +26,7 @@ export async function launchBrowserSession(engine, sessionConfig, ctx) {
       return await launchFoxBrowserSession(sessionConfig, {
         accountId: ctx.accountId,
         runId: ctx.runId ?? null,
+        profileLabel: ctx.profileLabel ?? null,
       })
     }
     return await createBrowserSession(sessionConfig)

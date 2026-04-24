@@ -30,6 +30,7 @@ import { runTikTokHumanFeedIteration } from './scenarios/tiktokFeedHumanScenario
 import { runSafeTikTokFeedIteration } from './scenarios/safeTikTokFeedMode.js'
 import { ExecutorHaltError, isExecutorHaltError } from './executorHalt.js'
 import { interruptibleRandomDelay, randomDelay, sleepRandom } from './asyncUtils.js'
+import { isTikTokLogInControlVisible } from './foxTikTokAuth.js'
 
 /**
  * @typedef {'idle' | 'running' | 'stop_requested' | 'stopped' | 'completed' | 'failed' | 'max_duration_reached'} ExecutorLifecycle
@@ -306,6 +307,12 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       String(runConfig.browserEngine ?? 'chromium'),
     )
 
+    const engineIsFox = normalizeBrowserEngine(runConfig.browserEngine) === 'fox'
+    const profileLabel =
+      String(ctx.account.login ?? '').trim() ||
+      String(ctx.account.name ?? '').trim() ||
+      accountId
+
     let pageUrl
     try {
       pageUrl = new URL(runConfig.startUrl)
@@ -395,6 +402,27 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     const rawCookies = String(runConfig.cookies ?? '').trim()
     const parsed = parseCookiesForUrlStrict(rawCookies, pageUrl)
     if (parsed.invalid) {
+      if (engineIsFox && runConfig.platform === 'TikTok') {
+        logStep(accountId, 'FOX_AUTH_CHECK', 'cookie_parse_failed')
+        logStep(accountId, 'AUTH_STATE', 'logged_out')
+        logStep(accountId, 'FOX_AUTH_REQUIRED', String(parsed.invalid))
+        try {
+          updateStatus(accountId, 'auth_required')
+        } catch (statusErr) {
+          logStructuredExecutorError(accountId, 'EXECUTOR_ERROR', statusErr, {
+            runId,
+            scope: 'updateStatus(auth_required)',
+          })
+        }
+        state.lifecycle = 'completed'
+        logStep(
+          accountId,
+          'EXECUTOR_FINISHED',
+          `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle} | fox_cookie_parse`,
+        )
+        logStep(accountId, 'completed', runConfig.startUrl)
+        return
+      }
       failRun(accountId, state, 'cookies invalid', parsed.invalid, {
         err: new Error(String(parsed.invalid)),
         runId,
@@ -450,6 +478,12 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       cookies_empty_after_parse: 'COOKIES_EMPTY_AFTER_PARSE',
       cookies_skipped: 'COOKIES_SKIPPED',
       first_page_created: 'FIRST_PAGE_READY',
+      fox_proxy_connected: 'FOX_PROXY_CONNECTED',
+      fox_cookies_applied: 'FOX_COOKIES_APPLIED',
+      fox_python_spawn: 'FOX_PYTHON_SPAWN',
+      fox_python_ok: 'FOX_PYTHON_OK',
+      fox_python_failed: 'FOX_PYTHON_FAILED',
+      fox_ws_connected: 'FOX_WS_CONNECTED',
     }
     try {
       ;({ browser, context, page } = await launchBrowserSession(
@@ -464,7 +498,12 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
             logStep(accountId, action, d ?? '')
           },
         },
-        { accountId, logStep, runId },
+        {
+          accountId,
+          logStep,
+          runId,
+          ...(engineIsFox ? { profileLabel } : {}),
+        },
       ))
       logStep(accountId, 'PLAYWRIGHT_LAUNCHED', 'launchBrowserSession finished')
     } catch (err) {
@@ -631,14 +670,78 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         const ti = (await page.title().catch(() => '')) ?? ''
         logStep(accountId, 'CURRENT_URL', u)
         logStep(accountId, 'PAGE_TITLE', ti || '(empty)')
-        const auth0 = inferTikTokAuthState('TikTok', u, ti)
-        logStep(accountId, 'AUTH_STATE', auth0)
-        if (auth0 === 'redirected_to_login') {
-          logStep(
-            accountId,
-            'TIKTOK_AUTH_REDIRECT',
-            'cookies invalid or session expired — login/verify/captcha flow detected',
-          )
+
+        if (engineIsFox && runConfig.platform === 'TikTok') {
+          logStep(accountId, 'FOX_AUTH_CHECK', 'after_goto_foryou')
+          const noSessionCookies = rawCookies === '' || parsed.cookies.length === 0
+          if (noSessionCookies) {
+            logStep(accountId, 'AUTH_STATE', 'logged_out')
+            logStep(accountId, 'FOX_AUTH_REQUIRED', 'no_cookies_or_empty_after_parse')
+            try {
+              updateStatus(accountId, 'auth_required')
+            } catch (statusErr) {
+              logStructuredExecutorError(accountId, 'EXECUTOR_ERROR', statusErr, {
+                runId,
+                scope: 'updateStatus(auth_required)',
+              })
+            }
+            state.lifecycle = 'completed'
+            logStep(
+              accountId,
+              'EXECUTOR_FINISHED',
+              `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle} | fox_no_cookies`,
+            )
+            logStep(accountId, 'completed', runConfig.startUrl)
+            return
+          }
+
+          const inferred = inferTikTokAuthState('TikTok', u, ti)
+          let loginVisible = false
+          try {
+            loginVisible = await isTikTokLogInControlVisible(page)
+          } catch {
+            loginVisible = false
+          }
+          if (loginVisible) {
+            logStep(accountId, 'FOX_LOGIN_VISIBLE', 'header_or_nav_log_in')
+          }
+          if (loginVisible || inferred === 'redirected_to_login') {
+            logStep(accountId, 'AUTH_STATE', 'logged_out')
+            logStep(
+              accountId,
+              'FOX_AUTH_REQUIRED',
+              loginVisible ? 'log_in_control_visible' : 'redirect_or_challenge_flow',
+            )
+            try {
+              updateStatus(accountId, 'auth_required')
+            } catch (statusErr) {
+              logStructuredExecutorError(accountId, 'EXECUTOR_ERROR', statusErr, {
+                runId,
+                scope: 'updateStatus(auth_required)',
+              })
+            }
+            state.lifecycle = 'completed'
+            logStep(
+              accountId,
+              'EXECUTOR_FINISHED',
+              `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle} | fox_auth_required`,
+            )
+            logStep(accountId, 'completed', runConfig.startUrl)
+            return
+          }
+
+          logStep(accountId, 'AUTH_STATE', 'logged_in')
+          logStep(accountId, 'FOX_AUTH_OK', 'no_log_in_control_session_ok')
+        } else {
+          const auth0 = inferTikTokAuthState('TikTok', u, ti)
+          logStep(accountId, 'AUTH_STATE', auth0)
+          if (auth0 === 'redirected_to_login') {
+            logStep(
+              accountId,
+              'TIKTOK_AUTH_REDIRECT',
+              'cookies invalid or session expired — login/verify/captcha flow detected',
+            )
+          }
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
@@ -649,6 +752,26 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           errType = 'proxy'
         }
         logStep(accountId, 'TIKTOK_OPEN_ERROR', `type=${errType} ${msg}`)
+        if (engineIsFox && runConfig.platform === 'TikTok') {
+          logStep(accountId, 'FOX_AUTH_CHECK', 'goto_failed')
+          logStep(accountId, 'FOX_AUTH_REQUIRED', `navigation_error type=${errType}`)
+          try {
+            updateStatus(accountId, 'auth_required')
+          } catch (statusErr) {
+            logStructuredExecutorError(accountId, 'EXECUTOR_ERROR', statusErr, {
+              runId,
+              scope: 'updateStatus(auth_required)',
+            })
+          }
+          state.lifecycle = 'completed'
+          logStep(
+            accountId,
+            'EXECUTOR_FINISHED',
+            `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle} | fox_open_failed`,
+          )
+          logStep(accountId, 'completed', runConfig.startUrl)
+          return
+        }
       }
       const haltAfterOpen = await shouldHalt()
       if (haltAfterOpen === 'max_duration') {

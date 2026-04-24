@@ -6,10 +6,10 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { firefox } from 'playwright'
+import { parseCookiesForUrlStrict } from './cookieParse.js'
 import {
   errorMessage,
   errorStack,
-  errorType,
   formatStructuredErrorDetails,
   serializeErrorJson,
 } from './errorLogFormat.js'
@@ -69,7 +69,7 @@ function extractLastJsonLine(buf) {
  *   userAgent?: string
  *   onPhase?: (phase: string, detail?: string) => void
  * }} config
- * @param {{ accountId?: string | null; runId?: string | null }} [ctx]
+ * @param {{ accountId?: string | null; runId?: string | null; profileLabel?: string | null }} [ctx]
  * @returns {Promise<{ browser: import('playwright').Browser, context: import('playwright').BrowserContext, page: import('playwright').Page }>}
  */
 export async function launchFoxBrowserSession(config, ctx = {}) {
@@ -90,8 +90,14 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
 
     const pyBin = String(process.env.FOX_PYTHON ?? process.env.PYTHON ?? 'python3').trim() || 'python3'
 
+    const profileFromCtx =
+      ctx.profileLabel != null && String(ctx.profileLabel).trim() !== ''
+        ? String(ctx.profileLabel).trim()
+        : ''
     const username =
-      String(process.env.FOX_USERNAME ?? ctx.accountId ?? 'default').trim() || 'default'
+      profileFromCtx ||
+      String(process.env.FOX_USERNAME ?? ctx.accountId ?? 'default').trim() ||
+      'default'
     const headless =
       config.headless !== undefined
         ? Boolean(config.headless)
@@ -115,6 +121,8 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
       userAgent: config.userAgent && String(config.userAgent).trim() ? String(config.userAgent).trim() : null,
       actions,
     }
+
+    const launchProxy = config.proxy ?? null
 
     const child = spawn(pyBin, [CREATE_BROWSER_SCRIPT], {
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -210,8 +218,50 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
       (await browser.newContext({
         ignoreHTTPSErrors: process.env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS === '1',
       }))
-    const pages = context.pages()
-    const page = pages[0] ?? (await context.newPage())
+
+    if (launchProxy) {
+      phase('fox_proxy_connected', 'proxy active on Camoufox launch')
+    } else {
+      phase('fox_proxy_connected', 'no proxy')
+    }
+
+    const cookieBase =
+      String(config.cookieUrl ?? '').trim() || 'https://www.tiktok.com/foryou'
+    let cookieUrl
+    try {
+      cookieUrl = new URL(cookieBase)
+    } catch (urlErr) {
+      const bad = new Error(`Invalid cookieUrl for fox: ${cookieBase} (${errorMessage(urlErr)})`)
+      bad.name = 'FoxCookieUrlError'
+      throw bad
+    }
+
+    const rawCookies = String(config.cookies ?? '').trim()
+    if (rawCookies) {
+      const parsed = parseCookiesForUrlStrict(rawCookies, cookieUrl)
+      if (parsed.invalid) {
+        const err = new Error(parsed.invalid)
+        err.name = 'FoxCookiesInvalidError'
+        throw err
+      }
+      if (parsed.cookies.length > 0) {
+        await context.addCookies(parsed.cookies)
+        phase('fox_cookies_applied', `${parsed.cookies.length}`)
+      } else {
+        phase('fox_cookies_applied', '0 parsed_empty')
+      }
+    } else {
+      phase('fox_cookies_applied', 'skipped_empty_string')
+    }
+
+    for (const p of context.pages()) {
+      try {
+        await p.close()
+      } catch {
+        /* ignore */
+      }
+    }
+    const page = await context.newPage()
 
     phase('fox_ws_connected', `pid=${serverPid ?? 'unknown'}`)
 

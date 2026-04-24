@@ -182,6 +182,12 @@ export function buildExecutorRunConfigFromContext(ctx, routeOptions = {}) {
     routeOptions.browserEngine ?? ctx.account.browser_engine,
   )
 
+  /** Fox + TikTok: always FYP; auth is cookie/session only (account login is a profile label). */
+  if (platform === 'TikTok' && browserEngine === 'fox') {
+    startUrl = 'https://www.tiktok.com/foryou'
+    startUrlSource = 'platform'
+  }
+
   return {
     startUrl,
     headless: envHeadless(),
