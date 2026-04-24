@@ -101,6 +101,21 @@ def _merge_payload_into_saved(saved: Dict[str, Any], payload: Dict[str, Any]) ->
         saved["actions"] = actions
 
 
+def _fox_display_launch_kwargs() -> Dict[str, Any]:
+    """
+    Stable Camoufox window + screen so fingerprint matches real window (no 1920x1080 screen vs tiny window).
+    Env: FOX_WINDOW_WIDTH, FOX_WINDOW_HEIGHT (default 1366x768). Screen is pinned to the same rectangle.
+    """
+    from browserforge.fingerprints import Screen
+
+    w = int((os.environ.get("FOX_WINDOW_WIDTH") or "1366").strip() or "1366")
+    h = int((os.environ.get("FOX_WINDOW_HEIGHT") or "768").strip() or "768")
+    w = max(800, min(w, 3840))
+    h = max(600, min(h, 2160))
+    screen = Screen(min_width=w, max_width=w, min_height=h, max_height=h)
+    return {"window": (w, h), "screen": screen}
+
+
 def _build_browser_options(
     saved: Dict[str, Any],
     profile_dir: Path,
@@ -118,11 +133,16 @@ def _build_browser_options(
     proxy = _playwright_proxy_from_dict(saved.get("proxy"))
     config = saved.get("config") if isinstance(saved.get("config"), dict) else None
 
+    user_lk = saved.get("launch_kwargs") if isinstance(saved.get("launch_kwargs"), dict) else {}
+    display_kw = _fox_display_launch_kwargs()
+    # Pin window/screen last so old saved.json cannot force e.g. 1920×1080 fingerprint vs small window.
+    launch_kw = {**user_lk, **display_kw}
+
     opts = launch_options(
         headless=headless,
         proxy=proxy,
         config=config,
-        **(saved.get("launch_kwargs") if isinstance(saved.get("launch_kwargs"), dict) else {}),
+        **launch_kw,
     )
     opts = dict(opts)
     opts["user_data_dir"] = str(profile_dir)
