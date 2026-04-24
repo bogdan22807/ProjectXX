@@ -62,6 +62,9 @@ interface AppStateValue {
   stopAccount: (id: string) => Promise<void>
   /** Per-account warmup request: which action is in flight */
   warmupPending: Partial<Record<string, 'start' | 'stop'>>
+  /** Fox manual login window open request */
+  foxProfileLoginPending: Partial<Record<string, boolean>>
+  startFoxProfileLogin: (id: string) => Promise<void>
   testRunPending: Partial<Record<string, boolean>>
   deleteSelectedAccounts: () => Promise<void>
   startPlaywrightTestRun: (
@@ -124,6 +127,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [selectedProxyIds, setSelectedProxyIds] = useState<Set<string>>(new Set())
   const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(new Set())
   const [warmupPending, setWarmupPending] = useState<Partial<Record<string, 'start' | 'stop'>>>({})
+  const [foxProfileLoginPending, setFoxProfileLoginPending] = useState<Partial<Record<string, boolean>>>({})
   const [testRunPending, setTestRunPending] = useState<Partial<Record<string, boolean>>>({})
   const [lastError, setLastError] = useState<string | null>(null)
 
@@ -269,7 +273,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc || acc.status === 'Running' || acc.status === 'Starting') return
-      if (acc.status !== 'New' && acc.status !== 'Ready' && acc.status !== 'challenge_detected') return
+      if (
+        acc.status !== 'New' &&
+        acc.status !== 'Ready' &&
+        acc.status !== 'challenge_detected' &&
+        acc.status !== 'auth_required'
+      )
+        return
       if (warmupPending[id]) return
       setWarmupPending((p) => ({ ...p, [id]: 'start' }))
       try {
@@ -288,6 +298,32 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       }
     },
     [accounts, warmupPending, refreshAll],
+  )
+
+  const startFoxProfileLogin = useCallback(
+    async (id: string) => {
+      const acc = accounts.find((a) => a.id === id)
+      if (!acc || acc.browserEngine !== 'fox') return
+      if (foxProfileLoginPending[id]) return
+      if (acc.status === 'Running' || acc.status === 'Starting') return
+      setFoxProfileLoginPending((p) => ({ ...p, [id]: true }))
+      try {
+        await apiPost<{ ok?: boolean }>('/warmup/fox-profile-login', { accountId: id })
+        await appendLog('Open Fox for login', `account ${id}`)
+        void refreshAll()
+      } catch (e) {
+        console.error('Fox profile login start failed', e)
+        setLastError(formatApiFailure(e))
+        await refreshAll()
+      } finally {
+        setFoxProfileLoginPending((p) => {
+          const next = { ...p }
+          delete next[id]
+          return next
+        })
+      }
+    },
+    [accounts, foxProfileLoginPending, appendLog, refreshAll],
   )
 
   const stopAccount = useCallback(
@@ -537,6 +573,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       startAccount,
       stopAccount,
       warmupPending,
+      foxProfileLoginPending,
+      startFoxProfileLogin,
       testRunPending,
       deleteSelectedAccounts,
       startPlaywrightTestRun,
@@ -566,6 +604,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       startAccount,
       stopAccount,
       warmupPending,
+      foxProfileLoginPending,
+      startFoxProfileLogin,
       testRunPending,
       deleteSelectedAccounts,
       startPlaywrightTestRun,

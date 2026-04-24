@@ -100,6 +100,7 @@ function parseFoxDisplayLayout() {
  *   proxy?: import('playwright').BrowserContextOptions['proxy'] | null
  *   cookies?: string
  *   cookieUrl?: string
+ *   skipCookies?: boolean
  *   userAgent?: string
  *   onPhase?: (phase: string, detail?: string) => void
  * }} config
@@ -292,8 +293,11 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
       throw bad
     }
 
+    const skipCookies = config.skipCookies === true
     const rawCookies = String(config.cookies ?? '').trim()
-    if (rawCookies) {
+    if (skipCookies) {
+      phase('fox_cookies_applied', 'skipped_profile_or_explicit_skip')
+    } else if (rawCookies) {
       const parsed = parseCookiesForUrlStrict(rawCookies, cookieUrl)
       if (parsed.invalid) {
         const err = new Error(parsed.invalid)

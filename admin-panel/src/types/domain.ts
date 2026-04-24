@@ -6,6 +6,8 @@ export type AccountStatus =
   | 'Error'
   /** TikTok captcha / verify — run stopped; open visible test browser to solve manually */
   | 'challenge_detected'
+  /** Fox: no valid disk/cookie session for TikTok */
+  | 'auth_required'
 
 /** Stored in DB `proxies.status` — human labels in UI */
 export type ProxyStatus =
