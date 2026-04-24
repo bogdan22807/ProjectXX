@@ -23,7 +23,7 @@ export type ProfileStatus = 'Ready' | 'In Use' | 'Error'
 
 export type Platform = 'TikTok'
 
-/** Backend automation engine: Playwright Chromium vs future Camoufox ("fox") */
+/** Backend automation engine: Playwright Chromium vs Camoufox ("fox") */
 export type BrowserEngine = 'chromium' | 'fox'
 
 export interface Account {

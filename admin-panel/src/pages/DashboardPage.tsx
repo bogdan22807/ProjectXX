@@ -48,7 +48,7 @@ const emptyForm = (): FormState => ({
   cookies: '',
   proxyId: '',
   profileId: '',
-  browserEngine: 'chromium',
+  browserEngine: 'fox',
   status: 'New',
 })
 
@@ -147,8 +147,8 @@ function AccountFields({
             setForm((f) => ({ ...f, browserEngine: e.target.value as BrowserEngine }))
           }
         >
+          <option value="fox">Camoufox</option>
           <option value="chromium">Chromium (Playwright)</option>
-          <option value="fox">Fox / Camoufox (скоро)</option>
         </select>
       </label>
       <label className="block text-xs font-medium text-zinc-400">
