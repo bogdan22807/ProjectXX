@@ -182,8 +182,6 @@ export function DashboardPage() {
     startAccount,
     stopAccount,
     warmupPending,
-    foxProfileLoginPending,
-    startFoxProfileLogin,
     testRunPending,
     startPlaywrightTestRun,
   } = useAppState()
@@ -332,8 +330,7 @@ export function DashboardPage() {
         <div className={cardSectionHeaderClass}>
           <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Аккаунты</h2>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-            POST /accounts, PATCH /accounts/:id · прогрев: POST /warmup/start|stop · Fox login:
-            POST /warmup/fox-profile-login · тест: POST /warmup/test-run
+            POST /accounts, PATCH /accounts/:id · POST /warmup/start|stop · POST /warmup/test-run
           </p>
         </div>
         <div className={tableScrollClass}>
@@ -480,21 +477,6 @@ export function DashboardPage() {
                       >
                         {testRunPending[a.id] ? 'Открытие…' : 'Открыть браузер'}
                       </Button>
-                      {a.browserEngine === 'fox' ? (
-                        <Button
-                          className={tableActionButtonClass}
-                          variant="secondary"
-                          disabled={
-                            foxProfileLoginPending[a.id] === true ||
-                            a.status === 'Running' ||
-                            a.status === 'Starting'
-                          }
-                          title="Camoufox: окно для ручного входа в TikTok (профиль на диске)"
-                          onClick={() => void startFoxProfileLogin(a.id)}
-                        >
-                          {foxProfileLoginPending[a.id] ? 'Fox…' : 'Fox'}
-                        </Button>
-                      ) : null}
                       <Button
                         className={tableActionButtonClass}
                         onClick={() => openEdit(a)}
