@@ -54,7 +54,7 @@ async function waitForStableKeyChange(page, log, shouldHalt, getStableKey, befor
 }
 
 /**
- * Focus `[data-e2e="feed-active-video"]` — click inner `video` or container corner.
+ * Focus feed: primary `[data-e2e="feed-active-video"]`, else first visible `article video` / `main video` (Fox layouts without e2e).
  * @returns {Promise<boolean>}
  */
 async function focusActiveFeedVideo(page, log, shouldHalt) {
@@ -64,27 +64,42 @@ async function focusActiveFeedVideo(page, log, shouldHalt) {
   }
   const container = page.locator('[data-e2e="feed-active-video"]').first()
   try {
-    if ((await container.count()) === 0) {
-      log('SCROLL_VIDEO_FOCUS_FAILED', 'no_feed_active_video')
-      return false
-    }
-    await container.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-    await tiktokScrollHaltIfNeeded(shouldHalt)
+    if ((await container.count()) > 0) {
+      await container.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+      await tiktokScrollHaltIfNeeded(shouldHalt)
 
-    const inner = container.locator('video').first()
-    if ((await inner.count()) > 0 && (await inner.isVisible().catch(() => false))) {
-      await inner.click({ timeout: 8000 }).catch(() => {})
-      log('SCROLL_VIDEO_FOCUSED', 'inner_video')
+      const inner = container.locator('video').first()
+      if ((await inner.count()) > 0 && (await inner.isVisible().catch(() => false))) {
+        await inner.click({ timeout: 8000 }).catch(() => {})
+        log('SCROLL_VIDEO_FOCUSED', 'inner_video')
+        return true
+      }
+
+      await container.click({ position: { x: 50, y: 50 }, timeout: 8000 }).catch(() => {})
+      log('SCROLL_VIDEO_FOCUSED', 'container_xy50')
       return true
     }
-
-    await container.click({ position: { x: 50, y: 50 }, timeout: 8000 }).catch(() => {})
-    log('SCROLL_VIDEO_FOCUSED', 'container_xy50')
-    return true
   } catch {
-    log('SCROLL_VIDEO_FOCUS_FAILED', 'click_error')
-    return false
+    log('SCROLL_VIDEO_FOCUS_FAILED', 'primary_click_error')
   }
+
+  /** Fallback: TikTok sometimes renders FYP without `feed-active-video` (e.g. Camoufox). */
+  const fallbacks = [page.locator('article video').first(), page.locator('main video').first(), page.locator('video').first()]
+  for (const vid of fallbacks) {
+    try {
+      if ((await vid.count().catch(() => 0)) === 0) continue
+      await vid.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+      await tiktokScrollHaltIfNeeded(shouldHalt)
+      if (!(await vid.isVisible().catch(() => false))) continue
+      await vid.click({ position: { x: 48, y: 48 }, timeout: 8000 }).catch(() => {})
+      log('SCROLL_VIDEO_FOCUSED', 'fallback_article_or_main_video')
+      return true
+    } catch {
+      /* try next */
+    }
+  }
+  log('SCROLL_VIDEO_FOCUS_FAILED', 'no_feed_active_video')
+  return false
 }
 
 /**
