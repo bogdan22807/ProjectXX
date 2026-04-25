@@ -11,7 +11,8 @@
     "proxy:scan-ports": "node scripts/proxyPortScan.mjs",
     "proxy:httpbin-test": "node scripts/playwrightProxyHttpbinTest.mjs",
     "proxy:chromium-diagnostic": "node scripts/playwrightProxyChromiumDiagnostic.mjs",
-    "playwright:install": "playwright install chromium"
+    "playwright:install": "playwright install chromium",
+    "tiktok:scroll-self-check": "node scripts/tiktokSafeScrollSelfCheck.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
