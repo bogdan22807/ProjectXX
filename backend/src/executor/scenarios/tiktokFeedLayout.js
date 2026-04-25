@@ -52,6 +52,14 @@ export async function resolvePrimaryFeedRoot(page) {
   for (let i = 0; i < Math.min(n, 36); i += 1) {
     const art = articles.nth(i)
     if ((await art.locator('video').count().catch(() => 0)) === 0) continue
+    const liveHref =
+      (await art.locator('a[href*="/live"]').first().getAttribute('href').catch(() => null)) ?? ''
+    if (String(liveHref).toLowerCase().includes('/live')) continue
+    if (
+      (await art.locator('[data-e2e="live-tag"], [data-e2e="video-live-tag"]').first().isVisible().catch(() => false))
+    ) {
+      continue
+    }
     const box = await art.boundingBox().catch(() => null)
     if (!box || box.width < 120 || box.height < 160) continue
     const mx = box.x + box.width / 2

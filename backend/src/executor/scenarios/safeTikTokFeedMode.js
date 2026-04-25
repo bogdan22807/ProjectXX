@@ -452,53 +452,14 @@ async function primaryFeedRoot(page) {
 }
 
 /**
- * Bring primary feed card + video into view (same logic as scroll focus) so like/comment/profile hit the main column.
+ * Same focus path as scroll (`focusPrimaryFeedVideo` / `resolvePrimaryFeedRoot`) so rich actions target the main card.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
 async function focusFeedCardForRichActions(page, log, shouldHalt) {
-  const info = await resolvePrimaryFeedRoot(page)
-  if (info?.kind === 'e2e') {
-    try {
-      await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-    } catch {
-      /* ignore */
-    }
-    await sleepMsHaltable(shouldHalt, randomInt(250, 550))
-    await haltIfNeeded(shouldHalt)
-    const vid = info.root.locator('video').first()
-    if ((await vid.count().catch(() => 0)) > 0) {
-      await vid.click({ position: { x: 48, y: 48 }, timeout: 5000 }).catch(() => {})
-      log('RICH_FOCUS', 'feed_active_video inner_video')
-    } else {
-      await info.root.click({ position: { x: 52, y: 52 }, timeout: 5000 }).catch(() => {})
-      log('RICH_FOCUS', 'feed_active_video container')
-    }
-    await sleepMsHaltable(shouldHalt, randomInt(350, 800))
-    await haltIfNeeded(shouldHalt)
-    return
-  }
-  if (info?.kind === 'article') {
-    try {
-      const vid = info.root.locator('video').first()
-      await vid.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-    } catch {
-      /* ignore */
-    }
-    await sleepMsHaltable(shouldHalt, randomInt(250, 550))
-    await haltIfNeeded(shouldHalt)
-    const vid = info.root.locator('video').first()
-    if ((await vid.count().catch(() => 0)) > 0) {
-      await vid.click({ position: { x: 48, y: 52 }, timeout: 5000 }).catch(() => {})
-      log('RICH_FOCUS', 'largest_article_video')
-    }
-    await sleepMsHaltable(shouldHalt, randomInt(350, 800))
-    await haltIfNeeded(shouldHalt)
-    return
-  }
   await focusPrimaryFeedVideo(page, log, shouldHalt, 'RICH_FOCUS')
-  await sleepMsHaltable(shouldHalt, randomInt(350, 800))
+  await sleepMsHaltable(shouldHalt, randomInt(400, 900))
   await haltIfNeeded(shouldHalt)
 }
 
@@ -1004,6 +965,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
       sum.keyBefore = await getStableVideoKey(page)
       sum.scrollRan = true
+      sum.scrollOk = false
       sum.scrollOk = await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
       await haltIfNeeded(shouldHalt)
       await ensureAdvancedAfterScroll(page, log, shouldHalt, sum.keyBefore)
@@ -1127,6 +1089,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
     sum.keyBefore = await getStableVideoKey(page)
     sum.scrollRan = true
+    sum.scrollOk = false
     sum.scrollOk = await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
     await haltIfNeeded(shouldHalt)
     await ensureAdvancedAfterScroll(page, log, shouldHalt, sum.keyBefore)
