@@ -1,6 +1,6 @@
 /**
  * SAFE_TIKTOK_FEED_MODE — TikTok FYP: controlled one-video scroll, optional single rich action per video
- * (like / comments / profile), weighted watch times, irregular pauses. No goto/reload/goBack, no upward scroll.
+ * (like 15% / comments 5% / profile 5% / else none), weighted watch times, irregular pauses. No goto/reload/goBack, no upward scroll.
  * LIVE: skip only via controlled scroll; LIVE URL: navigate to For You via nav clicks only.
  */
 
