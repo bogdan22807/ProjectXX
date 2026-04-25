@@ -1,9 +1,10 @@
 /**
- * After LIVE skip: keyboard-first scroll on feed-active-video + stable-key checks (Chromium + Fox).
- * No reload/goto, no upward scroll.
+ * After LIVE skip: controlled one-video scroll (same as SAFE mode) + stable-key checks.
+ * No reload/goto, no upward scroll, no strong wheel.
  */
 
-import { tiktokScrollHaltIfNeeded, tiktokStrongScrollWithRecovery } from './tiktokStrongFeedScroll.js'
+import { runSafeTikTokControlledOneVideoScroll } from './safeTikTokOneVideoScroll.js'
+import { tiktokScrollHaltIfNeeded, tiktokStableKeyAdvanced } from './tiktokStrongFeedScroll.js'
 
 /**
  * @param {{
@@ -24,8 +25,9 @@ export async function runPostLiveHardScrollSequence(opts) {
 
     log('POST_LIVE_HARD_SCROLL', `round=${round + 1}/${maxRounds}`)
 
-    const advanced = await tiktokStrongScrollWithRecovery(page, log, shouldHalt, getStableKey, refAtRound)
-    if (advanced) {
+    await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, getStableKey)
+    const now = await getStableKey()
+    if (tiktokStableKeyAdvanced(refAtRound, now)) {
       log('POST_LIVE_HARD_SCROLL_OK', `round=${round + 1}`)
       return
     }
@@ -33,5 +35,5 @@ export async function runPostLiveHardScrollSequence(opts) {
     await tiktokScrollHaltIfNeeded(shouldHalt)
   }
 
-  log('POST_LIVE_STILL_STUCK', 'stable key unchanged after hard scroll rounds')
+  log('POST_LIVE_STILL_STUCK', 'stable key unchanged after controlled scroll rounds')
 }

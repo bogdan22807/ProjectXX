@@ -2,8 +2,8 @@
  * SAFE_TIKTOK_FEED_MODE — conservative TikTok FYP loop (stability over “human” tricks).
  *
  * Rules: single initial `goto` is outside this module (playwrightTestRun). Here: no goto/reload/goBack,
- * no PageUp/ArrowUp/wheel dy<0, no profile. VIEW_VIDEO (6–14s) → feed-active-video focus + keyboard scroll → rare like (3–5%).
- * LIVE card: double focus+keyboard, then POST_LIVE_HARD_SCROLL (keyboard-first recovery).
+ * no PageUp/ArrowUp/wheel dy<0, no profile. VIEW_VIDEO (6–14s) → controlled one-video scroll → rare like (3–5%).
+ * LIVE card: two controlled scrolls; POST_LIVE only if key unchanged (same one-video logic).
  * LIVE surface (/live): only navigate to For You tab (clicks); no wheel/keyboard scroll on stream, no VIEW_VIDEO/LIKE.
  * Challenge: log + status `challenge_detected` + throw ExecutorHaltError('challenge') to end run.
  */
@@ -11,7 +11,7 @@
 import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
-import { tiktokLiveSkipWheelPair, tiktokStrongScrollWithRecovery } from './tiktokStrongFeedScroll.js'
+import { runSafeTikTokControlledOneVideoScroll } from './safeTikTokOneVideoScroll.js'
 
 /**
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
@@ -85,8 +85,24 @@ async function detectChallengeBlocking(page) {
  */
 async function detectLiveFeedCard(page) {
   if (pageInLiveSurfaceUrl(page)) return false
+  try {
+    if (page.isClosed()) return false
+  } catch {
+    return false
+  }
   const root = page.locator('[data-e2e="feed-active-video"]').first()
-  if ((await root.count()) === 0) return false
+  let cnt = 0
+  try {
+    cnt = await root.count()
+  } catch {
+    try {
+      if (page.isClosed()) return false
+    } catch {
+      return false
+    }
+    return false
+  }
+  if (cnt === 0) return false
   try {
     if (
       (await root.locator('[data-e2e="live-tag"], [data-e2e="video-live-tag"]').first().isVisible().catch(() => false))
@@ -111,8 +127,16 @@ async function detectLiveFeedCard(page) {
  */
 async function getStableVideoKey(page) {
   try {
+    if (page.isClosed()) return ''
     const root = page.locator('[data-e2e="feed-active-video"]').first()
-    if ((await root.count()) === 0) return ''
+    let cnt = 0
+    try {
+      cnt = await root.count()
+    } catch {
+      if (page.isClosed()) return ''
+      return ''
+    }
+    if (cnt === 0) return ''
     const href =
       (await root.locator('[data-e2e="video-author-uniqueid"] a').first().getAttribute('href').catch(() => null)) ?? ''
     const src = (await root.locator('video').first().getAttribute('src').catch(() => null)) ?? ''
@@ -127,10 +151,9 @@ async function getStableVideoKey(page) {
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- * @param {string} beforeKey
  */
-async function scrollDownOnce(page, log, shouldHalt, beforeKey) {
-  await tiktokStrongScrollWithRecovery(page, log, shouldHalt, () => getStableVideoKey(page), beforeKey)
+async function scrollDownOnce(page, log, shouldHalt) {
+  await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
 }
 
 /**
@@ -187,27 +210,29 @@ async function escapeLiveSurface(page, log, shouldHalt) {
  */
 async function handleLiveFeedCard(page, log, shouldHalt) {
   log('LIVE_DETECTED', 'FYP LIVE card')
-  await tiktokLiveSkipWheelPair(page, log, shouldHalt)
-  log('LIVE_SKIP_SCROLL_1', 'focus+keyboard burst 1')
+  const k0 = await getStableVideoKey(page)
+  await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
+  log('LIVE_SKIP_SCROLL_1', 'controlled_one_video')
   await sleepMsHaltable(shouldHalt, randomInt(300, 700))
 
-  await tiktokLiveSkipWheelPair(page, log, shouldHalt)
-  log('LIVE_SKIP_SCROLL_2', 'focus+keyboard burst 2')
-  await sleepMsHaltable(shouldHalt, randomInt(300, 700))
-
-  await page.keyboard.press('PageDown').catch(() => {})
-  log('LIVE_SKIP_PAGEDOWN', 'PageDown')
+  await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
+  log('LIVE_SKIP_SCROLL_2', 'controlled_one_video')
 
   await sleepMsHaltable(shouldHalt, randomInt(500, 1200))
   await haltIfNeeded(shouldHalt)
 
-  log('LIVE_SKIPPED', 'LIVE card handled — starting POST_LIVE_HARD_SCROLL')
-  await runPostLiveHardScrollSequence({
-    page,
-    log,
-    shouldHalt,
-    getStableKey: () => getStableVideoKey(page),
-  })
+  const k1 = await getStableVideoKey(page)
+  if (k1 === k0) {
+    log('LIVE_SKIPPED', 'LIVE card — optional POST_LIVE recovery')
+    await runPostLiveHardScrollSequence({
+      page,
+      log,
+      shouldHalt,
+      getStableKey: () => getStableVideoKey(page),
+    })
+  } else {
+    log('LIVE_SKIPPED', 'LIVE card — feed advanced without POST_LIVE')
+  }
 }
 
 /**
@@ -226,7 +251,7 @@ async function ensureAdvancedAfterScroll(page, log, shouldHalt, beforeKey) {
   if (!after || after !== beforeKey) return
 
   log('FEED_STUCK_DETECTED', `sameStableKey len=${beforeKey.length}`)
-  await tiktokStrongScrollWithRecovery(page, log, shouldHalt, () => getStableVideoKey(page), beforeKey)
+  await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
 }
 
 function likePercentThisRun() {
@@ -320,6 +345,16 @@ async function maybeLike(page, log, shouldHalt) {
 export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options = {}) {
   log('SAFE_TIKTOK_FEED_MODE', 'iteration start')
 
+  try {
+    if (page.isClosed()) {
+      log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
+      return
+    }
+  } catch {
+    log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
+    return
+  }
+
   if (await detectChallengeBlocking(page)) {
     log('TIKTOK_CHALLENGE_DETECTED', 'challenge/verify at iteration start — halting run')
     throw new ExecutorHaltError('challenge')
@@ -350,7 +385,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
   }
 
   const beforeScroll = await getStableVideoKey(page)
-  await scrollDownOnce(page, log, shouldHalt, beforeScroll)
+  await scrollDownOnce(page, log, shouldHalt)
   await haltIfNeeded(shouldHalt)
   await ensureAdvancedAfterScroll(page, log, shouldHalt, beforeScroll)
 
