@@ -11,6 +11,10 @@ import path from 'node:path'
 import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
+import {
+  tiktokFocusAndWheel,
+  tiktokStrongScrollWithRecovery,
+} from './tiktokStrongFeedScroll.js'
 
 function emergencyGotoEnabled() {
   return String(process.env.TIKTOK_EMERGENCY_GOTO ?? '').trim() === '1'
@@ -476,27 +480,6 @@ async function sleepAfterScrollForAdvanceCheck(shouldHalt) {
 }
 
 /**
- * Wheel on active feed video center with dy in [minDy, maxDy] (down only).
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {number} minDy
- * @param {number} maxDy
- * @param {string} label
- */
-async function wheelOnActiveVideo(page, log, minDy, maxDy, label) {
-  const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
-  if ((await vid.count()) === 0) return
-  const box = await vid.boundingBox()
-  if (!box || box.width < 40 || box.height < 40) return
-  const cx = box.x + box.width / 2
-  const cy = box.y + box.height / 2
-  await page.mouse.move(cx, cy)
-  const dy = randomInt(minDy, maxDy)
-  await wheelDownOnly(page, dy, log)
-  log('SCROLL', `${label} wheel dy=${dy}px`)
-}
-
-/**
  * FYP LIVE card: aggressive down-only sequence (no goto/goBack/linger/clicks).
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
@@ -504,11 +487,11 @@ async function wheelOnActiveVideo(page, log, minDy, maxDy, label) {
  */
 async function skipLiveFeedCardAggressive(page, log, shouldHalt) {
   log('LIVE_DETECTED', 'FYP LIVE card — down-only skip (wheel×2 + PageDown)')
-  await wheelOnActiveVideo(page, log, 1000, 1400, 'LIVE_SKIP_SCROLL_1')
+  await tiktokFocusAndWheel(page, log, shouldHalt, 1000, 1400)
   log('LIVE_SKIP_SCROLL_1', 'wheel down 1000–1400')
   await sleepMsHaltable(shouldHalt, randomInt(300, 700))
 
-  await wheelOnActiveVideo(page, log, 1000, 1400, 'LIVE_SKIP_SCROLL_2')
+  await tiktokFocusAndWheel(page, log, shouldHalt, 1000, 1400)
   log('LIVE_SKIP_SCROLL_2', 'wheel down 1000–1400')
   await sleepMsHaltable(shouldHalt, randomInt(300, 700))
 
@@ -550,48 +533,7 @@ async function ensureStableKeyAdvancedAfterScroll(page, log, shouldHalt, beforeS
   }
 
   log('FEED_STUCK_DETECTED', `sameStableKey len=${beforeStableKey.length}`)
-
-  log('FEED_STUCK_RECOVERY_DOWN_ONLY', 'strong wheel down')
-  await wheelOnActiveVideo(page, log, 900, 1300, 'stuck_recovery_wheel')
-  await sleepAfterScrollForAdvanceCheck(shouldHalt)
-  await haltIfNeeded(shouldHalt)
-  after = await getFeedStableKey(page)
-  if (after && after !== beforeStableKey) {
-    lastFeedStableKey = after
-    feedRepeatStreak = 1
-    return
-  }
-
-  log('FEED_STUCK_RECOVERY_DOWN_ONLY', 'PageDown')
-  await page.keyboard.press('PageDown').catch(() => {})
-  await sleep(randomInt(400, 700))
-  await haltIfNeeded(shouldHalt)
-  after = await getFeedStableKey(page)
-  if (after && after !== beforeStableKey) {
-    lastFeedStableKey = after
-    feedRepeatStreak = 1
-    return
-  }
-
-  const nArrow = randomInt(2, 3)
-  log('FEED_STUCK_RECOVERY_DOWN_ONLY', `ArrowDown×${nArrow}`)
-  for (let i = 0; i < nArrow; i++) {
-    await haltIfNeeded(shouldHalt)
-    await page.keyboard.press('ArrowDown')
-    await sleep(90 + randomInt(0, 100))
-  }
-  await sleepAfterScrollForAdvanceCheck(shouldHalt)
-  await haltIfNeeded(shouldHalt)
-  after = await getFeedStableKey(page)
-  if (after && after !== beforeStableKey) {
-    lastFeedStableKey = after
-    feedRepeatStreak = 1
-    return
-  }
-
-  log('FORCE_SCROLL_AFTER_STUCK', 'extra wheel + PageDown')
-  await wheelOnActiveVideo(page, log, 900, 1300, 'force_stuck_wheel')
-  await page.keyboard.press('PageDown').catch(() => {})
+  await tiktokStrongScrollWithRecovery(page, log, shouldHalt, () => getFeedStableKey(page), beforeStableKey)
   await sleepAfterScrollForAdvanceCheck(shouldHalt)
   await haltIfNeeded(shouldHalt)
   after = await getFeedStableKey(page)
@@ -626,53 +568,21 @@ async function focusFeedColumn(page, log) {
 }
 
 /**
- * Scroll **down only** (FYP): wheel with positive dy on video center, or ArrowDown/PageDown fallback — never up.
+ * Scroll **down only** (FYP): focus active feed + strong wheel + retry (stable key).
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
- * @param {{ forceLarge?: boolean; forceStuckWheel?: boolean }} [opts]
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {{ forceLarge?: boolean }} [opts]
  */
-async function scrollFeedStep(page, log, opts = {}) {
+async function scrollFeedStep(page, log, shouldHalt, opts = {}) {
   const forceLarge = Boolean(opts.forceLarge)
-  const forceStuckWheel = Boolean(opts.forceStuckWheel)
-  const vid = page.locator('main video, [data-e2e="feed-active-video"] video').first()
-  try {
-    if ((await vid.count()) > 0) {
-      const box = await vid.boundingBox()
-      if (box && box.width > 40 && box.height > 40) {
-        const cx = box.x + box.width / 2
-        const cy = box.y + box.height / 2
-        await page.mouse.move(cx, cy)
-        const dy = forceStuckWheel
-          ? randomInt(800, 1200)
-          : forceLarge
-            ? randomInt(720, 1100)
-            : randomInt(380, 720)
-        await wheelDownOnly(page, dy, log)
-        log(
-          'SCROLL',
-          `wheel on video center dy=${dy}px${forceStuckWheel ? ' stuck' : forceLarge ? ' force' : ''}`,
-        )
-        await sleep(120 + randomInt(0, 180))
-        return
-      }
+  const before = await getFeedStableKey(page)
+  await tiktokStrongScrollWithRecovery(page, log, shouldHalt, () => getFeedStableKey(page), before)
+  if (forceLarge) {
+    const mid = await getFeedStableKey(page)
+    if (mid === before) {
+      await tiktokStrongScrollWithRecovery(page, log, shouldHalt, () => getFeedStableKey(page), before)
     }
-  } catch {
-    /* fall through */
-  }
-
-  const times = forceLarge ? randomInt(6, 10) : randomInt(2, 5)
-  for (let i = 0; i < times; i++) {
-    await page.keyboard.press('ArrowDown')
-    await sleep(80 + randomInt(0, 120))
-  }
-  if (forceLarge || randomChance(35)) {
-    await page.keyboard.press('PageDown')
-    if (forceLarge) {
-      await page.keyboard.press('PageDown').catch(() => {})
-    }
-    log('SCROLL', `fallback keyboard ArrowDown×${times}+PageDown${forceLarge ? ' force' : ''}`)
-  } else {
-    log('SCROLL', `fallback keyboard ArrowDown×${times}`)
   }
 }
 
@@ -715,7 +625,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
       log('FEED_REPEAT_DETECTED', `keyLen=${stableKey.length} streak=${feedRepeatStreak}`)
       log('FORCE_SCROLL_AFTER_REPEAT', 'extra down scroll')
       const beforeRepeatScroll = await getFeedStableKey(page)
-      await scrollFeedStep(page, log, { forceLarge: true })
+      await scrollFeedStep(page, log, shouldHalt, { forceLarge: true })
       await haltIfNeeded(shouldHalt)
       await ensureStableKeyAdvancedAfterScroll(page, log, shouldHalt, beforeRepeatScroll)
       await haltIfNeeded(shouldHalt)
@@ -750,7 +660,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
   if (consecutiveLingerStreak >= 2) {
     log('FORCE_SCROLL_AFTER_LINGER_STREAK', 'two lingers in a row — skip linger; scroll down')
     const beforeLingerForce = await getFeedStableKey(page)
-    await scrollFeedStep(page, log)
+    await scrollFeedStep(page, log, shouldHalt)
     await haltIfNeeded(shouldHalt)
     await ensureStableKeyAdvancedAfterScroll(page, log, shouldHalt, beforeLingerForce)
     await haltIfNeeded(shouldHalt)
@@ -761,7 +671,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     consecutiveLingerStreak += 1
   } else {
     const beforeMainDown = await getFeedStableKey(page)
-    await scrollFeedStep(page, log)
+    await scrollFeedStep(page, log, shouldHalt)
     await haltIfNeeded(shouldHalt)
     await ensureStableKeyAdvancedAfterScroll(page, log, shouldHalt, beforeMainDown)
     await haltIfNeeded(shouldHalt)
