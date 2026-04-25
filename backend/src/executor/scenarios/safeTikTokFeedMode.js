@@ -102,6 +102,21 @@ async function collectVideoDetectionCounts(page) {
 }
 
 /**
+ * @param {import('playwright').Locator} loc
+ * @param {import('playwright').Page} page
+ */
+async function isLocatorUsableInViewport(loc, page) {
+  const vis = await loc.isVisible().catch(() => false)
+  if (!vis) return { ok: false, reason: 'not_visible' }
+  const box = await loc.boundingBox().catch(() => null)
+  if (!box) return { ok: false, reason: 'not_visible' }
+  const vp = page.viewportSize()
+  const vh = vp && Number.isFinite(vp.height) ? vp.height : 800
+  if (box.y + box.height <= 0 || box.y >= vh) return { ok: false, reason: 'offscreen' }
+  return { ok: true, reason: null }
+}
+
+/**
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @returns {Promise<{ hasUsableVideo: boolean; failureReason: string | null }>}
@@ -120,31 +135,35 @@ async function logVideoDetectionResult(page, log) {
     `feed_active_video_count=${feed_active_video_count} video_tag_count=${video_tag_count} video_player_count=${video_player_count} article_count=${article_count}`,
   )
 
-  if (feed_active_video_count === 0) {
-    log('VIDEO_DETECTION_FAILED_REASON', 'reason=no_selectors_matched')
-    return { hasUsableVideo: false, failureReason: 'no_selectors_matched' }
+  if (feed_active_video_count === 0 && video_tag_count === 0) {
+    log('VIDEO_DETECTION_FAILED_REASON', 'reason=video_not_found')
+    return { hasUsableVideo: false, failureReason: 'video_not_found' }
   }
 
-  const root = feedActive.first()
-  const vis = await root.isVisible().catch(() => false)
-  if (!vis) {
-    log('VIDEO_DETECTION_FAILED_REASON', 'reason=not_visible')
-    return { hasUsableVideo: false, failureReason: 'not_visible' }
+  if (feed_active_video_count > 0) {
+    const root = feedActive.first()
+    const primary = await isLocatorUsableInViewport(root, page)
+    if (!primary.ok) {
+      log('VIDEO_DETECTION_FAILED_REASON', `reason=${primary.reason}`)
+      return { hasUsableVideo: false, failureReason: primary.reason }
+    }
+    return { hasUsableVideo: true, failureReason: null }
   }
 
-  const box = await root.boundingBox().catch(() => null)
-  const vp = page.viewportSize()
-  const vh = vp && Number.isFinite(vp.height) ? vp.height : 800
-  if (!box) {
-    log('VIDEO_DETECTION_FAILED_REASON', 'reason=not_visible')
-    return { hasUsableVideo: false, failureReason: 'not_visible' }
+  /** Primary e2e missing but <video> exists — diagnostic fallback only (scroll unchanged). */
+  const video = page.locator('video').first()
+  const vcnt = await video.count().catch(() => 0)
+  if (vcnt === 0) {
+    log('VIDEO_DETECTION_FAILED_REASON', 'reason=video_not_found')
+    return { hasUsableVideo: false, failureReason: 'video_not_found' }
   }
-  if (box.y + box.height <= 0 || box.y >= vh) {
-    log('VIDEO_DETECTION_FAILED_REASON', 'reason=offscreen')
-    return { hasUsableVideo: false, failureReason: 'offscreen' }
+  const fb = await isLocatorUsableInViewport(video, page)
+  if (fb.ok) {
+    log('VIDEO_FOUND_FALLBACK', 'type=video_tag')
+    return { hasUsableVideo: true, failureReason: null }
   }
-
-  return { hasUsableVideo: true, failureReason: null }
+  log('VIDEO_DETECTION_FAILED_REASON', `reason=${fb.reason}`)
+  return { hasUsableVideo: false, failureReason: fb.reason }
 }
 
 async function detectChallengeBlocking(page) {
