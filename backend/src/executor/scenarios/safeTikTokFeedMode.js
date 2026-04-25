@@ -2,8 +2,8 @@
  * SAFE_TIKTOK_FEED_MODE — conservative TikTok FYP loop (stability over “human” tricks).
  *
  * Rules: single initial `goto` is outside this module (playwrightTestRun). Here: no goto/reload/goBack,
- * no PageUp/ArrowUp/wheel dy<0, no profile. VIEW_VIDEO (6–14s) → focused strong scroll on feed/video → rare like (3–5%).
- * LIVE card: double wheel + PageDown, then POST_LIVE_HARD_SCROLL (stable key after each sub-step).
+ * no PageUp/ArrowUp/wheel dy<0, no profile. VIEW_VIDEO (6–14s) → feed-active-video focus + keyboard scroll → rare like (3–5%).
+ * LIVE card: double focus+keyboard, then POST_LIVE_HARD_SCROLL (keyboard-first recovery).
  * LIVE surface (/live): only navigate to For You tab (clicks); no wheel/keyboard scroll on stream, no VIEW_VIDEO/LIKE.
  * Challenge: log + status `challenge_detected` + throw ExecutorHaltError('challenge') to end run.
  */
@@ -11,10 +11,7 @@
 import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
-import {
-  tiktokFocusAndWheel,
-  tiktokStrongScrollWithRecovery,
-} from './tiktokStrongFeedScroll.js'
+import { tiktokLiveSkipWheelPair, tiktokStrongScrollWithRecovery } from './tiktokStrongFeedScroll.js'
 
 /**
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
@@ -190,12 +187,12 @@ async function escapeLiveSurface(page, log, shouldHalt) {
  */
 async function handleLiveFeedCard(page, log, shouldHalt) {
   log('LIVE_DETECTED', 'FYP LIVE card')
-  await tiktokFocusAndWheel(page, log, shouldHalt, 1000, 1400)
-  log('LIVE_SKIP_SCROLL_1', 'wheel 1000–1400')
+  await tiktokLiveSkipWheelPair(page, log, shouldHalt)
+  log('LIVE_SKIP_SCROLL_1', 'focus+keyboard burst 1')
   await sleepMsHaltable(shouldHalt, randomInt(300, 700))
 
-  await tiktokFocusAndWheel(page, log, shouldHalt, 1000, 1400)
-  log('LIVE_SKIP_SCROLL_2', 'wheel 1000–1400')
+  await tiktokLiveSkipWheelPair(page, log, shouldHalt)
+  log('LIVE_SKIP_SCROLL_2', 'focus+keyboard burst 2')
   await sleepMsHaltable(shouldHalt, randomInt(300, 700))
 
   await page.keyboard.press('PageDown').catch(() => {})

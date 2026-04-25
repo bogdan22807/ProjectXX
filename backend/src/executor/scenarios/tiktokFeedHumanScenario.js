@@ -11,10 +11,7 @@ import path from 'node:path'
 import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
-import {
-  tiktokFocusAndWheel,
-  tiktokStrongScrollWithRecovery,
-} from './tiktokStrongFeedScroll.js'
+import { tiktokLiveSkipWheelPair, tiktokStrongScrollWithRecovery } from './tiktokStrongFeedScroll.js'
 
 function emergencyGotoEnabled() {
   return String(process.env.TIKTOK_EMERGENCY_GOTO ?? '').trim() === '1'
@@ -487,12 +484,12 @@ async function sleepAfterScrollForAdvanceCheck(shouldHalt) {
  */
 async function skipLiveFeedCardAggressive(page, log, shouldHalt) {
   log('LIVE_DETECTED', 'FYP LIVE card — down-only skip (wheel×2 + PageDown)')
-  await tiktokFocusAndWheel(page, log, shouldHalt, 1000, 1400)
-  log('LIVE_SKIP_SCROLL_1', 'wheel down 1000–1400')
+  await tiktokLiveSkipWheelPair(page, log, shouldHalt)
+  log('LIVE_SKIP_SCROLL_1', 'focus+keyboard burst 1')
   await sleepMsHaltable(shouldHalt, randomInt(300, 700))
 
-  await tiktokFocusAndWheel(page, log, shouldHalt, 1000, 1400)
-  log('LIVE_SKIP_SCROLL_2', 'wheel down 1000–1400')
+  await tiktokLiveSkipWheelPair(page, log, shouldHalt)
+  log('LIVE_SKIP_SCROLL_2', 'focus+keyboard burst 2')
   await sleepMsHaltable(shouldHalt, randomInt(300, 700))
 
   await page.keyboard.press('PageDown').catch(() => {})
@@ -568,22 +565,14 @@ async function focusFeedColumn(page, log) {
 }
 
 /**
- * Scroll **down only** (FYP): focus active feed + strong wheel + retry (stable key).
+ * Scroll **down only** (FYP): focus feed-active-video + keyboard (+ wheel fallback), stable key.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- * @param {{ forceLarge?: boolean }} [opts]
  */
-async function scrollFeedStep(page, log, shouldHalt, opts = {}) {
-  const forceLarge = Boolean(opts.forceLarge)
+async function scrollFeedStep(page, log, shouldHalt) {
   const before = await getFeedStableKey(page)
   await tiktokStrongScrollWithRecovery(page, log, shouldHalt, () => getFeedStableKey(page), before)
-  if (forceLarge) {
-    const mid = await getFeedStableKey(page)
-    if (mid === before) {
-      await tiktokStrongScrollWithRecovery(page, log, shouldHalt, () => getFeedStableKey(page), before)
-    }
-  }
 }
 
 /**
@@ -625,7 +614,7 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
       log('FEED_REPEAT_DETECTED', `keyLen=${stableKey.length} streak=${feedRepeatStreak}`)
       log('FORCE_SCROLL_AFTER_REPEAT', 'extra down scroll')
       const beforeRepeatScroll = await getFeedStableKey(page)
-      await scrollFeedStep(page, log, shouldHalt, { forceLarge: true })
+      await scrollFeedStep(page, log, shouldHalt)
       await haltIfNeeded(shouldHalt)
       await ensureStableKeyAdvancedAfterScroll(page, log, shouldHalt, beforeRepeatScroll)
       await haltIfNeeded(shouldHalt)

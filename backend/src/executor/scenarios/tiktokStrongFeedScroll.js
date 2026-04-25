@@ -1,6 +1,6 @@
 /**
- * TikTok FYP: focus active feed/video, strong down-only scroll, stable-key recovery (Chromium + Fox).
- * No upward motion: dy > 0 only, no ArrowUp / PageUp / SCROLL_BACK.
+ * TikTok FYP: focus `[data-e2e="feed-active-video"]`, keyboard scroll (ArrowDown + PageDown), wheel only as fallback.
+ * Down-only: no ArrowUp / PageUp. No large center click — fixed offset click on active video container.
  */
 
 import { randomInt, sleep } from '../asyncUtils.js'
@@ -56,134 +56,88 @@ export async function tiktokWheelDownOnly(page, dy, log) {
 }
 
 /**
- * Pick scroll target: feed-active-video → main video → visible video → main.
- * @param {import('playwright').Page} page
- * @returns {Promise<import('playwright').Locator | null>}
- */
-export async function tiktokResolveScrollTarget(page) {
-  const candidates = [
-    page.locator('[data-e2e="feed-active-video"]').first(),
-    page.locator('main video').first(),
-    page.locator('video:visible').first(),
-    page.locator('main').first(),
-  ]
-  for (const loc of candidates) {
-    try {
-      if ((await loc.count()) === 0) continue
-      const vis = await loc.isVisible().catch(() => false)
-      if (!vis) continue
-      const box = await loc.boundingBox().catch(() => null)
-      if (box && box.width >= 40 && box.height >= 40) {
-        return loc
-      }
-    } catch {
-      /* next */
-    }
-  }
-  return null
-}
-
-/**
- * scrollIntoViewIfNeeded → center move → click for focus.
+ * Focus active FYP card: fixed click inside feed-active-video (not viewport center).
  * @returns {Promise<boolean>}
  */
-export async function tiktokFocusScrollTarget(page, log, shouldHalt) {
-  const loc = await tiktokResolveScrollTarget(page)
-  if (!loc) {
-    log('SCROLL_TARGET_FOUND', 'none')
-    return false
-  }
+export async function tiktokFocusFeedActiveVideo(page, log, shouldHalt) {
+  const video = page.locator('[data-e2e="feed-active-video"]').first()
   try {
-    await loc.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-    await tiktokScrollHaltIfNeeded(shouldHalt)
-    const box = await loc.boundingBox().catch(() => null)
-    if (!box || box.width < 40 || box.height < 40) {
-      log('SCROLL_TARGET_FOUND', 'no_bounding_box')
+    if ((await video.count()) === 0) {
+      log('SCROLL_VIDEO_FOCUS', 'missing_feed_active_video')
       return false
     }
-    const cx = box.x + box.width / 2
-    const cy = box.y + box.height / 2
-    log('SCROLL_TARGET_FOUND', `center≈${Math.round(cx)},${Math.round(cy)}`)
-    await page.mouse.move(cx, cy)
+    await video.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
     await tiktokScrollHaltIfNeeded(shouldHalt)
-    await page.mouse.click(cx, cy, { delay: 30 }).catch(() => {})
-    log('SCROLL_FOCUS_CLICK', 'center')
+    await video.click({ position: { x: 50, y: 50 }, timeout: 8000 }).catch(() => {})
+    log('SCROLL_VIDEO_FOCUS', 'feed-active-video x=50 y=50')
     return true
   } catch {
-    log('SCROLL_TARGET_FOUND', 'focus_failed')
+    log('SCROLL_VIDEO_FOCUS', 'click_failed')
     return false
   }
 }
 
 /**
- * Focus + wheel in [minDy, maxDy] (e.g. LIVE skip) — no stable-key logic.
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- * @param {number} minDy
- * @param {number} maxDy
+ * One keyboard advance: ArrowDown then PageDown.
  */
-export async function tiktokFocusAndWheel(page, log, shouldHalt, minDy, maxDy) {
-  const ok = await tiktokFocusScrollTarget(page, log, shouldHalt)
-  if (!ok) return
-  const dy = randomInt(minDy, maxDy)
-  await tiktokWheelDownOnly(page, dy, log)
-  log('SCROLL_STRONG', `focused_wheel dy=${dy}px`)
+export async function tiktokKeyboardScrollBurst(page, log, shouldHalt) {
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  await page.keyboard.press('ArrowDown').catch(() => {})
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  await page.keyboard.press('PageDown').catch(() => {})
+  log('SCROLL_KEYBOARD', 'ArrowDown+PageDown')
 }
 
 /**
- * Strong scroll with up to 2 attempts; compares stable key to `beforeKey` from caller.
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- * @param {() => Promise<string>} getStableKey
- * @param {string} beforeKey
- * @returns {Promise<boolean>} true if feed advanced vs beforeKey
+ * Moderate wheel fallback (not 3000+).
+ */
+async function tiktokWheelFallback(page, log, shouldHalt) {
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  const dy = randomInt(520, 900)
+  await tiktokWheelDownOnly(page, dy, log)
+  log('SCROLL_KEYBOARD', `wheel_fallback dy=${dy}`)
+}
+
+/**
+ * Focus → up to 3 keyboard bursts (wait + stable key each) → one wheel fallback if still stuck.
+ * @returns {Promise<boolean>}
  */
 export async function tiktokStrongScrollWithRecovery(page, log, shouldHalt, getStableKey, beforeKey) {
   const before = String(beforeKey ?? '').trim() ? beforeKey : await getStableKey()
 
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const focused = await tiktokFocusScrollTarget(page, log, shouldHalt)
-    if (!focused) {
-      log('SCROLL_HARD_STUCK', 'no_scroll_target')
-      return tiktokStableKeyAdvanced(before, await getStableKey())
-    }
+  const okFocus = await tiktokFocusFeedActiveVideo(page, log, shouldHalt)
+  if (!okFocus) {
+    log('SCROLL_STILL_STUCK', 'no_feed_active_video')
+    return tiktokStableKeyAdvanced(before, await getStableKey())
+  }
 
+  for (let k = 1; k <= 3; k += 1) {
+    await tiktokKeyboardScrollBurst(page, log, shouldHalt)
+    await tiktokScrollSleepMsHaltable(shouldHalt, randomInt(800, 1500))
     await tiktokScrollHaltIfNeeded(shouldHalt)
-    const dy = randomInt(2800, 3600)
-    log('SCROLL_STRONG', `attempt=${attempt} dy=${dy}`)
-    await tiktokWheelDownOnly(page, dy, log)
-    await tiktokScrollSleepMsHaltable(shouldHalt, randomInt(800, 1200))
-    await tiktokScrollHaltIfNeeded(shouldHalt)
-
-    let after = await getStableKey()
-    if (tiktokStableKeyAdvanced(before, after)) {
-      log('SCROLL_OK', `attempt=${attempt}`)
-      return true
-    }
-
-    log('SCROLL_RETRY', `attempt=${attempt}`)
-    await page.keyboard.press('Space').catch(() => {})
-    await tiktokScrollHaltIfNeeded(shouldHalt)
-    await sleep(80 + randomInt(0, 120))
-    await tiktokFocusScrollTarget(page, log, shouldHalt)
-    await tiktokScrollHaltIfNeeded(shouldHalt)
-    await page.keyboard.press('PageDown').catch(() => {})
-    for (let i = 0; i < 3; i += 1) {
-      await tiktokScrollHaltIfNeeded(shouldHalt)
-      await page.keyboard.press('ArrowDown')
-      await sleep(300)
-    }
-    await tiktokScrollSleepMsHaltable(shouldHalt, randomInt(400, 700))
-    await tiktokScrollHaltIfNeeded(shouldHalt)
-    after = await getStableKey()
-    if (tiktokStableKeyAdvanced(before, after)) {
-      log('SCROLL_OK', `after_retry attempt=${attempt}`)
+    const afterKb = await getStableKey()
+    if (tiktokStableKeyAdvanced(before, afterKb)) {
+      log('SCROLL_SUCCESS', `keyboard_pass=${k}`)
       return true
     }
   }
 
-  log('SCROLL_HARD_STUCK', 'stable_key_unchanged_after_2_attempts')
+  await tiktokWheelFallback(page, log, shouldHalt)
+  await tiktokScrollSleepMsHaltable(shouldHalt, randomInt(800, 1500))
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  if (tiktokStableKeyAdvanced(before, await getStableKey())) {
+    log('SCROLL_SUCCESS', 'wheel_fallback')
+    return true
+  }
+
+  log('SCROLL_STILL_STUCK', 'stable_key_unchanged_after_keyboard_x3_and_wheel')
   return false
+}
+
+/**
+ * LIVE skip: one focus + one keyboard burst (call twice for original double-skip).
+ */
+export async function tiktokLiveSkipWheelPair(page, log, shouldHalt) {
+  await tiktokFocusFeedActiveVideo(page, log, shouldHalt)
+  await tiktokKeyboardScrollBurst(page, log, shouldHalt)
 }
