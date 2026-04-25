@@ -140,30 +140,22 @@ async function logVideoDetectionResult(page, log) {
     return { hasUsableVideo: false, failureReason: 'video_not_found' }
   }
 
-  if (feed_active_video_count > 0) {
-    const root = feedActive.first()
-    const primary = await isLocatorUsableInViewport(root, page)
-    if (!primary.ok) {
-      log('VIDEO_DETECTION_FAILED_REASON', `reason=${primary.reason}`)
-      return { hasUsableVideo: false, failureReason: primary.reason }
+  /** Any <video> in DOM ⇒ treat as visible feed for diagnostics / summary; do not block on missing e2e. */
+  if (video_tag_count > 0) {
+    if (feed_active_video_count === 0) {
+      log('VIDEO_ASSUMED_FROM_VIDEO_TAG', `video_tag_count=${video_tag_count}`)
     }
     return { hasUsableVideo: true, failureReason: null }
   }
 
-  /** Primary e2e missing but <video> exists — diagnostic fallback only (scroll unchanged). */
-  const video = page.locator('video').first()
-  const vcnt = await video.count().catch(() => 0)
-  if (vcnt === 0) {
-    log('VIDEO_DETECTION_FAILED_REASON', 'reason=video_not_found')
-    return { hasUsableVideo: false, failureReason: 'video_not_found' }
+  /** feed card without separate video tag count (rare): require in-viewport feed root. */
+  const root = feedActive.first()
+  const primary = await isLocatorUsableInViewport(root, page)
+  if (!primary.ok) {
+    log('VIDEO_DETECTION_FAILED_REASON', `reason=${primary.reason}`)
+    return { hasUsableVideo: false, failureReason: primary.reason }
   }
-  const fb = await isLocatorUsableInViewport(video, page)
-  if (fb.ok) {
-    log('VIDEO_FOUND_FALLBACK', 'type=video_tag')
-    return { hasUsableVideo: true, failureReason: null }
-  }
-  log('VIDEO_DETECTION_FAILED_REASON', `reason=${fb.reason}`)
-  return { hasUsableVideo: false, failureReason: fb.reason }
+  return { hasUsableVideo: true, failureReason: null }
 }
 
 async function detectChallengeBlocking(page) {
