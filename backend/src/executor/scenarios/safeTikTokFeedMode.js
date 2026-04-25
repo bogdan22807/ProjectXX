@@ -248,6 +248,34 @@ async function getStableVideoKey(page) {
 }
 
 /**
+ * Key for anti-repeat: stable key if non-empty, else url + first video src/poster + article count.
+ * @param {import('playwright').Page} page
+ */
+async function getRepeatTrackingKey(page) {
+  const primary = await getStableVideoKey(page)
+  if (String(primary).trim()) return primary
+  let url = ''
+  try {
+    url = page.url()
+  } catch {
+    url = ''
+  }
+  const v0 = page.locator('video').first()
+  let src = ''
+  let poster = ''
+  if ((await v0.count().catch(() => 0)) > 0) {
+    src = (await v0.getAttribute('src').catch(() => null)) ?? ''
+    poster = (await v0.getAttribute('poster').catch(() => null)) ?? ''
+  }
+  const ac = await page.locator('article').count().catch(() => 0)
+  return `fb|${url.slice(0, 240)}|${String(src).trim().slice(0, 120)}|${String(poster).trim().slice(0, 120)}|a=${ac}`.slice(0, 400)
+}
+
+/** Consecutive iterations ended with scroll stuck on same repeat-tracking key (module state). */
+let lastRepeatTrackingKey = ''
+let repeatStuckCount = 0
+
+/**
  * @param {import('playwright').Page} page
  */
 async function tryClickForYouNav(page) {
@@ -736,17 +764,23 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
     try {
       if (page.isClosed()) {
+        repeatStuckCount = 0
+        lastRepeatTrackingKey = ''
         log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
         sum.path = 'page_closed'
         return
       }
     } catch {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
       log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
       sum.path = 'page_closed'
       return
     }
 
     if (await detectChallengeBlocking(page)) {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
       log('TIKTOK_CHALLENGE_DETECTED', 'challenge/verify at iteration start — halting run')
       sum.path = 'challenge'
       throw new ExecutorHaltError('challenge')
@@ -754,14 +788,90 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     await haltIfNeeded(shouldHalt)
 
     if (pageInLiveSurfaceUrl(page)) {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
       sum.path = 'live_surface'
       await escapeLiveSurface(page, log, shouldHalt)
       return
     }
 
     if (await detectLiveFeedCard(page)) {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
       Object.assign(sum, await handleLiveFeedCard(page, log, shouldHalt, browserLabel))
       videosSinceLongBreak += 1
+      return
+    }
+
+    const trackAtIterStart = await getRepeatTrackingKey(page)
+    if (
+      repeatStuckCount >= 2 &&
+      trackAtIterStart === lastRepeatTrackingKey &&
+      String(lastRepeatTrackingKey).trim() !== ''
+    ) {
+      log('VIDEO_REPEAT_DETECTED', `repeatStuckCount=${repeatStuckCount} key=${trackAtIterStart.slice(0, 160)}`)
+      sum.viewedMs = 0
+      sum.richAction = 'repeat_recover'
+
+      if (repeatStuckCount >= 3) {
+        await tryClickForYouNav(page)
+        await sleepMsHaltable(shouldHalt, randomInt(1000, 2000))
+        await haltIfNeeded(shouldHalt)
+        log('FEED_RECOVERY_AFTER_REPEAT', 'repeat>=3 nav_foryou wait_1-2s then_controlled_scroll')
+      }
+
+      await logVideoDetectionStart(page, log, browserLabel)
+      const detR = await logVideoDetectionResult(page, log)
+      sum.videoFound = detR.hasUsableVideo
+      sum.videoFailReason = detR.failureReason
+      let curUrlR = ''
+      try {
+        curUrlR = page.url()
+      } catch {
+        curUrlR = ''
+      }
+      log(
+        'SCROLL_CONTEXT',
+        `has_video=${detR.hasUsableVideo} current_url=${curUrlR.slice(0, 400)} is_live=${await detectLiveFeedCard(page)}`,
+      )
+
+      sum.keyBefore = await getStableVideoKey(page)
+      sum.scrollRan = true
+      sum.scrollOk = await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
+      await haltIfNeeded(shouldHalt)
+      await ensureAdvancedAfterScroll(page, log, shouldHalt, sum.keyBefore)
+      sum.keyAfter = await getStableVideoKey(page)
+      sum.scrollChanged = tiktokStableKeyAdvanced(sum.keyBefore, sum.keyAfter)
+      log(
+        'SCROLL_DEBUG',
+        `key_before=${sum.keyBefore.slice(0, 120)} key_after=${sum.keyAfter.slice(0, 120)} changed=${sum.scrollChanged} repeat_recover=1`,
+      )
+
+      const trackAfterRecover = await getRepeatTrackingKey(page)
+      if (sum.scrollRan && !sum.scrollChanged) {
+        if (trackAfterRecover === lastRepeatTrackingKey && lastRepeatTrackingKey !== '') {
+          repeatStuckCount += 1
+        } else {
+          repeatStuckCount = 1
+          lastRepeatTrackingKey = trackAfterRecover
+        }
+      } else {
+        repeatStuckCount = 0
+        lastRepeatTrackingKey = ''
+      }
+
+      videosSinceLongBreak += 1
+      if (randomChance(45)) {
+        await sleepMsHaltable(shouldHalt, randomInt(2000, 6000))
+        log('PAUSE_BETWEEN_VIDEOS', '2–6s')
+      }
+      if (videosSinceLongBreak >= nextLongBreakEvery) {
+        const longMs = randomInt(15000, 45000)
+        log('PAUSE_LONG_BREAK', `every_${nextLongBreakEvery}_videos ${longMs}ms`)
+        await sleepMsHaltable(shouldHalt, longMs)
+        resetLongBreakSchedule()
+      }
+      await haltIfNeeded(shouldHalt)
       return
     }
 
@@ -781,12 +891,16 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     await haltIfNeeded(shouldHalt)
 
     if (pageInLiveSurfaceUrl(page)) {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
       log('BLOCKED_FEED_SCROLL_IN_LIVE', 'surface appeared during VIEW_VIDEO')
       sum.path = 'live_surface_mid'
       await escapeLiveSurface(page, log, shouldHalt)
       return
     }
     if (await detectLiveFeedCard(page)) {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
       Object.assign(sum, await handleLiveFeedCard(page, log, shouldHalt, browserLabel))
       videosSinceLongBreak += 1
       return
@@ -808,6 +922,8 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     await haltIfNeeded(shouldHalt)
 
     if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
       if (await detectLiveFeedCard(page)) {
         Object.assign(sum, await handleLiveFeedCard(page, log, shouldHalt, browserLabel))
       } else {
@@ -854,6 +970,19 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       'SCROLL_DEBUG',
       `key_before=${sum.keyBefore.slice(0, 120)} key_after=${sum.keyAfter.slice(0, 120)} changed=${sum.scrollChanged}`,
     )
+
+    const trackAfterNormal = await getRepeatTrackingKey(page)
+    if (sum.scrollRan && !sum.scrollChanged) {
+      if (trackAfterNormal === lastRepeatTrackingKey && lastRepeatTrackingKey !== '') {
+        repeatStuckCount += 1
+      } else {
+        repeatStuckCount = 1
+        lastRepeatTrackingKey = trackAfterNormal
+      }
+    } else {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
+    }
 
     videosSinceLongBreak += 1
 
