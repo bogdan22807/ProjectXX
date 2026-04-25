@@ -5,7 +5,7 @@
  */
 
 import { randomChance, randomInt, sleep } from '../asyncUtils.js'
-import { tiktokWheelDownOnly } from './tiktokScrollHelpers.js'
+import { tiktokStableKeyAdvanced, tiktokWheelDownOnly } from './tiktokScrollHelpers.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
 import { runSafeTikTokControlledOneVideoScroll } from './safeTikTokOneVideoScroll.js'
@@ -52,6 +52,99 @@ function isTikTokNotLiveSurface(page) {
     const s = String(page.url()).toLowerCase()
     return s.includes('tiktok.com') && !s.includes('/live')
   }
+}
+
+/**
+ * @param {import('playwright').Page} page
+ */
+async function safePageClosed(page) {
+  try {
+    return page.isClosed()
+  } catch {
+    return true
+  }
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {string} browserLabel
+ */
+async function logVideoDetectionStart(page, log, browserLabel) {
+  let url = ''
+  try {
+    url = page.url()
+  } catch {
+    url = '(unreadable)'
+  }
+  const vp = page.viewportSize()
+  const vw = vp && Number.isFinite(vp.width) ? vp.width : '?'
+  const vh = vp && Number.isFinite(vp.height) ? vp.height : '?'
+  log(
+    'VIDEO_DETECTION_START',
+    `url=${url.slice(0, 500)} viewport=${vw}x${vh} browser=${browserLabel}`,
+  )
+}
+
+/**
+ * @param {import('playwright').Page} page
+ */
+async function collectVideoDetectionCounts(page) {
+  const feedActive = page.locator('[data-e2e="feed-active-video"]')
+  const videoTag = page.locator('video')
+  const videoPlayer = page.locator('[data-e2e="video-player"]')
+  const article = page.locator('article')
+  const feed_active_video_count = await feedActive.count().catch(() => 0)
+  const video_tag_count = await videoTag.count().catch(() => 0)
+  const video_player_count = await videoPlayer.count().catch(() => 0)
+  const article_count = await article.count().catch(() => 0)
+  return { feed_active_video_count, video_tag_count, video_player_count, article_count, feedActive }
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @returns {Promise<{ hasUsableVideo: boolean; failureReason: string | null }>}
+ */
+async function logVideoDetectionResult(page, log) {
+  if (await safePageClosed(page)) {
+    log('VIDEO_DETECTION_RESULT', 'feed_active_video_count=0 (page_closed)')
+    log('VIDEO_DETECTION_FAILED_REASON', 'reason=page_closed')
+    return { hasUsableVideo: false, failureReason: 'page_closed' }
+  }
+
+  const { feed_active_video_count, video_tag_count, video_player_count, article_count, feedActive } =
+    await collectVideoDetectionCounts(page)
+  log(
+    'VIDEO_DETECTION_RESULT',
+    `feed_active_video_count=${feed_active_video_count} video_tag_count=${video_tag_count} video_player_count=${video_player_count} article_count=${article_count}`,
+  )
+
+  if (feed_active_video_count === 0) {
+    log('VIDEO_DETECTION_FAILED_REASON', 'reason=no_selectors_matched')
+    return { hasUsableVideo: false, failureReason: 'no_selectors_matched' }
+  }
+
+  const root = feedActive.first()
+  const vis = await root.isVisible().catch(() => false)
+  if (!vis) {
+    log('VIDEO_DETECTION_FAILED_REASON', 'reason=not_visible')
+    return { hasUsableVideo: false, failureReason: 'not_visible' }
+  }
+
+  const box = await root.boundingBox().catch(() => null)
+  const vp = page.viewportSize()
+  const vh = vp && Number.isFinite(vp.height) ? vp.height : 800
+  if (!box) {
+    log('VIDEO_DETECTION_FAILED_REASON', 'reason=not_visible')
+    return { hasUsableVideo: false, failureReason: 'not_visible' }
+  }
+  if (box.y + box.height <= 0 || box.y >= vh) {
+    log('VIDEO_DETECTION_FAILED_REASON', 'reason=offscreen')
+    return { hasUsableVideo: false, failureReason: 'offscreen' }
+  }
+
+  return { hasUsableVideo: true, failureReason: null }
 }
 
 async function detectChallengeBlocking(page) {
@@ -193,10 +286,23 @@ async function escapeLiveSurface(page, log, shouldHalt) {
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {string} browserLabel
  */
-async function handleLiveFeedCard(page, log, shouldHalt) {
+async function handleLiveFeedCard(page, log, shouldHalt, browserLabel) {
   log('LIVE_DETECTED', 'FYP LIVE card')
+  await logVideoDetectionStart(page, log, browserLabel)
+  const det = await logVideoDetectionResult(page, log)
   const k0 = await getStableVideoKey(page)
+  let curUrl = ''
+  try {
+    curUrl = page.url()
+  } catch {
+    curUrl = ''
+  }
+  log(
+    'SCROLL_CONTEXT',
+    `has_video=${det.hasUsableVideo} current_url=${curUrl.slice(0, 400)} is_live=true`,
+  )
   await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
   log('LIVE_SKIP_SCROLL', 'controlled_one_video')
 
@@ -214,6 +320,24 @@ async function handleLiveFeedCard(page, log, shouldHalt) {
     })
   } else {
     log('LIVE_SKIPPED', 'LIVE card — feed advanced')
+  }
+  const kFinal = await getStableVideoKey(page)
+  const changed = tiktokStableKeyAdvanced(k0, kFinal)
+  log(
+    'SCROLL_DEBUG',
+    `key_before=${k0.slice(0, 120)} key_after=${kFinal.slice(0, 120)} changed=${changed}`,
+  )
+  return {
+    path: 'live_card',
+    viewedMs: 0,
+    richAction: 'none',
+    videoFound: det.hasUsableVideo,
+    videoFailReason: det.failureReason,
+    scrollRan: true,
+    scrollOk: changed,
+    keyBefore: k0,
+    keyAfter: kFinal,
+    scrollChanged: changed,
   }
 }
 
@@ -468,108 +592,203 @@ function resetLongBreakSchedule() {
 }
 
 /**
+ * @typedef {{
+ *   path: string
+ *   viewedMs: number
+ *   richAction: string
+ *   videoFound: boolean
+ *   videoFailReason: string | null
+ *   scrollRan: boolean
+ *   scrollOk: boolean | null
+ *   keyBefore: string
+ *   keyAfter: string
+ *   scrollChanged: boolean
+ * }} IterationDiagSummary
+ */
+
+/**
  * One iteration of SAFE_TIKTOK_FEED_MODE.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- * @param {{ debugScreenshots?: boolean; screenshotDir?: string }} [_options]
+ * @param {{ debugScreenshots?: boolean; screenshotDir?: string; browserEngine?: string }} [_options]
  */
 export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options = {}) {
-  log('SAFE_TIKTOK_FEED_MODE', 'iteration start')
+  const browserLabel =
+    _options && _options.browserEngine != null && String(_options.browserEngine).trim() !== ''
+      ? String(_options.browserEngine).trim()
+      : 'chromium'
+
+  /** @type {IterationDiagSummary} */
+  const sum = {
+    path: 'normal',
+    viewedMs: 0,
+    richAction: 'none',
+    videoFound: false,
+    videoFailReason: null,
+    scrollRan: false,
+    scrollOk: null,
+    keyBefore: '',
+    keyAfter: '',
+    scrollChanged: false,
+  }
+
+  let finalized = false
+  function logIterationHumanSummary() {
+    if (finalized) return
+    finalized = true
+    const viewedS = Math.round(sum.viewedMs / 100) / 10
+    let scrollStr = 'skipped'
+    if (sum.scrollRan) {
+      scrollStr = sum.scrollOk === true ? 'ok' : sum.scrollOk === false ? 'failed' : 'unknown'
+    }
+    let reason = 'reason='
+    if (!sum.videoFound) {
+      reason = `reason=no_active_video${sum.videoFailReason ? ` (${sum.videoFailReason})` : ''}`
+    } else if (sum.scrollRan && !sum.scrollChanged) {
+      reason = 'reason=key_unchanged'
+    }
+    log(
+      'ITERATION_HUMAN_SUMMARY',
+      `viewed=${viewedS}s action=${sum.richAction} video_found=${sum.videoFound} scroll=${scrollStr} ${reason} path=${sum.path}`,
+    )
+  }
 
   try {
-    if (page.isClosed()) {
+    log('SAFE_TIKTOK_FEED_MODE', 'iteration start')
+
+    try {
+      if (page.isClosed()) {
+        log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
+        sum.path = 'page_closed'
+        return
+      }
+    } catch {
       log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
+      sum.path = 'page_closed'
       return
     }
-  } catch {
-    log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
-    return
-  }
 
-  if (await detectChallengeBlocking(page)) {
-    log('TIKTOK_CHALLENGE_DETECTED', 'challenge/verify at iteration start — halting run')
-    throw new ExecutorHaltError('challenge')
-  }
-  await haltIfNeeded(shouldHalt)
+    if (await detectChallengeBlocking(page)) {
+      log('TIKTOK_CHALLENGE_DETECTED', 'challenge/verify at iteration start — halting run')
+      sum.path = 'challenge'
+      throw new ExecutorHaltError('challenge')
+    }
+    await haltIfNeeded(shouldHalt)
 
-  if (pageInLiveSurfaceUrl(page)) {
-    await escapeLiveSurface(page, log, shouldHalt)
-    return
-  }
+    if (pageInLiveSurfaceUrl(page)) {
+      sum.path = 'live_surface'
+      await escapeLiveSurface(page, log, shouldHalt)
+      return
+    }
 
-  if (await detectLiveFeedCard(page)) {
-    await handleLiveFeedCard(page, log, shouldHalt)
+    if (await detectLiveFeedCard(page)) {
+      Object.assign(sum, await handleLiveFeedCard(page, log, shouldHalt, browserLabel))
+      videosSinceLongBreak += 1
+      return
+    }
+
+    const richAction = pickRichActionForVideo()
+    sum.richAction = richAction
+    const baseWatch = sampleWatchMsWeighted()
+    const minNeed = minWatchMsForAction(richAction)
+    const watchMs = richAction === 'none' ? baseWatch : Math.max(baseWatch, minNeed)
+    sum.viewedMs = watchMs
+
+    await viewVideoWeighted(page, log, shouldHalt, watchMs)
+    await haltIfNeeded(shouldHalt)
+
+    if (pageInLiveSurfaceUrl(page)) {
+      log('BLOCKED_FEED_SCROLL_IN_LIVE', 'surface appeared during VIEW_VIDEO')
+      sum.path = 'live_surface_mid'
+      await escapeLiveSurface(page, log, shouldHalt)
+      return
+    }
+    if (await detectLiveFeedCard(page)) {
+      Object.assign(sum, await handleLiveFeedCard(page, log, shouldHalt, browserLabel))
+      videosSinceLongBreak += 1
+      return
+    }
+
+    if (richAction === 'like') {
+      log('RICH_ACTION', 'like')
+      await tryLikeWithVerify(page, log, shouldHalt)
+    } else if (richAction === 'comments') {
+      log('RICH_ACTION', 'comments')
+      await tryCommentsPeek(page, log, shouldHalt)
+    } else if (richAction === 'profile') {
+      log('RICH_ACTION', 'profile')
+      await tryProfilePeek(page, log, shouldHalt)
+    } else {
+      log('RICH_ACTION', 'none')
+    }
+
+    await haltIfNeeded(shouldHalt)
+
+    if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
+      if (await detectLiveFeedCard(page)) {
+        Object.assign(sum, await handleLiveFeedCard(page, log, shouldHalt, browserLabel))
+      } else {
+        sum.path = 'live_surface_post_rich'
+        await escapeLiveSurface(page, log, shouldHalt)
+      }
+      videosSinceLongBreak += 1
+      return
+    }
+
+    if (!randomChance(30)) {
+      await sleepMsHaltable(shouldHalt, randomInt(800, 2500))
+    } else {
+      log('SCROLL_PRE_PAUSE', 'skipped_burst')
+    }
+    await haltIfNeeded(shouldHalt)
+
+    await logVideoDetectionStart(page, log, browserLabel)
+    const det = await logVideoDetectionResult(page, log)
+    sum.videoFound = det.hasUsableVideo
+    sum.videoFailReason = det.failureReason
+
+    let curUrl = ''
+    try {
+      curUrl = page.url()
+    } catch {
+      curUrl = ''
+    }
+    const liveNow = await detectLiveFeedCard(page)
+    log(
+      'SCROLL_CONTEXT',
+      `has_video=${det.hasUsableVideo} current_url=${curUrl.slice(0, 400)} is_live=${liveNow}`,
+    )
+
+    sum.keyBefore = await getStableVideoKey(page)
+    sum.scrollRan = true
+    sum.scrollOk = await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
+    await haltIfNeeded(shouldHalt)
+    await ensureAdvancedAfterScroll(page, log, shouldHalt, sum.keyBefore)
+
+    sum.keyAfter = await getStableVideoKey(page)
+    sum.scrollChanged = tiktokStableKeyAdvanced(sum.keyBefore, sum.keyAfter)
+    log(
+      'SCROLL_DEBUG',
+      `key_before=${sum.keyBefore.slice(0, 120)} key_after=${sum.keyAfter.slice(0, 120)} changed=${sum.scrollChanged}`,
+    )
+
     videosSinceLongBreak += 1
-    return
+
+    if (randomChance(45)) {
+      await sleepMsHaltable(shouldHalt, randomInt(2000, 6000))
+      log('PAUSE_BETWEEN_VIDEOS', '2–6s')
+    }
+
+    if (videosSinceLongBreak >= nextLongBreakEvery) {
+      const longMs = randomInt(15000, 45000)
+      log('PAUSE_LONG_BREAK', `every_${nextLongBreakEvery}_videos ${longMs}ms`)
+      await sleepMsHaltable(shouldHalt, longMs)
+      resetLongBreakSchedule()
+    }
+
+    await haltIfNeeded(shouldHalt)
+  } finally {
+    logIterationHumanSummary()
   }
-
-  const richAction = pickRichActionForVideo()
-  const baseWatch = sampleWatchMsWeighted()
-  const minNeed = minWatchMsForAction(richAction)
-  const watchMs = richAction === 'none' ? baseWatch : Math.max(baseWatch, minNeed)
-
-  await viewVideoWeighted(page, log, shouldHalt, watchMs)
-  await haltIfNeeded(shouldHalt)
-
-  if (pageInLiveSurfaceUrl(page)) {
-    log('BLOCKED_FEED_SCROLL_IN_LIVE', 'surface appeared during VIEW_VIDEO')
-    await escapeLiveSurface(page, log, shouldHalt)
-    return
-  }
-  if (await detectLiveFeedCard(page)) {
-    await handleLiveFeedCard(page, log, shouldHalt)
-    videosSinceLongBreak += 1
-    return
-  }
-
-  if (richAction === 'like') {
-    log('RICH_ACTION', 'like')
-    await tryLikeWithVerify(page, log, shouldHalt)
-  } else if (richAction === 'comments') {
-    log('RICH_ACTION', 'comments')
-    await tryCommentsPeek(page, log, shouldHalt)
-  } else if (richAction === 'profile') {
-    log('RICH_ACTION', 'profile')
-    await tryProfilePeek(page, log, shouldHalt)
-  } else {
-    log('RICH_ACTION', 'none')
-  }
-
-  await haltIfNeeded(shouldHalt)
-
-  if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
-    if (await detectLiveFeedCard(page)) await handleLiveFeedCard(page, log, shouldHalt)
-    else await escapeLiveSurface(page, log, shouldHalt)
-    videosSinceLongBreak += 1
-    return
-  }
-
-  if (!randomChance(30)) {
-    await sleepMsHaltable(shouldHalt, randomInt(800, 2500))
-  } else {
-    log('SCROLL_PRE_PAUSE', 'skipped_burst')
-  }
-  await haltIfNeeded(shouldHalt)
-
-  const beforeScroll = await getStableVideoKey(page)
-  await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
-  await haltIfNeeded(shouldHalt)
-  await ensureAdvancedAfterScroll(page, log, shouldHalt, beforeScroll)
-
-  videosSinceLongBreak += 1
-
-  if (randomChance(45)) {
-    await sleepMsHaltable(shouldHalt, randomInt(2000, 6000))
-    log('PAUSE_BETWEEN_VIDEOS', '2–6s')
-  }
-
-  if (videosSinceLongBreak >= nextLongBreakEvery) {
-    const longMs = randomInt(15000, 45000)
-    log('PAUSE_LONG_BREAK', `every_${nextLongBreakEvery}_videos ${longMs}ms`)
-    await sleepMsHaltable(shouldHalt, longMs)
-    resetLongBreakSchedule()
-  }
-
-  await haltIfNeeded(shouldHalt)
 }
