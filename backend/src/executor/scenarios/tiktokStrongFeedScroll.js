@@ -1,59 +1,15 @@
 /**
- * TikTok FYP: focus `[data-e2e="feed-active-video"]`, keyboard scroll (ArrowDown + PageDown), wheel only as fallback.
- * Down-only: no ArrowUp / PageUp. No large center click — fixed offset click on active video container.
+ * Legacy TikTok FYP scroll for **human feed** path only (`tiktokFeedHumanScenario.js`).
+ * SAFE_TIKTOK_FEED_MODE must NOT import this file — use `safeTikTokOneVideoScroll.js` only.
  */
 
 import { randomInt, sleep } from '../asyncUtils.js'
-import { ExecutorHaltError } from '../executorHalt.js'
-
-/**
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- */
-export async function tiktokScrollHaltIfNeeded(shouldHalt) {
-  if (!shouldHalt) return
-  const v = await shouldHalt()
-  if (v === 'stop') throw new ExecutorHaltError('stop')
-  if (v === 'max_duration') throw new ExecutorHaltError('max_duration')
-}
-
-/**
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- * @param {number} ms
- */
-export async function tiktokScrollSleepMsHaltable(shouldHalt, ms) {
-  let left = Math.max(0, Math.floor(Number(ms) || 0))
-  while (left > 0) {
-    await tiktokScrollHaltIfNeeded(shouldHalt)
-    const step = Math.min(400, left)
-    await sleep(step)
-    left -= step
-  }
-}
-
-/**
- * @param {string} before
- * @param {string} after
- */
-export function tiktokStableKeyAdvanced(before, after) {
-  const b = String(before ?? '').trim()
-  const a = String(after ?? '').trim()
-  if (!b) return Boolean(a)
-  return Boolean(a) && a !== b
-}
-
-/**
- * @param {import('playwright').Page} page
- * @param {number} dy
- * @param {(action: string, details?: string) => void} log
- */
-export async function tiktokWheelDownOnly(page, dy, log) {
-  const n = Number(dy)
-  if (!Number.isFinite(n) || n <= 0) {
-    log('BLOCKED_UPWARD_MOVEMENT', `wheel rejected non-positive dy=${String(dy)}`)
-    return
-  }
-  await page.mouse.wheel(0, n)
-}
+import {
+  tiktokScrollHaltIfNeeded,
+  tiktokScrollSleepMsHaltable,
+  tiktokStableKeyAdvanced,
+  tiktokWheelDownOnly,
+} from './tiktokScrollHelpers.js'
 
 /**
  * Focus active FYP card: fixed click inside feed-active-video (not viewport center).

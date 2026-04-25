@@ -147,16 +147,6 @@ async function getStableVideoKey(page) {
 }
 
 /**
- * One FYP scroll: focus active feed target + strong wheel + retry (stable key).
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- */
-async function scrollDownOnce(page, log, shouldHalt) {
-  await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
-}
-
-/**
  * Click "For You" nav to leave LIVE room — no scrolling the stream (no wheel / ArrowDown / PageDown on feed).
  * @param {import('playwright').Page} page
  */
@@ -370,7 +360,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
   }
 
   const beforeScroll = await getStableVideoKey(page)
-  await scrollDownOnce(page, log, shouldHalt)
+  await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
   await haltIfNeeded(shouldHalt)
   await ensureAdvancedAfterScroll(page, log, shouldHalt, beforeScroll)
 

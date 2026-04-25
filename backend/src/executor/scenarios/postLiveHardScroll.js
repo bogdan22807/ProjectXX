@@ -4,7 +4,7 @@
  */
 
 import { runSafeTikTokControlledOneVideoScroll } from './safeTikTokOneVideoScroll.js'
-import { tiktokScrollHaltIfNeeded, tiktokStableKeyAdvanced } from './tiktokStrongFeedScroll.js'
+import { tiktokScrollHaltIfNeeded, tiktokStableKeyAdvanced } from './tiktokScrollHelpers.js'
 
 /**
  * @param {{

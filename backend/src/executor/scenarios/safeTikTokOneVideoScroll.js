@@ -1,6 +1,6 @@
 /**
- * SAFE_TIKTOK_FEED_MODE only: strictly one advance attempt per call (max 2× ArrowDown, no PageDown).
- * PageDown is omitted — on TikTok it often skips multiple videos in one keypress.
+ * SAFE_TIKTOK_FEED_MODE only: at most one ArrowDown per attempt (2 attempts), then one PageDown fallback.
+ * PageDown is last resort only (can skip multiple videos; we never chain it).
  */
 
 import { randomInt, sleep } from '../asyncUtils.js'
@@ -8,7 +8,7 @@ import {
   tiktokScrollHaltIfNeeded,
   tiktokScrollSleepMsHaltable,
   tiktokStableKeyAdvanced,
-} from './tiktokStrongFeedScroll.js'
+} from './tiktokScrollHelpers.js'
 
 /**
  * @param {import('playwright').Page} page
@@ -69,8 +69,7 @@ async function focusActiveFeedVideo(page, log, shouldHalt) {
 }
 
 /**
- * Single one-video attempt: focus → one ArrowDown → wait → if same key, one retry ArrowDown only.
- * No PageDown. No third/fourth keypress in one invocation.
+ * Single one-video attempt: focus → ArrowDown (×2 max, one keypress each) → optional one PageDown fallback.
  *
  * @returns {Promise<boolean>} true if stable key changed vs initial `before`
  */
@@ -115,6 +114,30 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
     }
   }
 
-  log('SCROLL_STILL_STUCK', 'stable_key_unchanged_after_2_ArrowDown')
+  if (safePageClosed(page)) {
+    log('PAGE_CLOSED_DURING_STOP', 'before_PageDown_fallback')
+    return false
+  }
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  log('SCROLL_PAGEDOWN_FALLBACK', 'after_2_ArrowDown_unchanged')
+  try {
+    await page.keyboard.press('PageDown')
+  } catch {
+    if (safePageClosed(page)) {
+      log('PAGE_CLOSED_DURING_STOP', 'during_PageDown')
+      return false
+    }
+  }
+  await tiktokScrollSleepMsHaltable(shouldHalt, randomInt(800, 1200))
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+
+  const afterPd = await safeReadStableKey(page, getStableKey)
+  if (tiktokStableKeyAdvanced(before, afterPd)) {
+    log('SCROLL_KEY_CHANGED', 'after_PageDown_fallback')
+    log('SCROLL_SUCCESS', 'PageDown_fallback')
+    return true
+  }
+
+  log('SCROLL_STILL_STUCK', 'stable_key_unchanged_after_ArrowDown_x2_and_PageDown')
   return false
 }
