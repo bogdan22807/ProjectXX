@@ -7,6 +7,11 @@
 
 import { randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { tiktokStableKeyAdvanced, tiktokWheelDownOnly } from './tiktokScrollHelpers.js'
+import {
+  focusPrimaryFeedVideo,
+  readStableKeyFromFeedRoot,
+  resolvePrimaryFeedRoot,
+} from './tiktokFeedLayout.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
 import { runSafeTikTokControlledOneVideoScroll } from './safeTikTokOneVideoScroll.js'
@@ -224,59 +229,14 @@ async function detectLiveFeedCard(page) {
 }
 
 /**
- * Stable key when TikTok omits `feed-active-video` (e.g. some Fox builds): first article with video + @ link.
- * @param {import('playwright').Page} page
- */
-async function getStableVideoKeyFromArticleFeed(page) {
-  try {
-    if (page.isClosed()) return ''
-    const articles = page.locator('article')
-    const n = await articles.count().catch(() => 0)
-    for (let i = 0; i < Math.min(n, 8); i += 1) {
-      const art = articles.nth(i)
-      const vcnt = await art.locator('video').count().catch(() => 0)
-      if (vcnt === 0) continue
-      const href =
-        (await art.locator('a[href*="/@"]').first().getAttribute('href').catch(() => null)) ??
-        (await art.locator('[data-e2e="video-author-uniqueid"] a').first().getAttribute('href').catch(() => null)) ??
-        ''
-      const src = (await art.locator('video').first().getAttribute('src').catch(() => null)) ?? ''
-      const slice = `${String(href).trim()}|${String(src).trim().slice(0, 160)}`.trim()
-      if (slice && slice !== '|') return `art|${slice}`.slice(0, 400)
-    }
-    const v0 = page.locator('video').first()
-    if ((await v0.count().catch(() => 0)) === 0) return ''
-    const src0 = (await v0.getAttribute('src').catch(() => null)) ?? ''
-    const poster0 = (await v0.getAttribute('poster').catch(() => null)) ?? ''
-    return `vid|${String(src0).trim().slice(0, 180)}|${String(poster0).trim().slice(0, 120)}`.slice(0, 400)
-  } catch {
-    return ''
-  }
-}
-
-/**
- * Stable key: author profile link + video src prefix (primary e2e card, else article/video fallback).
+ * Stable key: same primary card as scroll/focus (`resolvePrimaryFeedRoot` + href|src).
  * @param {import('playwright').Page} page
  */
 async function getStableVideoKey(page) {
   try {
     if (page.isClosed()) return ''
-    const root = page.locator('[data-e2e="feed-active-video"]').first()
-    let cnt = 0
-    try {
-      cnt = await root.count()
-    } catch {
-      if (page.isClosed()) return ''
-      return ''
-    }
-    if (cnt > 0) {
-      const href =
-        (await root.locator('[data-e2e="video-author-uniqueid"] a').first().getAttribute('href').catch(() => null)) ??
-        ''
-      const src = (await root.locator('video').first().getAttribute('src').catch(() => null)) ?? ''
-      return `${String(href).trim()}|${String(src).trim().slice(0, 160)}`.slice(0, 400)
-    }
-    return await getStableVideoKeyFromArticleFeed(page)
+    const info = await resolvePrimaryFeedRoot(page)
+    return await readStableKeyFromFeedRoot(page, info)
   } catch {
     return ''
   }
@@ -484,33 +444,60 @@ function feedActiveRoot(page) {
   return page.locator('[data-e2e="feed-active-video"]').first()
 }
 
+/** Largest article / e2e card — same as scroll key (for scoping like/comment/author). */
+async function primaryFeedRoot(page) {
+  const info = await resolvePrimaryFeedRoot(page)
+  if (!info || (info.kind !== 'e2e' && info.kind !== 'article')) return null
+  return info.root
+}
+
 /**
- * Bring feed card + video into view and tap once so engagement controls receive events (TikTok FYP).
+ * Bring primary feed card + video into view (same logic as scroll focus) so like/comment/profile hit the main column.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
 async function focusFeedCardForRichActions(page, log, shouldHalt) {
-  const feed = feedActiveRoot(page)
-  if ((await feed.count().catch(() => 0)) === 0) {
-    log('RICH_FOCUS', 'no_feed_active_video_skip')
+  const info = await resolvePrimaryFeedRoot(page)
+  if (info?.kind === 'e2e') {
+    try {
+      await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+    } catch {
+      /* ignore */
+    }
+    await sleepMsHaltable(shouldHalt, randomInt(250, 550))
+    await haltIfNeeded(shouldHalt)
+    const vid = info.root.locator('video').first()
+    if ((await vid.count().catch(() => 0)) > 0) {
+      await vid.click({ position: { x: 48, y: 48 }, timeout: 5000 }).catch(() => {})
+      log('RICH_FOCUS', 'feed_active_video inner_video')
+    } else {
+      await info.root.click({ position: { x: 52, y: 52 }, timeout: 5000 }).catch(() => {})
+      log('RICH_FOCUS', 'feed_active_video container')
+    }
+    await sleepMsHaltable(shouldHalt, randomInt(350, 800))
+    await haltIfNeeded(shouldHalt)
     return
   }
-  try {
-    await feed.scrollIntoViewIfNeeded({ timeout: 8000 })
-  } catch {
-    /* ignore */
+  if (info?.kind === 'article') {
+    try {
+      const vid = info.root.locator('video').first()
+      await vid.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+    } catch {
+      /* ignore */
+    }
+    await sleepMsHaltable(shouldHalt, randomInt(250, 550))
+    await haltIfNeeded(shouldHalt)
+    const vid = info.root.locator('video').first()
+    if ((await vid.count().catch(() => 0)) > 0) {
+      await vid.click({ position: { x: 48, y: 52 }, timeout: 5000 }).catch(() => {})
+      log('RICH_FOCUS', 'largest_article_video')
+    }
+    await sleepMsHaltable(shouldHalt, randomInt(350, 800))
+    await haltIfNeeded(shouldHalt)
+    return
   }
-  await sleepMsHaltable(shouldHalt, randomInt(250, 550))
-  await haltIfNeeded(shouldHalt)
-  const vid = feed.locator('video').first()
-  if ((await vid.count().catch(() => 0)) > 0) {
-    await vid.click({ position: { x: 48, y: 48 }, timeout: 5000 }).catch(() => {})
-    log('RICH_FOCUS', 'feed_active_video inner_video')
-  } else {
-    await feed.click({ position: { x: 52, y: 52 }, timeout: 5000 }).catch(() => {})
-    log('RICH_FOCUS', 'feed_active_video container')
-  }
+  await focusPrimaryFeedVideo(page, log, shouldHalt, 'RICH_FOCUS')
   await sleepMsHaltable(shouldHalt, randomInt(350, 800))
   await haltIfNeeded(shouldHalt)
 }
@@ -574,6 +561,7 @@ async function tryClickRichControl(loc, log, shouldHalt, label) {
  * @param {import('playwright').Page} page
  */
 async function readLikePressedState(page) {
+  const primary = await primaryFeedRoot(page)
   const feed = feedActiveRoot(page)
   const scopedSelectors = [
     '[data-e2e="browse-like-icon"]',
@@ -590,6 +578,11 @@ async function readLikePressedState(page) {
     const cls = (await loc.getAttribute('class').catch(() => '')) ?? ''
     if (/fill|liked|active/i.test(cls)) return true
     return false
+  }
+  if (primary) {
+    for (const sel of scopedSelectors) {
+      if (await tryLoc(primary.locator(sel).first())) return true
+    }
   }
   if ((await feed.count().catch(() => 0)) > 0) {
     for (const sel of scopedSelectors) {
@@ -619,6 +612,8 @@ async function tryLikeWithVerify(page, log, shouldHalt) {
 
   await focusFeedCardForRichActions(page, log, shouldHalt)
 
+  const primary = await primaryFeedRoot(page)
+
   const likeSelectors = [
     '[data-e2e="browse-like-icon"]',
     '[data-e2e="like-icon"]',
@@ -632,6 +627,11 @@ async function tryLikeWithVerify(page, log, shouldHalt) {
   const feed = feedActiveRoot(page)
   /** @type {{ loc: import('playwright').Locator; label: string }[]} */
   const candidates = []
+  if (primary) {
+    for (const sel of likeSelectors) {
+      candidates.push({ loc: primary.locator(sel).first(), label: `primary>${sel}` })
+    }
+  }
   if ((await feed.count().catch(() => 0)) > 0) {
     for (const sel of likeSelectors) {
       candidates.push({ loc: feed.locator(sel).first(), label: `feed>${sel}` })
@@ -698,9 +698,15 @@ async function tryCommentsPeek(page, log, shouldHalt) {
 
   await focusFeedCardForRichActions(page, log, shouldHalt)
 
+  const primary = await primaryFeedRoot(page)
   const feed = feedActiveRoot(page)
   /** @type {{ loc: import('playwright').Locator; label: string }[]} */
   const candidates = []
+  if (primary) {
+    for (const sel of COMMENT_ICON_SELECTORS) {
+      candidates.push({ loc: primary.locator(sel).first(), label: `primary>${sel}` })
+    }
+  }
   if ((await feed.count().catch(() => 0)) > 0) {
     for (const sel of COMMENT_ICON_SELECTORS) {
       candidates.push({ loc: feed.locator(sel).first(), label: `feed>${sel}` })
@@ -780,8 +786,19 @@ async function tryProfilePeek(page, log, shouldHalt) {
 
   await focusFeedCardForRichActions(page, log, shouldHalt)
 
+  const primary = await primaryFeedRoot(page)
   const feed = feedActiveRoot(page)
-  const authorCandidates = [
+  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
+  const authorCandidates = []
+  if (primary) {
+    authorCandidates.push(
+      { loc: primary.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'primary>video-author-uniqueid>a' },
+      { loc: primary.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'primary>video-author-uniqueid' },
+      { loc: primary.locator('a[href^="/@"]').first(), label: 'primary>a_href_/@' },
+      { loc: primary.locator('a[href*="@"]').first(), label: 'primary>a_href_@' },
+    )
+  }
+  authorCandidates.push(
     { loc: feed.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'feed>video-author-uniqueid>a' },
     { loc: feed.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'feed>video-author-uniqueid' },
     { loc: feed.locator('a[href^="/@"]').first(), label: 'feed>a_href_/@' },
@@ -790,7 +807,7 @@ async function tryProfilePeek(page, log, shouldHalt) {
     { loc: page.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'page>video-author-uniqueid' },
     { loc: page.locator('[data-e2e="feed-active-video"] a[href^="/@"]').first(), label: 'page>feed-active>a_/@' },
     { loc: page.locator('[data-e2e="feed-active-video"] a[href*="@"]').first(), label: 'page>feed-active-video>a_@' },
-  ]
+  )
   let authorLabel = ''
   let clicked = false
   for (const { loc, label } of authorCandidates) {
