@@ -1,6 +1,6 @@
 /**
- * SAFE_TIKTOK_FEED_MODE only: one-video-at-a-time FYP scroll (no strong wheel, no center click).
- * Down-only: ArrowDown / PageDown only; no ArrowUp / PageUp / goBack.
+ * SAFE_TIKTOK_FEED_MODE only: strictly one advance attempt per call (max 2× ArrowDown, no PageDown).
+ * PageDown is omitted — on TikTok it often skips multiple videos in one keypress.
  */
 
 import { randomInt, sleep } from '../asyncUtils.js'
@@ -35,7 +35,7 @@ async function safeReadStableKey(page, getStableKey) {
 }
 
 /**
- * Focus `[data-e2e="feed-active-video"]` — prefer click on inner `video`.
+ * Focus `[data-e2e="feed-active-video"]` — click inner `video` or container corner.
  * @returns {Promise<boolean>}
  */
 async function focusActiveFeedVideo(page, log, shouldHalt) {
@@ -69,12 +69,10 @@ async function focusActiveFeedVideo(page, log, shouldHalt) {
 }
 
 /**
- * At most one feed slot change: focus → up to 3× (one ArrowDown + wait + key check) → optional one PageDown.
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- * @param {() => Promise<string>} getStableKey
- * @returns {Promise<boolean>}
+ * Single one-video attempt: focus → one ArrowDown → wait → if same key, one retry ArrowDown only.
+ * No PageDown. No third/fourth keypress in one invocation.
+ *
+ * @returns {Promise<boolean>} true if stable key changed vs initial `before`
  */
 export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, getStableKey) {
   if (safePageClosed(page)) {
@@ -85,10 +83,10 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
   const before = await safeReadStableKey(page, getStableKey)
   const focused = await focusActiveFeedVideo(page, log, shouldHalt)
   if (!focused) {
-    log('SCROLL_VIDEO_FOCUS_FAILED', 'keyboard_fallback')
+    log('SCROLL_VIDEO_FOCUS_FAILED', 'keyboard_without_focus_click')
   }
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
     if (safePageClosed(page)) {
       log('PAGE_CLOSED_DURING_STOP', `after_attempt_${attempt}`)
       return false
@@ -112,35 +110,11 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
       log('SCROLL_SUCCESS', 'ArrowDown')
       return true
     }
-    if (attempt < 3) {
-      log('SCROLL_RETRY', `ArrowDown attempt=${attempt}`)
+    if (attempt === 1) {
+      log('SCROLL_RETRY', 'second_ArrowDown_only')
     }
   }
 
-  if (safePageClosed(page)) {
-    log('PAGE_CLOSED_DURING_STOP', 'before_PageDown_fallback')
-    return false
-  }
-
-  log('SCROLL_PAGEDOWN_FALLBACK', 'after_3_ArrowDown')
-  try {
-    await page.keyboard.press('PageDown')
-  } catch {
-    if (safePageClosed(page)) {
-      log('PAGE_CLOSED_DURING_STOP', 'during_PageDown')
-      return false
-    }
-  }
-  await tiktokScrollSleepMsHaltable(shouldHalt, randomInt(800, 1200))
-  await tiktokScrollHaltIfNeeded(shouldHalt)
-
-  const afterPd = await safeReadStableKey(page, getStableKey)
-  if (tiktokStableKeyAdvanced(before, afterPd)) {
-    log('SCROLL_KEY_CHANGED', 'after_PageDown')
-    log('SCROLL_SUCCESS', 'PageDown')
-    return true
-  }
-
-  log('SCROLL_STILL_STUCK', 'stable_key_unchanged')
+  log('SCROLL_STILL_STUCK', 'stable_key_unchanged_after_2_ArrowDown')
   return false
 }

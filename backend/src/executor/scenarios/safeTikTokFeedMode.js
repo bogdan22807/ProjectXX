@@ -3,7 +3,7 @@
  *
  * Rules: single initial `goto` is outside this module (playwrightTestRun). Here: no goto/reload/goBack,
  * no PageUp/ArrowUp/wheel dy<0, no profile. VIEW_VIDEO (6–14s) → controlled one-video scroll → rare like (3–5%).
- * LIVE card: two controlled scrolls; POST_LIVE only if key unchanged (same one-video logic).
+ * LIVE card: one controlled scroll; POST_LIVE at most one extra pass if key unchanged.
  * LIVE surface (/live): only navigate to For You tab (clicks); no wheel/keyboard scroll on stream, no VIEW_VIDEO/LIKE.
  * Challenge: log + status `challenge_detected` + throw ExecutorHaltError('challenge') to end run.
  */
@@ -212,18 +212,14 @@ async function handleLiveFeedCard(page, log, shouldHalt) {
   log('LIVE_DETECTED', 'FYP LIVE card')
   const k0 = await getStableVideoKey(page)
   await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
-  log('LIVE_SKIP_SCROLL_1', 'controlled_one_video')
-  await sleepMsHaltable(shouldHalt, randomInt(300, 700))
-
-  await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
-  log('LIVE_SKIP_SCROLL_2', 'controlled_one_video')
+  log('LIVE_SKIP_SCROLL', 'controlled_one_video')
 
   await sleepMsHaltable(shouldHalt, randomInt(500, 1200))
   await haltIfNeeded(shouldHalt)
 
   const k1 = await getStableVideoKey(page)
   if (k1 === k0) {
-    log('LIVE_SKIPPED', 'LIVE card — optional POST_LIVE recovery')
+    log('LIVE_SKIPPED', 'LIVE card — optional POST_LIVE one_pass')
     await runPostLiveHardScrollSequence({
       page,
       log,
@@ -231,27 +227,16 @@ async function handleLiveFeedCard(page, log, shouldHalt) {
       getStableKey: () => getStableVideoKey(page),
     })
   } else {
-    log('LIVE_SKIPPED', 'LIVE card — feed advanced without POST_LIVE')
+    log('LIVE_SKIPPED', 'LIVE card — feed advanced')
   }
 }
 
 /**
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- * @param {string} beforeKey
+ * Optional settle after scroll — do not run a second full scroll pass here (avoids 2–3 videos per iteration).
  */
-async function ensureAdvancedAfterScroll(page, log, shouldHalt, beforeKey) {
+async function ensureAdvancedAfterScroll(page, log, shouldHalt, _beforeKey) {
   await sleepMsHaltable(shouldHalt, randomInt(500, 1200))
   await haltIfNeeded(shouldHalt)
-
-  if (!String(beforeKey).trim()) return
-
-  let after = await getStableVideoKey(page)
-  if (!after || after !== beforeKey) return
-
-  log('FEED_STUCK_DETECTED', `sameStableKey len=${beforeKey.length}`)
-  await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
 }
 
 function likePercentThisRun() {

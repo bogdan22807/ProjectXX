@@ -18,7 +18,7 @@ import { tiktokScrollHaltIfNeeded, tiktokStableKeyAdvanced } from './tiktokStron
 export async function runPostLiveHardScrollSequence(opts) {
   const { page, log, shouldHalt, getStableKey } = opts
 
-  const maxRounds = 3
+  const maxRounds = 1
 
   for (let round = 0; round < maxRounds; round += 1) {
     const refAtRound = await getStableKey()
