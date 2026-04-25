@@ -375,9 +375,9 @@ function sampleWatchMsWeighted() {
 
 /** At most one of like | comments | profile | none (cumulative % on one roll). */
 function pickRichActionForVideo() {
-  const likePct = randomInt(2, 4)
-  const comPct = randomInt(1, 2)
-  const profPct = randomInt(1, 2)
+  const likePct = 15
+  const comPct = 5
+  const profPct = 5
   const r = Math.random() * 100
   const cutLike = likePct
   const cutCom = likePct + comPct
