@@ -224,7 +224,38 @@ async function detectLiveFeedCard(page) {
 }
 
 /**
- * Stable key: author profile link + video src prefix.
+ * Stable key when TikTok omits `feed-active-video` (e.g. some Fox builds): first article with video + @ link.
+ * @param {import('playwright').Page} page
+ */
+async function getStableVideoKeyFromArticleFeed(page) {
+  try {
+    if (page.isClosed()) return ''
+    const articles = page.locator('article')
+    const n = await articles.count().catch(() => 0)
+    for (let i = 0; i < Math.min(n, 8); i += 1) {
+      const art = articles.nth(i)
+      const vcnt = await art.locator('video').count().catch(() => 0)
+      if (vcnt === 0) continue
+      const href =
+        (await art.locator('a[href*="/@"]').first().getAttribute('href').catch(() => null)) ??
+        (await art.locator('[data-e2e="video-author-uniqueid"] a').first().getAttribute('href').catch(() => null)) ??
+        ''
+      const src = (await art.locator('video').first().getAttribute('src').catch(() => null)) ?? ''
+      const slice = `${String(href).trim()}|${String(src).trim().slice(0, 160)}`.trim()
+      if (slice && slice !== '|') return `art|${slice}`.slice(0, 400)
+    }
+    const v0 = page.locator('video').first()
+    if ((await v0.count().catch(() => 0)) === 0) return ''
+    const src0 = (await v0.getAttribute('src').catch(() => null)) ?? ''
+    const poster0 = (await v0.getAttribute('poster').catch(() => null)) ?? ''
+    return `vid|${String(src0).trim().slice(0, 180)}|${String(poster0).trim().slice(0, 120)}`.slice(0, 400)
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Stable key: author profile link + video src prefix (primary e2e card, else article/video fallback).
  * @param {import('playwright').Page} page
  */
 async function getStableVideoKey(page) {
@@ -238,11 +269,14 @@ async function getStableVideoKey(page) {
       if (page.isClosed()) return ''
       return ''
     }
-    if (cnt === 0) return ''
-    const href =
-      (await root.locator('[data-e2e="video-author-uniqueid"] a').first().getAttribute('href').catch(() => null)) ?? ''
-    const src = (await root.locator('video').first().getAttribute('src').catch(() => null)) ?? ''
-    return `${String(href).trim()}|${String(src).trim().slice(0, 160)}`.slice(0, 400)
+    if (cnt > 0) {
+      const href =
+        (await root.locator('[data-e2e="video-author-uniqueid"] a').first().getAttribute('href').catch(() => null)) ??
+        ''
+      const src = (await root.locator('video').first().getAttribute('src').catch(() => null)) ?? ''
+      return `${String(href).trim()}|${String(src).trim().slice(0, 160)}`.slice(0, 400)
+    }
+    return await getStableVideoKeyFromArticleFeed(page)
   } catch {
     return ''
   }
