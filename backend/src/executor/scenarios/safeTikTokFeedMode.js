@@ -1,6 +1,7 @@
 /**
  * SAFE_TIKTOK_FEED_MODE — TikTok FYP: controlled one-video scroll, optional single rich action per video
- * (like 15% / comments 5% / profile 5% / else none), weighted watch times, irregular pauses. No goto/reload/goBack, no upward scroll.
+ * (like 15% / comments 5% / profile 5% / else none), weighted watch times, irregular pauses.
+ * Rich actions: focus feed card + scrollIntoView + short waits + expanded selectors before like/comment/profile clicks. No goto/reload/goBack, no upward scroll.
  * LIVE: skip only via controlled scroll; LIVE URL: navigate to For You via nav clicks only.
  */
 
@@ -450,6 +451,92 @@ function feedActiveRoot(page) {
 }
 
 /**
+ * Bring feed card + video into view and tap once so engagement controls receive events (TikTok FYP).
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function focusFeedCardForRichActions(page, log, shouldHalt) {
+  const feed = feedActiveRoot(page)
+  if ((await feed.count().catch(() => 0)) === 0) {
+    log('RICH_FOCUS', 'no_feed_active_video_skip')
+    return
+  }
+  try {
+    await feed.scrollIntoViewIfNeeded({ timeout: 8000 })
+  } catch {
+    /* ignore */
+  }
+  await sleepMsHaltable(shouldHalt, randomInt(250, 550))
+  await haltIfNeeded(shouldHalt)
+  const vid = feed.locator('video').first()
+  if ((await vid.count().catch(() => 0)) > 0) {
+    await vid.click({ position: { x: 48, y: 48 }, timeout: 5000 }).catch(() => {})
+    log('RICH_FOCUS', 'feed_active_video inner_video')
+  } else {
+    await feed.click({ position: { x: 52, y: 52 }, timeout: 5000 }).catch(() => {})
+    log('RICH_FOCUS', 'feed_active_video container')
+  }
+  await sleepMsHaltable(shouldHalt, randomInt(350, 800))
+  await haltIfNeeded(shouldHalt)
+}
+
+/**
+ * @param {import('playwright').Locator} loc
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function scrollControlIntoView(loc, shouldHalt) {
+  try {
+    await loc.scrollIntoViewIfNeeded({ timeout: 6000 })
+  } catch {
+    /* ignore */
+  }
+  await sleepMsHaltable(shouldHalt, randomInt(120, 350))
+  await haltIfNeeded(shouldHalt)
+}
+
+/**
+ * @param {import('playwright').Locator} loc
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function waitRichControlVisible(loc, shouldHalt, maxMs = 4500) {
+  const deadline = Date.now() + Math.max(800, maxMs)
+  while (Date.now() < deadline) {
+    await haltIfNeeded(shouldHalt)
+    if ((await loc.count().catch(() => 0)) === 0) {
+      await sleepMsHaltable(shouldHalt, 200)
+      continue
+    }
+    if (await loc.isVisible().catch(() => false)) return true
+    await sleepMsHaltable(shouldHalt, 220)
+  }
+  return false
+}
+
+/**
+ * @param {import('playwright').Locator} loc
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {string} label
+ * @returns {Promise<boolean>}
+ */
+async function tryClickRichControl(loc, log, shouldHalt, label) {
+  if ((await loc.count().catch(() => 0)) === 0) return false
+  await scrollControlIntoView(loc, shouldHalt)
+  const vis = await waitRichControlVisible(loc, shouldHalt, 5000)
+  if (!vis) {
+    log('RICH_CONTROL_WAIT', `timeout label=${label}`)
+    return false
+  }
+  try {
+    await loc.click({ timeout: 5500 })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * @param {import('playwright').Page} page
  */
 async function readLikePressedState(page) {
@@ -496,14 +583,20 @@ async function tryLikeWithVerify(page, log, shouldHalt) {
     return
   }
 
+  await focusFeedCardForRichActions(page, log, shouldHalt)
+
   const likeSelectors = [
     '[data-e2e="browse-like-icon"]',
     '[data-e2e="like-icon"]',
     '[data-e2e="video-player-like-icon"]',
-    'button[aria-label*="Like" i]',
     '[data-e2e="video-player"] [data-e2e="like-icon"]',
+    '[data-e2e="video-player"] button[aria-label*="Like" i]',
+    '[data-e2e="video-engagement-toolbar"] [data-e2e="like-icon"]',
+    'button[aria-label*="Like" i]',
+    '[data-e2e="strong-like-icon"]',
   ]
   const feed = feedActiveRoot(page)
+  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
   const candidates = []
   if ((await feed.count().catch(() => 0)) > 0) {
     for (const sel of likeSelectors) {
@@ -517,20 +610,21 @@ async function tryLikeWithVerify(page, log, shouldHalt) {
     loc: page.getByRole('button', { name: /\blike\b/i }).first(),
     label: 'role=button_name_like',
   })
+  candidates.push({
+    loc: page.getByLabel(/like/i).first(),
+    label: 'aria_label_like',
+  })
 
   const before = await readLikePressedState(page)
   for (const { loc, label } of candidates) {
     if ((await loc.count().catch(() => 0)) === 0) continue
-    const vis = await loc.isVisible().catch(() => false)
-    if (!vis) continue
-    try {
-      await loc.click({ timeout: 4000 })
-      log('LIKE_CLICK', label)
-    } catch {
-      log('LIKE_TRY_NEXT', `click_failed label=${label}`)
+    const clicked = await tryClickRichControl(loc, log, shouldHalt, label)
+    if (!clicked) {
+      log('LIKE_TRY_NEXT', `not_clickable label=${label}`)
       continue
     }
-    await sleepMsHaltable(shouldHalt, randomInt(350, 700))
+    log('LIKE_CLICK', label)
+    await sleepMsHaltable(shouldHalt, randomInt(450, 900))
     await haltIfNeeded(shouldHalt)
     const after = await readLikePressedState(page)
     if (after && !before) {
@@ -551,8 +645,10 @@ const COMMENT_ICON_SELECTORS = [
   '[data-e2e="browse-comment-icon"]',
   '[data-e2e="comment-icon"]',
   '[data-e2e="video-comment-icon"]',
-  'button[aria-label*="Comment" i]',
   '[data-e2e="video-player"] [data-e2e="comment-icon"]',
+  '[data-e2e="video-player"] button[aria-label*="Comment" i]',
+  '[data-e2e="video-engagement-toolbar"] [data-e2e="comment-icon"]',
+  'button[aria-label*="Comment" i]',
 ]
 
 /**
@@ -565,7 +661,11 @@ async function tryCommentsPeek(page, log, shouldHalt) {
     log('COMMENTS_SKIPPED', 'LIVE')
     return
   }
+
+  await focusFeedCardForRichActions(page, log, shouldHalt)
+
   const feed = feedActiveRoot(page)
+  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
   const candidates = []
   if ((await feed.count().catch(() => 0)) > 0) {
     for (const sel of COMMENT_ICON_SELECTORS) {
@@ -579,36 +679,44 @@ async function tryCommentsPeek(page, log, shouldHalt) {
     loc: page.getByRole('button', { name: /\bcomment\b/i }).first(),
     label: 'role=button_name_comment',
   })
+  candidates.push({
+    loc: page.getByLabel(/comment/i).first(),
+    label: 'aria_label_comment',
+  })
 
   let opened = false
+  let openLabel = ''
   for (const { loc, label } of candidates) {
     if ((await loc.count().catch(() => 0)) === 0) continue
-    if (!(await loc.isVisible().catch(() => false))) continue
-    try {
-      await loc.click({ timeout: 5000 })
+    const ok = await tryClickRichControl(loc, log, shouldHalt, label)
+    if (ok) {
       opened = true
-      log('COMMENTS_OPEN', label)
+      openLabel = label
       break
-    } catch {
-      /* next */
     }
   }
   if (!opened) {
     log('COMMENTS_SKIPPED', 'no control')
     return
   }
+  log('COMMENTS_OPEN', openLabel)
 
-  await sleepMsHaltable(shouldHalt, randomInt(400, 900))
+  await sleepMsHaltable(shouldHalt, randomInt(500, 1100))
   await haltIfNeeded(shouldHalt)
 
   const insideMs = randomInt(4000, 12000)
   await viewVideoWeighted(page, log, shouldHalt, insideMs)
 
   if (randomChance(50)) {
-    const panel = page.locator('[data-e2e="comment-list"], [class*="CommentList"], div[role="dialog"]').first()
-    if ((await panel.count().catch(() => 0)) > 0) {
+    const panel = page
+      .locator(
+        '[data-e2e="comment-list"], [data-e2e="comment-list-scroll"], [class*="CommentList"], [class*="comment-list"], div[role="dialog"]',
+      )
+      .first()
+    if ((await panel.count().catch(() => 0)) > 0 && (await panel.isVisible().catch(() => false))) {
       try {
-        await panel.locator('div').first().click({ timeout: 2000 }).catch(() => {})
+        await panel.scrollIntoViewIfNeeded({ timeout: 4000 }).catch(() => {})
+        await panel.locator('div').first().click({ timeout: 2500 }).catch(() => {})
         await tiktokWheelDownOnly(page, randomInt(200, 450), log)
         log('COMMENTS_SCROLL', 'once_light')
       } catch {
@@ -618,7 +726,7 @@ async function tryCommentsPeek(page, log, shouldHalt) {
   }
 
   await page.keyboard.press('Escape').catch(() => {})
-  await sleepMsHaltable(shouldHalt, randomInt(100, 300))
+  await sleepMsHaltable(shouldHalt, randomInt(150, 400))
   await page.keyboard.press('Escape').catch(() => {})
   log('COMMENTS_CLOSE', 'escape')
   await sleepMsHaltable(shouldHalt, randomInt(1000, 2000))
@@ -635,37 +743,45 @@ async function tryProfilePeek(page, log, shouldHalt) {
     log('PROFILE_SKIPPED', 'LIVE')
     return
   }
+
+  await focusFeedCardForRichActions(page, log, shouldHalt)
+
   const feed = feedActiveRoot(page)
   const authorCandidates = [
+    { loc: feed.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'feed>video-author-uniqueid>a' },
     { loc: feed.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'feed>video-author-uniqueid' },
-    { loc: page.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'page>video-author-uniqueid' },
+    { loc: feed.locator('a[href^="/@"]').first(), label: 'feed>a_href_/@' },
     { loc: feed.locator('a[href*="@"]').first(), label: 'feed>a_href_@' },
+    { loc: page.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'page>video-author-uniqueid>a' },
+    { loc: page.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'page>video-author-uniqueid' },
+    { loc: page.locator('[data-e2e="feed-active-video"] a[href^="/@"]').first(), label: 'page>feed-active>a_/@' },
     { loc: page.locator('[data-e2e="feed-active-video"] a[href*="@"]').first(), label: 'page>feed-active-video>a_@' },
   ]
-  let author = null
   let authorLabel = ''
+  let clicked = false
   for (const { loc, label } of authorCandidates) {
     if ((await loc.count().catch(() => 0)) === 0) continue
-    if (!(await loc.isVisible().catch(() => false))) continue
-    author = loc
-    authorLabel = label
-    break
+    const ok = await tryClickRichControl(loc, log, shouldHalt, label)
+    if (ok) {
+      authorLabel = label
+      clicked = true
+      break
+    }
   }
-  if (!author) {
+  if (!clicked) {
     log('PROFILE_SKIPPED', 'no author')
     return
   }
-  try {
-    await author.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {})
-    await author.click({ timeout: 8000 })
-    log('PROFILE_CLICK', authorLabel)
-  } catch {
-    log('PROFILE_SKIPPED', 'click_failed')
-    return
-  }
+  log('PROFILE_CLICK', authorLabel)
 
-  log('PROFILE_OPEN', page.url().slice(0, 200))
-  await sleepMsHaltable(shouldHalt, randomInt(800, 1500))
+  let openUrl = ''
+  try {
+    openUrl = page.url()
+  } catch {
+    openUrl = ''
+  }
+  log('PROFILE_OPEN', openUrl.slice(0, 200))
+  await sleepMsHaltable(shouldHalt, randomInt(1200, 2200))
   await haltIfNeeded(shouldHalt)
 
   const dwell = randomInt(5000, 15000)
