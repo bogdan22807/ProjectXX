@@ -41,18 +41,27 @@ export async function resolvePrimaryFeedRoot(page) {
     return { kind: 'e2e', root: feed }
   }
 
+  const vp = page.viewportSize()
+  const cx = vp && Number.isFinite(vp.width) ? vp.width * 0.5 : 640
+  const cy = vp && Number.isFinite(vp.height) ? vp.height * 0.42 : 360
+
   const articles = page.locator('article')
   const n = await articles.count().catch(() => 0)
   let bestIdx = -1
-  let bestArea = 0
-  for (let i = 0; i < Math.min(n, 24); i += 1) {
+  let bestScore = -1
+  for (let i = 0; i < Math.min(n, 36); i += 1) {
     const art = articles.nth(i)
     if ((await art.locator('video').count().catch(() => 0)) === 0) continue
     const box = await art.boundingBox().catch(() => null)
     if (!box || box.width < 120 || box.height < 160) continue
+    const mx = box.x + box.width / 2
+    const my = box.y + box.height / 2
+    const dist = Math.hypot(mx - cx, my - cy)
     const area = box.width * box.height
-    if (area > bestArea) {
-      bestArea = area
+    /** Prefer large feed card near viewport center (main column), not small sidebar previews. */
+    const score = area / (80 + dist)
+    if (score > bestScore) {
+      bestScore = score
       bestIdx = i
     }
   }

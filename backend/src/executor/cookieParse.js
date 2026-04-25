@@ -71,7 +71,8 @@ function normalizeCookieList(list, pageUrl) {
     const name = o.name != null ? String(o.name) : ''
     if (!name) continue
     const value = o.value != null ? String(o.value) : ''
-    const path = o.path != null ? String(o.path) : '/'
+    let path = o.path != null ? String(o.path) : '/'
+    path = path.replace(/\\/g, '/').replace(/\/+/g, '/').trim() || '/'
     let domain = o.domain != null ? String(o.domain) : host
     if (!domain) domain = host
     /** @type {import('playwright').Cookie} */
@@ -79,8 +80,9 @@ function normalizeCookieList(list, pageUrl) {
       o.url != null
         ? { name, value, url: String(o.url) }
         : { name, value, domain, path }
-    if (o.expires != null && Number.isFinite(Number(o.expires))) {
-      c.expires = Number(o.expires)
+    const expRaw = o.expires ?? o.expirationDate ?? o.expiration
+    if (expRaw != null && Number.isFinite(Number(expRaw))) {
+      c.expires = Number(expRaw)
     }
     if (o.httpOnly === true) c.httpOnly = true
     if (o.secure === true) c.secure = true
