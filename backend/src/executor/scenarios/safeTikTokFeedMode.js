@@ -1,14 +1,11 @@
 /**
- * SAFE_TIKTOK_FEED_MODE — conservative TikTok FYP loop (stability over “human” tricks).
- *
- * Rules: single initial `goto` is outside this module (playwrightTestRun). Here: no goto/reload/goBack,
- * no PageUp/ArrowUp/wheel dy<0, no profile. VIEW_VIDEO (6–14s) → controlled one-video scroll → rare like (3–5%).
- * LIVE card: one controlled scroll; POST_LIVE at most one extra pass if key unchanged.
- * LIVE surface (/live): only navigate to For You tab (clicks); no wheel/keyboard scroll on stream, no VIEW_VIDEO/LIKE.
- * Challenge: log + status `challenge_detected` + throw ExecutorHaltError('challenge') to end run.
+ * SAFE_TIKTOK_FEED_MODE — TikTok FYP: controlled one-video scroll, optional single rich action per video
+ * (like / comments / profile), weighted watch times, irregular pauses. No goto/reload/goBack, no upward scroll.
+ * LIVE: skip only via controlled scroll; LIVE URL: navigate to For You via nav clicks only.
  */
 
-import { interruptibleRandomDelay, randomChance, randomInt, sleep } from '../asyncUtils.js'
+import { randomChance, randomInt, sleep } from '../asyncUtils.js'
+import { tiktokWheelDownOnly } from './tiktokScrollHelpers.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
 import { runSafeTikTokControlledOneVideoScroll } from './safeTikTokOneVideoScroll.js'
@@ -147,7 +144,6 @@ async function getStableVideoKey(page) {
 }
 
 /**
- * Click "For You" nav to leave LIVE room — no scrolling the stream (no wheel / ArrowDown / PageDown on feed).
  * @param {import('playwright').Page} page
  */
 async function tryClickForYouNav(page) {
@@ -221,41 +217,55 @@ async function handleLiveFeedCard(page, log, shouldHalt) {
   }
 }
 
-/**
- * Optional settle after scroll — do not run a second full scroll pass here (avoids 2–3 videos per iteration).
- */
 async function ensureAdvancedAfterScroll(page, log, shouldHalt, _beforeKey) {
   await sleepMsHaltable(shouldHalt, randomInt(500, 1200))
   await haltIfNeeded(shouldHalt)
 }
 
-function likePercentThisRun() {
-  const raw = process.env.SAFE_TIKTOK_LIKE_PERCENT
-  if (raw != null && String(raw).trim() !== '') {
-    const n = Number(raw)
-    if (Number.isFinite(n)) return Math.min(10, Math.max(0, n))
-  }
-  return randomInt(3, 5)
+/** 25% / 55% / 20% — 2–5s, 7–15s, 16–30s */
+function sampleWatchMsWeighted() {
+  const r = Math.random() * 100
+  if (r < 25) return randomInt(2000, 5000)
+  if (r < 80) return randomInt(7000, 15000)
+  return randomInt(16000, 30000)
+}
+
+/** At most one of like | comments | profile | none */
+function pickRichActionForVideo() {
+  const likePct = randomInt(2, 4)
+  const comPct = randomInt(1, 2)
+  const profPct = randomInt(1, 2)
+  const r = Math.random() * 100
+  if (r < likePct) return 'like'
+  if (r < likePct + comPct) return 'comments'
+  if (r < likePct + comPct + profPct) return 'profile'
+  return 'none'
+}
+
+function minWatchMsForAction(action) {
+  if (action === 'like') return randomInt(6000, 12000)
+  if (action === 'comments') return randomInt(8000, 15000)
+  if (action === 'profile') return randomInt(10000, 18000)
+  return 0
 }
 
 /**
- * VIEW_VIDEO 6–14s with challenge polling.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {number} totalMs
  */
-async function viewVideoSafe(page, log, shouldHalt) {
-  log('VIEW_VIDEO', 'watching 6–14s (SAFE_TIKTOK_FEED_MODE)')
-  const total = randomInt(6000, 14000)
+async function viewVideoWeighted(page, log, shouldHalt, totalMs) {
+  log('VIEW_VIDEO', `watching ${Math.round(totalMs / 100) / 10}s (weighted)`)
   let elapsed = 0
   const chunk = 500
-  while (elapsed < total) {
+  while (elapsed < totalMs) {
     if (await detectChallengeBlocking(page)) {
       log('TIKTOK_CHALLENGE_DETECTED', 'challenge/verify — halting safe feed run')
       throw new ExecutorHaltError('challenge')
     }
     await haltIfNeeded(shouldHalt)
-    const step = Math.min(chunk, total - elapsed)
+    const step = Math.min(chunk, totalMs - elapsed)
     let left = step
     while (left > 0) {
       await haltIfNeeded(shouldHalt)
@@ -268,22 +278,38 @@ async function viewVideoSafe(page, log, shouldHalt) {
 }
 
 /**
- * Rare like — only when not LIVE, not challenge, control visible.
+ * @param {import('playwright').Page} page
+ */
+async function readLikePressedState(page) {
+  const selectors = [
+    '[data-e2e="browse-like-icon"]',
+    '[data-e2e="like-icon"]',
+    '[data-e2e="video-player-like-icon"]',
+    'button[aria-label*="Like" i]',
+  ]
+  for (const sel of selectors) {
+    const loc = page.locator(sel).first()
+    if ((await loc.count().catch(() => 0)) === 0) continue
+    const pressed = await loc.getAttribute('aria-pressed').catch(() => null)
+    if (pressed === 'true') return true
+    const cls = (await loc.getAttribute('class').catch(() => '')) ?? ''
+    if (/fill|liked|active/i.test(cls)) return true
+  }
+  return false
+}
+
+/**
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
-async function maybeLike(page, log, shouldHalt) {
+async function tryLikeWithVerify(page, log, shouldHalt) {
   if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
-    log('LIKE_SKIPPED', 'LIVE — no like')
+    log('LIKE_SKIPPED', 'LIVE')
     return
   }
   if (await detectChallengeBlocking(page)) {
-    log('TIKTOK_CHALLENGE_DETECTED', 'challenge during like window — skip like')
-    return
-  }
-  if (!randomChance(likePercentThisRun())) {
-    log('LIKE_SKIPPED', 'probability skip')
+    log('LIKE_SKIPPED', 'challenge')
     return
   }
 
@@ -298,16 +324,147 @@ async function maybeLike(page, log, shouldHalt) {
     if ((await loc.count()) === 0) continue
     const vis = await loc.isVisible().catch(() => false)
     if (!vis) continue
+    const before = await readLikePressedState(page)
     try {
       await loc.click({ timeout: 4000 })
-      log('LIKE_VIDEO', sel)
-      await interruptibleRandomDelay(400, 900, shouldHalt)
-      return
+      log('LIKE_CLICK', sel)
     } catch {
-      /* try next */
+      log('LIKE_SKIPPED', 'click_failed')
+      return
     }
+    await sleepMsHaltable(shouldHalt, randomInt(350, 700))
+    await haltIfNeeded(shouldHalt)
+    const after = await readLikePressedState(page)
+    if (after && !before) {
+      log('LIKE_VERIFIED', 'state_on')
+    } else if (after && before) {
+      log('LIKE_VERIFIED', 'already_liked')
+    } else {
+      log('LIKE_NOT_VERIFIED', 'no_state_change — continue')
+    }
+    await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
+    await haltIfNeeded(shouldHalt)
+    return
   }
   log('LIKE_SKIPPED', 'no visible like control')
+}
+
+const COMMENT_ICON_SELECTORS = [
+  '[data-e2e="browse-comment-icon"]',
+  '[data-e2e="comment-icon"]',
+  '[data-e2e="video-comment-icon"]',
+  'button[aria-label*="Comment" i]',
+]
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function tryCommentsPeek(page, log, shouldHalt) {
+  if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
+    log('COMMENTS_SKIPPED', 'LIVE')
+    return
+  }
+  let opened = false
+  for (const sel of COMMENT_ICON_SELECTORS) {
+    const loc = page.locator(sel).first()
+    if ((await loc.count()) === 0) continue
+    if (!(await loc.isVisible().catch(() => false))) continue
+    try {
+      await loc.click({ timeout: 5000 })
+      opened = true
+      log('COMMENTS_OPEN', sel)
+      break
+    } catch {
+      /* next */
+    }
+  }
+  if (!opened) {
+    log('COMMENTS_SKIPPED', 'no control')
+    return
+  }
+
+  await sleepMsHaltable(shouldHalt, randomInt(400, 900))
+  await haltIfNeeded(shouldHalt)
+
+  const insideMs = randomInt(4000, 12000)
+  await viewVideoWeighted(page, log, shouldHalt, insideMs)
+
+  if (randomChance(50)) {
+    const panel = page.locator('[data-e2e="comment-list"], [class*="CommentList"], div[role="dialog"]').first()
+    if ((await panel.count().catch(() => 0)) > 0) {
+      try {
+        await panel.locator('div').first().click({ timeout: 2000 }).catch(() => {})
+        await tiktokWheelDownOnly(page, randomInt(200, 450), log)
+        log('COMMENTS_SCROLL', 'once_light')
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  await page.keyboard.press('Escape').catch(() => {})
+  await sleepMsHaltable(shouldHalt, randomInt(100, 300))
+  await page.keyboard.press('Escape').catch(() => {})
+  log('COMMENTS_CLOSE', 'escape')
+  await sleepMsHaltable(shouldHalt, randomInt(1000, 2000))
+  await haltIfNeeded(shouldHalt)
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function tryProfilePeek(page, log, shouldHalt) {
+  if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
+    log('PROFILE_SKIPPED', 'LIVE')
+    return
+  }
+  const author = page.locator('[data-e2e="video-author-uniqueid"]').first()
+  if ((await author.count()) === 0) {
+    log('PROFILE_SKIPPED', 'no author')
+    return
+  }
+  try {
+    await author.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {})
+    await author.click({ timeout: 8000 })
+  } catch {
+    log('PROFILE_SKIPPED', 'click_failed')
+    return
+  }
+
+  log('PROFILE_OPEN', page.url().slice(0, 200))
+  await sleepMsHaltable(shouldHalt, randomInt(800, 1500))
+  await haltIfNeeded(shouldHalt)
+
+  const dwell = randomInt(5000, 15000)
+  await viewVideoWeighted(page, log, shouldHalt, dwell)
+
+  if (randomChance(45)) {
+    try {
+      await tiktokWheelDownOnly(page, randomInt(280, 520), log)
+      log('PROFILE_SCROLL', 'once_light')
+      await sleepMsHaltable(shouldHalt, randomInt(400, 900))
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const ok = await tryClickForYouNav(page)
+  log('PROFILE_EXIT', ok ? 'nav_foryou' : 'nav_failed')
+  await sleepMsHaltable(shouldHalt, randomInt(2000, 4000))
+  await haltIfNeeded(shouldHalt)
+}
+
+/** Feed videos advanced since last long break (module state). */
+let videosSinceLongBreak = 0
+let nextLongBreakEvery = randomInt(8, 15)
+
+function resetLongBreakSchedule() {
+  videosSinceLongBreak = 0
+  nextLongBreakEvery = randomInt(8, 15)
 }
 
 /**
@@ -343,10 +500,16 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
   if (await detectLiveFeedCard(page)) {
     await handleLiveFeedCard(page, log, shouldHalt)
+    videosSinceLongBreak += 1
     return
   }
 
-  await viewVideoSafe(page, log, shouldHalt)
+  const richAction = pickRichActionForVideo()
+  const baseWatch = sampleWatchMsWeighted()
+  const minNeed = minWatchMsForAction(richAction)
+  const watchMs = richAction === 'none' ? baseWatch : Math.max(baseWatch, minNeed)
+
+  await viewVideoWeighted(page, log, shouldHalt, watchMs)
   await haltIfNeeded(shouldHalt)
 
   if (pageInLiveSurfaceUrl(page)) {
@@ -356,16 +519,57 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
   }
   if (await detectLiveFeedCard(page)) {
     await handleLiveFeedCard(page, log, shouldHalt)
+    videosSinceLongBreak += 1
     return
   }
+
+  if (richAction === 'like') {
+    log('RICH_ACTION', 'like')
+    await tryLikeWithVerify(page, log, shouldHalt)
+  } else if (richAction === 'comments') {
+    log('RICH_ACTION', 'comments')
+    await tryCommentsPeek(page, log, shouldHalt)
+  } else if (richAction === 'profile') {
+    log('RICH_ACTION', 'profile')
+    await tryProfilePeek(page, log, shouldHalt)
+  } else {
+    log('RICH_ACTION', 'none')
+  }
+
+  await haltIfNeeded(shouldHalt)
+
+  if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
+    if (await detectLiveFeedCard(page)) await handleLiveFeedCard(page, log, shouldHalt)
+    else await escapeLiveSurface(page, log, shouldHalt)
+    videosSinceLongBreak += 1
+    return
+  }
+
+  if (!randomChance(30)) {
+    await sleepMsHaltable(shouldHalt, randomInt(800, 2500))
+  } else {
+    log('SCROLL_PRE_PAUSE', 'skipped_burst')
+  }
+  await haltIfNeeded(shouldHalt)
 
   const beforeScroll = await getStableVideoKey(page)
   await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
   await haltIfNeeded(shouldHalt)
   await ensureAdvancedAfterScroll(page, log, shouldHalt, beforeScroll)
 
-  await haltIfNeeded(shouldHalt)
-  if (!(await detectLiveFeedCard(page)) && !pageInLiveSurfaceUrl(page)) {
-    await maybeLike(page, log, shouldHalt)
+  videosSinceLongBreak += 1
+
+  if (randomChance(45)) {
+    await sleepMsHaltable(shouldHalt, randomInt(2000, 6000))
+    log('PAUSE_BETWEEN_VIDEOS', '2–6s')
   }
+
+  if (videosSinceLongBreak >= nextLongBreakEvery) {
+    const longMs = randomInt(15000, 45000)
+    log('PAUSE_LONG_BREAK', `every_${nextLongBreakEvery}_videos ${longMs}ms`)
+    await sleepMsHaltable(shouldHalt, longMs)
+    resetLongBreakSchedule()
+  }
+
+  await haltIfNeeded(shouldHalt)
 }
