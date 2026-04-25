@@ -29,7 +29,7 @@ import {
 import { runTikTokHumanFeedIteration } from './scenarios/tiktokFeedHumanScenario.js'
 import { runSafeTikTokFeedIteration } from './scenarios/safeTikTokFeedMode.js'
 import { ExecutorHaltError, isExecutorHaltError } from './executorHalt.js'
-import { interruptibleRandomDelay, randomDelay, sleep, sleepRandom } from './asyncUtils.js'
+import { interruptibleRandomDelay, randomDelay, randomInt, sleep, sleepRandom } from './asyncUtils.js'
 import { isTikTokLogInControlVisible } from './foxTikTokAuth.js'
 
 /**
@@ -254,6 +254,14 @@ function resolveMaxDurationMs(options) {
   return DEFAULT_MAX_DURATION_MS
 }
 
+/** TikTok FYP warmup when caller did not set max duration: 10–23 min with weighted buckets (min resolution: minutes). */
+function pickTikTokWarmupSessionMs() {
+  const r = Math.random() * 100
+  if (r < 40) return randomInt(10, 14) * 60 * 1000
+  if (r < 80) return randomInt(15, 18) * 60 * 1000
+  return randomInt(19, 23) * 60 * 1000
+}
+
 /**
  * @param {string} accountId
  * @param {{ targetUrl?: string; readySelector?: string; debugCheckProxy?: boolean; debugScreenshots?: boolean; headless?: boolean; maxDurationMs?: number; tiktokHumanFeedLoop?: boolean; safeTikTokFeedMode?: boolean; screenshotDir?: string; browserEngine?: string; foxProfileLogin?: boolean }} [options]
@@ -265,7 +273,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
 
   const runId = newId('run')
   const startedAt = Date.now()
-  const maxDurationMs = resolveMaxDurationMs(options)
+  let maxDurationMs = resolveMaxDurationMs(options)
 
   /** @type {PlaywrightRunState} */
   const state = {
@@ -344,6 +352,21 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
       useTikTokFeedLoop &&
       options.safeTikTokFeedMode !== false &&
       String(process.env.TIKTOK_LEGACY_HUMAN_FEED ?? '').trim() !== '1'
+
+    const explicitMaxDuration =
+      options != null && options.maxDurationMs != null && Number(options.maxDurationMs) > 0
+    const envMaxDuration = Number.isFinite(Number(process.env.PLAYWRIGHT_MAX_DURATION_MS)) &&
+      Number(process.env.PLAYWRIGHT_MAX_DURATION_MS) > 0
+    if (
+      useTikTokFeedLoop &&
+      useSafeTikTokFeedMode &&
+      !foxProfileLoginMode &&
+      !explicitMaxDuration &&
+      !envMaxDuration
+    ) {
+      maxDurationMs = pickTikTokWarmupSessionMs()
+      state.maxDurationMs = maxDurationMs
+    }
 
     if (!foxProfileLoginMode) {
       updateStatus(accountId, 'Running')
