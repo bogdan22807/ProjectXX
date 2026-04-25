@@ -373,16 +373,20 @@ function sampleWatchMsWeighted() {
   return randomInt(16000, 30000)
 }
 
-/** At most one of like | comments | profile | none */
+/** At most one of like | comments | profile | none (cumulative % on one roll). */
 function pickRichActionForVideo() {
   const likePct = randomInt(2, 4)
   const comPct = randomInt(1, 2)
   const profPct = randomInt(1, 2)
   const r = Math.random() * 100
-  if (r < likePct) return 'like'
-  if (r < likePct + comPct) return 'comments'
-  if (r < likePct + comPct + profPct) return 'profile'
-  return 'none'
+  const cutLike = likePct
+  const cutCom = likePct + comPct
+  const cutProf = likePct + comPct + profPct
+  let pick = 'none'
+  if (r < cutLike) pick = 'like'
+  else if (r < cutCom) pick = 'comments'
+  else if (r < cutProf) pick = 'profile'
+  return { pick, likePct, comPct, profPct, roll: r, cutLike, cutCom, cutProf }
 }
 
 function minWatchMsForAction(action) {
@@ -420,23 +424,39 @@ async function viewVideoWeighted(page, log, shouldHalt, totalMs) {
   }
 }
 
+/** Active FYP card root when present (empty locator if count 0 — callers use count). */
+function feedActiveRoot(page) {
+  return page.locator('[data-e2e="feed-active-video"]').first()
+}
+
 /**
  * @param {import('playwright').Page} page
  */
 async function readLikePressedState(page) {
-  const selectors = [
+  const feed = feedActiveRoot(page)
+  const scopedSelectors = [
     '[data-e2e="browse-like-icon"]',
     '[data-e2e="like-icon"]',
     '[data-e2e="video-player-like-icon"]',
     'button[aria-label*="Like" i]',
+    '[data-e2e="video-player"] [data-e2e="like-icon"]',
   ]
-  for (const sel of selectors) {
-    const loc = page.locator(sel).first()
-    if ((await loc.count().catch(() => 0)) === 0) continue
+  /** @param {import('playwright').Locator} loc */
+  const tryLoc = async (loc) => {
+    if ((await loc.count().catch(() => 0)) === 0) return false
     const pressed = await loc.getAttribute('aria-pressed').catch(() => null)
     if (pressed === 'true') return true
     const cls = (await loc.getAttribute('class').catch(() => '')) ?? ''
     if (/fill|liked|active/i.test(cls)) return true
+    return false
+  }
+  if ((await feed.count().catch(() => 0)) > 0) {
+    for (const sel of scopedSelectors) {
+      if (await tryLoc(feed.locator(sel).first())) return true
+    }
+  }
+  for (const sel of scopedSelectors) {
+    if (await tryLoc(page.locator(sel).first())) return true
   }
   return false
 }
@@ -461,19 +481,34 @@ async function tryLikeWithVerify(page, log, shouldHalt) {
     '[data-e2e="like-icon"]',
     '[data-e2e="video-player-like-icon"]',
     'button[aria-label*="Like" i]',
+    '[data-e2e="video-player"] [data-e2e="like-icon"]',
   ]
+  const feed = feedActiveRoot(page)
+  const candidates = []
+  if ((await feed.count().catch(() => 0)) > 0) {
+    for (const sel of likeSelectors) {
+      candidates.push({ loc: feed.locator(sel).first(), label: `feed>${sel}` })
+    }
+  }
   for (const sel of likeSelectors) {
-    const loc = page.locator(sel).first()
-    if ((await loc.count()) === 0) continue
+    candidates.push({ loc: page.locator(sel).first(), label: sel })
+  }
+  candidates.push({
+    loc: page.getByRole('button', { name: /\blike\b/i }).first(),
+    label: 'role=button_name_like',
+  })
+
+  const before = await readLikePressedState(page)
+  for (const { loc, label } of candidates) {
+    if ((await loc.count().catch(() => 0)) === 0) continue
     const vis = await loc.isVisible().catch(() => false)
     if (!vis) continue
-    const before = await readLikePressedState(page)
     try {
       await loc.click({ timeout: 4000 })
-      log('LIKE_CLICK', sel)
+      log('LIKE_CLICK', label)
     } catch {
-      log('LIKE_SKIPPED', 'click_failed')
-      return
+      log('LIKE_TRY_NEXT', `click_failed label=${label}`)
+      continue
     }
     await sleepMsHaltable(shouldHalt, randomInt(350, 700))
     await haltIfNeeded(shouldHalt)
@@ -497,6 +532,7 @@ const COMMENT_ICON_SELECTORS = [
   '[data-e2e="comment-icon"]',
   '[data-e2e="video-comment-icon"]',
   'button[aria-label*="Comment" i]',
+  '[data-e2e="video-player"] [data-e2e="comment-icon"]',
 ]
 
 /**
@@ -509,15 +545,29 @@ async function tryCommentsPeek(page, log, shouldHalt) {
     log('COMMENTS_SKIPPED', 'LIVE')
     return
   }
-  let opened = false
+  const feed = feedActiveRoot(page)
+  const candidates = []
+  if ((await feed.count().catch(() => 0)) > 0) {
+    for (const sel of COMMENT_ICON_SELECTORS) {
+      candidates.push({ loc: feed.locator(sel).first(), label: `feed>${sel}` })
+    }
+  }
   for (const sel of COMMENT_ICON_SELECTORS) {
-    const loc = page.locator(sel).first()
-    if ((await loc.count()) === 0) continue
+    candidates.push({ loc: page.locator(sel).first(), label: sel })
+  }
+  candidates.push({
+    loc: page.getByRole('button', { name: /\bcomment\b/i }).first(),
+    label: 'role=button_name_comment',
+  })
+
+  let opened = false
+  for (const { loc, label } of candidates) {
+    if ((await loc.count().catch(() => 0)) === 0) continue
     if (!(await loc.isVisible().catch(() => false))) continue
     try {
       await loc.click({ timeout: 5000 })
       opened = true
-      log('COMMENTS_OPEN', sel)
+      log('COMMENTS_OPEN', label)
       break
     } catch {
       /* next */
@@ -565,14 +615,30 @@ async function tryProfilePeek(page, log, shouldHalt) {
     log('PROFILE_SKIPPED', 'LIVE')
     return
   }
-  const author = page.locator('[data-e2e="video-author-uniqueid"]').first()
-  if ((await author.count()) === 0) {
+  const feed = feedActiveRoot(page)
+  const authorCandidates = [
+    { loc: feed.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'feed>video-author-uniqueid' },
+    { loc: page.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'page>video-author-uniqueid' },
+    { loc: feed.locator('a[href*="@"]').first(), label: 'feed>a_href_@' },
+    { loc: page.locator('[data-e2e="feed-active-video"] a[href*="@"]').first(), label: 'page>feed-active-video>a_@' },
+  ]
+  let author = null
+  let authorLabel = ''
+  for (const { loc, label } of authorCandidates) {
+    if ((await loc.count().catch(() => 0)) === 0) continue
+    if (!(await loc.isVisible().catch(() => false))) continue
+    author = loc
+    authorLabel = label
+    break
+  }
+  if (!author) {
     log('PROFILE_SKIPPED', 'no author')
     return
   }
   try {
     await author.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => {})
     await author.click({ timeout: 8000 })
+    log('PROFILE_CLICK', authorLabel)
   } catch {
     log('PROFILE_SKIPPED', 'click_failed')
     return
@@ -707,8 +773,13 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       return
     }
 
-    const richAction = pickRichActionForVideo()
+    const roll = pickRichActionForVideo()
+    const richAction = roll.pick
     sum.richAction = richAction
+    log(
+      'RICH_ACTION_ROLL',
+      `pick=${richAction} r=${roll.roll.toFixed(2)} like<=${roll.cutLike} com<=${roll.cutCom} prof<=${roll.cutProf} (like%=${roll.likePct} com%=${roll.comPct} prof%=${roll.profPct} none≈${(100 - roll.cutProf).toFixed(0)}%)`,
+    )
     const baseWatch = sampleWatchMsWeighted()
     const minNeed = minWatchMsForAction(richAction)
     const watchMs = richAction === 'none' ? baseWatch : Math.max(baseWatch, minNeed)
