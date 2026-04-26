@@ -1,6 +1,6 @@
 /**
  * SAFE_TIKTOK_FEED_MODE — TikTok FYP: controlled one-video scroll, optional single rich action per video
- * (like 15% / comments 5% / profile 5% / else none), weighted watch times, irregular pauses.
+ * (like 40% / comments 35% / profile 20% / else none ~5%), weighted watch times, irregular pauses.
  * Rich actions: focus feed card + scrollIntoView + short waits + expanded selectors before like/comment/profile clicks. No goto/reload/goBack, no upward scroll.
  * LIVE: skip only via controlled scroll; LIVE URL: navigate to For You via nav clicks only.
  */
@@ -45,6 +45,19 @@ function pageInLiveSurfaceUrl(page) {
     return new URL(page.url()).pathname.toLowerCase().includes('/live')
   } catch {
     return String(page.url()).toLowerCase().includes('/live')
+  }
+}
+
+/** On TikTok FYP URL (for You tab) — used before scroll after rich actions to avoid profile URL + scroll clash. */
+function isTikTokFypUrl(page) {
+  try {
+    const u = new URL(page.url())
+    if (!u.hostname.toLowerCase().includes('tiktok.com')) return false
+    const p = u.pathname.toLowerCase()
+    return p.includes('/foryou') || p === '/' || p === ''
+  } catch {
+    const s = String(page.url()).toLowerCase()
+    return s.includes('tiktok.com') && (s.includes('/foryou') || /tiktok\.com\/?($|\?)/.test(s))
   }
 }
 
@@ -390,9 +403,9 @@ function sampleWatchMsWeighted() {
 
 /** At most one of like | comments | profile | none (cumulative % on one roll). */
 function pickRichActionForVideo() {
-  const likePct = 15
-  const comPct = 5
-  const profPct = 5
+  const likePct = 40
+  const comPct = 35
+  const profPct = 20
   const r = Math.random() * 100
   const cutLike = likePct
   const cutCom = likePct + comPct
@@ -460,6 +473,38 @@ async function primaryFeedRoot(page) {
 async function focusFeedCardForRichActions(page, log, shouldHalt) {
   await focusPrimaryFeedVideo(page, log, shouldHalt, 'RICH_FOCUS')
   await sleepMsHaltable(shouldHalt, randomInt(400, 900))
+  await haltIfNeeded(shouldHalt)
+}
+
+/**
+ * After profile/comments we may leave /foryou — re-open feed before scroll so actions do not overlap.
+ */
+async function ensureOnFypBeforeScroll(page, log, shouldHalt) {
+  if (await safePageClosed(page)) return
+  if (pageInLiveSurfaceUrl(page)) return
+  if (isTikTokFypUrl(page)) return
+  log('SCROLL_PREP_FYP', `nav_from=${page.url().slice(0, 220)}`)
+  await tryClickForYouNav(page)
+  await sleepMsHaltable(shouldHalt, randomInt(1200, 2400))
+  await haltIfNeeded(shouldHalt)
+}
+
+/**
+ * Cooldown after rich action so UI (dialogs / profile) does not race with feed scroll.
+ * @param {string} richAction
+ */
+async function bufferAfterRichAction(page, log, shouldHalt, richAction) {
+  if (richAction === 'none') return
+  if (richAction === 'like') {
+    await sleepMsHaltable(shouldHalt, randomInt(600, 1400))
+    log('RICH_BUFFER', 'after_like')
+  } else if (richAction === 'comments') {
+    await sleepMsHaltable(shouldHalt, randomInt(900, 2000))
+    log('RICH_BUFFER', 'after_comments')
+  } else if (richAction === 'profile') {
+    await sleepMsHaltable(shouldHalt, randomInt(1400, 2800))
+    log('RICH_BUFFER', 'after_profile')
+  }
   await haltIfNeeded(shouldHalt)
 }
 
@@ -1049,6 +1094,8 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     }
 
     await haltIfNeeded(shouldHalt)
+    await bufferAfterRichAction(page, log, shouldHalt, richAction)
+    await ensureOnFypBeforeScroll(page, log, shouldHalt)
 
     if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
       repeatStuckCount = 0
