@@ -1,7 +1,6 @@
 /**
  * SAFE_TIKTOK_FEED_MODE only: exactly one ArrowDown per invocation, then poll stable key.
- * No second ArrowDown (that was still advancing two videos when the feed reacted slowly).
- * Optional single PageDown fallback after the poll window if the key never changed.
+ * Focus uses shared `tiktokFeedLayout` (largest article with video when e2e missing) so scroll matches stable key.
  */
 
 import {
@@ -9,6 +8,7 @@ import {
   tiktokScrollSleepMsHaltable,
   tiktokStableKeyAdvanced,
 } from './tiktokScrollHelpers.js'
+import { focusPrimaryFeedVideo } from './tiktokFeedLayout.js'
 
 /**
  * @param {import('playwright').Page} page
@@ -54,55 +54,6 @@ async function waitForStableKeyChange(page, log, shouldHalt, getStableKey, befor
 }
 
 /**
- * Focus feed: primary `[data-e2e="feed-active-video"]`, else first visible `article video` / `main video` (Fox layouts without e2e).
- * @returns {Promise<boolean>}
- */
-async function focusActiveFeedVideo(page, log, shouldHalt) {
-  if (safePageClosed(page)) {
-    log('PAGE_CLOSED_DURING_STOP', 'before_video_focus')
-    return false
-  }
-  const container = page.locator('[data-e2e="feed-active-video"]').first()
-  try {
-    if ((await container.count()) > 0) {
-      await container.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-      await tiktokScrollHaltIfNeeded(shouldHalt)
-
-      const inner = container.locator('video').first()
-      if ((await inner.count()) > 0 && (await inner.isVisible().catch(() => false))) {
-        await inner.click({ timeout: 8000 }).catch(() => {})
-        log('SCROLL_VIDEO_FOCUSED', 'inner_video')
-        return true
-      }
-
-      await container.click({ position: { x: 50, y: 50 }, timeout: 8000 }).catch(() => {})
-      log('SCROLL_VIDEO_FOCUSED', 'container_xy50')
-      return true
-    }
-  } catch {
-    log('SCROLL_VIDEO_FOCUS_FAILED', 'primary_click_error')
-  }
-
-  /** Fallback: TikTok sometimes renders FYP without `feed-active-video` (e.g. Camoufox). */
-  const fallbacks = [page.locator('article video').first(), page.locator('main video').first(), page.locator('video').first()]
-  for (const vid of fallbacks) {
-    try {
-      if ((await vid.count().catch(() => 0)) === 0) continue
-      await vid.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-      await tiktokScrollHaltIfNeeded(shouldHalt)
-      if (!(await vid.isVisible().catch(() => false))) continue
-      await vid.click({ position: { x: 48, y: 48 }, timeout: 8000 }).catch(() => {})
-      log('SCROLL_VIDEO_FOCUSED', 'fallback_article_or_main_video')
-      return true
-    } catch {
-      /* try next */
-    }
-  }
-  log('SCROLL_VIDEO_FOCUS_FAILED', 'no_feed_active_video')
-  return false
-}
-
-/**
  * At most one keyboard "step" from ArrowDown: focus → single ArrowDown → poll → optional PageDown.
  *
  * @returns {Promise<boolean>} true if stable key changed vs initial `before`
@@ -114,12 +65,12 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
   }
 
   const before = await safeReadStableKey(page, getStableKey)
-  const focused = await focusActiveFeedVideo(page, log, shouldHalt)
+  const focused = await focusPrimaryFeedVideo(page, log, shouldHalt)
   if (!focused) {
     log('SCROLL_VIDEO_FOCUS_FAILED', 'keyboard_without_focus_click')
   }
 
-  const keyPollMs = 4000
+  const keyPollMs = 5500
   const keyPollStepMs = 220
 
   if (safePageClosed(page)) {
