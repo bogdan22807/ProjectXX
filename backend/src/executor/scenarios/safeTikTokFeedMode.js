@@ -6,7 +6,7 @@
  */
 
 import { randomChance, randomInt, sleep } from '../asyncUtils.js'
-import { tiktokStableKeyAdvanced, tiktokWheelDownOnly } from './tiktokScrollHelpers.js'
+import { tiktokStableKeyAdvanced } from './tiktokScrollHelpers.js'
 import {
   focusPrimaryFeedVideo,
   readStableKeyFromFeedRoot,
@@ -745,87 +745,125 @@ const COMMENT_ICON_SELECTORS = [
 ]
 
 /**
+ * First visible comment control under `scope` (selectors only). Page-wide includes role/label when `scope` is null.
+ * @param {import('playwright').Page} page
+ * @param {import('playwright').Locator | null} scope
+ * @param {string} scopeLabel
+ * @returns {Promise<{ loc: import('playwright').Locator; label: string } | null>}
+ */
+async function pickFirstVisibleCommentControl(page, scope, scopeLabel) {
+  const base = scope ?? page
+  for (const sel of COMMENT_ICON_SELECTORS) {
+    const chain = base.locator(sel)
+    const n = await chain.count().catch(() => 0)
+    const cap = Math.min(n, 24)
+    for (let i = 0; i < cap; i += 1) {
+      const loc = chain.nth(i)
+      if (await loc.isVisible().catch(() => false)) {
+        return { loc, label: `${scopeLabel}>${sel}[${i}]` }
+      }
+    }
+  }
+  if (scope != null) return null
+  const roleChain = page.getByRole('button', { name: /\bcomment\b/i })
+  const rn = await roleChain.count().catch(() => 0)
+  for (let i = 0; i < Math.min(rn, 12); i += 1) {
+    const loc = roleChain.nth(i)
+    if (await loc.isVisible().catch(() => false)) {
+      return { loc, label: `${scopeLabel}>role=button_comment[${i}]` }
+    }
+  }
+  const labelChain = page.getByLabel(/comment/i)
+  const ln = await labelChain.count().catch(() => 0)
+  for (let i = 0; i < Math.min(ln, 12); i += 1) {
+    const loc = labelChain.nth(i)
+    if (await loc.isVisible().catch(() => false)) {
+      return { loc, label: `${scopeLabel}>aria_label_comment[${i}]` }
+    }
+  }
+  return null
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @returns {Promise<'close_button' | 'escape'>}
+ */
+async function closeCommentsPanel(page, log, shouldHalt) {
+  const closeCandidates = [
+    page.getByRole('button', { name: /^close$/i }).first(),
+    page.locator('[data-e2e*="close"]').first(),
+    page.locator('button[aria-label*="Close" i]').first(),
+    page.locator('[aria-label="Close"]').first(),
+  ]
+  for (const loc of closeCandidates) {
+    if ((await loc.count().catch(() => 0)) === 0) continue
+    if (!(await loc.isVisible().catch(() => false))) continue
+    try {
+      await loc.click({ timeout: 3500 })
+      await sleepMsHaltable(shouldHalt, randomInt(150, 400))
+      await haltIfNeeded(shouldHalt)
+      log('COMMENTS_CLOSED', 'reason=close_button')
+      return 'close_button'
+    } catch {
+      /* try next */
+    }
+  }
+  await page.keyboard.press('Escape').catch(() => {})
+  await sleepMsHaltable(shouldHalt, randomInt(150, 400))
+  await haltIfNeeded(shouldHalt)
+  await page.keyboard.press('Escape').catch(() => {})
+  log('COMMENTS_CLOSED', 'reason=escape')
+  return 'escape'
+}
+
+/**
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
 async function tryCommentsPeek(page, log, shouldHalt, lockedRoot = undefined) {
   if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
-    log('COMMENTS_SKIPPED', 'LIVE')
+    log('COMMENTS_SKIPPED', 'reason=LIVE')
+    return
+  }
+  if (await detectChallengeBlocking(page)) {
+    log('COMMENTS_SKIPPED', 'reason=challenge')
     return
   }
 
   await focusFeedCardForRichActions(page, log, shouldHalt, lockedRoot)
 
   const primary = await primaryFeedRoot(page, lockedRoot)
-  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
-  const candidates = []
-  if (primary) {
-    for (const sel of COMMENT_ICON_SELECTORS) {
-      candidates.push({ loc: primary.locator(sel).first(), label: `primary>${sel}` })
-    }
-  }
-  if (lockedRoot === undefined) {
-    for (const sel of COMMENT_ICON_SELECTORS) {
-      candidates.push({ loc: page.locator(sel).first(), label: `page>${sel}` })
-    }
-  }
-  if (lockedRoot === undefined) {
-    candidates.push({
-      loc: page.getByRole('button', { name: /\bcomment\b/i }).first(),
-      label: 'role=button_name_comment',
-    })
-    candidates.push({
-      loc: page.getByLabel(/comment/i).first(),
-      label: 'aria_label_comment',
-    })
+  let picked = primary ? await pickFirstVisibleCommentControl(page, primary, 'primary') : null
+  let pickScope = picked ? 'primary' : 'page'
+  if (!picked) {
+    picked = await pickFirstVisibleCommentControl(page, null, 'page')
+    pickScope = picked ? 'page' : 'none'
   }
 
-  let opened = false
-  let openLabel = ''
-  for (const { loc, label } of candidates) {
-    if ((await loc.count().catch(() => 0)) === 0) continue
-    const ok = await tryClickRichControl(loc, log, shouldHalt, label)
-    if (ok) {
-      opened = true
-      openLabel = label
-      break
-    }
-  }
-  if (!opened) {
-    log('COMMENTS_SKIPPED', primary ? 'no_control_primary_and_page' : 'no_control_page_only')
+  log('COMMENTS_ATTEMPT', `scope=${pickScope}${picked ? ` label=${picked.label}` : ''}`)
+
+  if (!picked) {
+    log('COMMENTS_SKIPPED', 'reason=no_visible_comment_button')
     return
   }
-  log('COMMENTS_OPENED', openLabel)
 
-  await sleepMsHaltable(shouldHalt, randomInt(500, 1100))
+  const opened = await tryClickRichControl(picked.loc, log, shouldHalt, picked.label)
+  if (!opened) {
+    log('COMMENTS_SKIPPED', 'reason=click_failed_or_not_visible')
+    return
+  }
+  log('COMMENTS_OPENED', picked.label)
+
+  const readMs = randomInt(4000, 10000)
+  log('COMMENTS_READ', `dwell_ms=${readMs}`)
+  await sleepMsHaltable(shouldHalt, readMs)
   await haltIfNeeded(shouldHalt)
 
-  const insideMs = randomInt(4000, 12000)
-  await viewVideoWeighted(page, log, shouldHalt, insideMs)
+  await closeCommentsPanel(page, log, shouldHalt)
 
-  if (randomChance(50)) {
-    const panel = page
-      .locator(
-        '[data-e2e="comment-list"], [data-e2e="comment-list-scroll"], [class*="CommentList"], [class*="comment-list"], div[role="dialog"]',
-      )
-      .first()
-    if ((await panel.count().catch(() => 0)) > 0 && (await panel.isVisible().catch(() => false))) {
-      try {
-        await panel.scrollIntoViewIfNeeded({ timeout: 4000 }).catch(() => {})
-        await panel.locator('div').first().click({ timeout: 2500 }).catch(() => {})
-        await tiktokWheelDownOnly(page, randomInt(200, 450), log)
-        log('COMMENTS_SCROLL', 'once_light')
-      } catch {
-        /* ignore */
-      }
-    }
-  }
-
-  await page.keyboard.press('Escape').catch(() => {})
-  await sleepMsHaltable(shouldHalt, randomInt(150, 400))
-  await page.keyboard.press('Escape').catch(() => {})
-  log('COMMENTS_CLOSED', 'escape')
   await sleepMsHaltable(shouldHalt, randomInt(1000, 2000))
   await haltIfNeeded(shouldHalt)
 }
