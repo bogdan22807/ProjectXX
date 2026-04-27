@@ -108,19 +108,31 @@ export async function resolvePrimaryFeedRoot(page) {
 }
 
 /**
- * TikTok often keeps `video.src` as a stable blob: URL while the reel changes — add poster + /video/ link so scroll detection sees a new key.
+ * Stable reel identity for scroll: poster + permalink link containing "/video/" + og:url meta (blob src often unchanged).
+ * Three sources only — no long chains of DOM heuristics.
  * @param {import('playwright').Locator} videoLoc
- * @param {import('playwright').Locator} scopeForLinks
+ * @param {import('playwright').Locator} cardScope
  */
-async function readVideoKeyParts(videoLoc, scopeForLinks) {
+async function readVideoKeyParts(videoLoc, cardScope) {
   const src = (await videoLoc.first().getAttribute('src').catch(() => null)) ?? ''
   const poster = (await videoLoc.first().getAttribute('poster').catch(() => null)) ?? ''
   const vLink =
-    (await scopeForLinks.locator('a[href*="/video/"]').first().getAttribute('href').catch(() => null)) ?? ''
+    (await cardScope.locator('a[href*="/video/"]').first().getAttribute('href').catch(() => null)) ?? ''
+  let ogUrl = ''
+  if ((await cardScope.count().catch(() => 0)) > 0) {
+    ogUrl =
+      (await cardScope
+        .evaluate((el) => {
+          const m = el.querySelector('meta[property="og:url"]')
+          return m ? String(m.getAttribute('content') || '').trim().slice(0, 220) : ''
+        })
+        .catch(() => '')) ?? ''
+  }
   return {
     src: String(src).trim().slice(0, 200),
     poster: String(poster).trim().slice(0, 200),
     vLink: String(vLink).trim().slice(0, 220),
+    ogUrl: String(ogUrl).trim().slice(0, 220),
   }
 }
 
@@ -134,7 +146,8 @@ export async function readStableKeyFromFeedRoot(page, info) {
     const v0 = page.locator('video').first()
     if ((await v0.count().catch(() => 0)) === 0) return ''
     const parts = await readVideoKeyParts(v0, page)
-    return `vid|${parts.src}|${parts.poster}|${parts.vLink}`.slice(0, 400)
+    const og = parts.ogUrl ? `|og:${parts.ogUrl}` : ''
+    return `vid|${parts.src}|${parts.poster}|${parts.vLink}${og}`.slice(0, 400)
   }
   if (info.kind === 'e2e') {
     const r = info.root
@@ -142,7 +155,8 @@ export async function readStableKeyFromFeedRoot(page, info) {
       (await r.locator('[data-e2e="video-author-uniqueid"] a').first().getAttribute('href').catch(() => null)) ?? ''
     const inner = r.locator('video').first()
     const parts = await readVideoKeyParts(inner, r)
-    const slice = `${String(href).trim()}|${parts.src.slice(0, 160)}|${parts.poster.slice(0, 140)}|${parts.vLink}`.trim()
+    const og = parts.ogUrl ? `|og:${parts.ogUrl}` : ''
+    const slice = `${String(href).trim()}|${parts.src.slice(0, 160)}|${parts.poster.slice(0, 140)}|${parts.vLink}${og}`.trim()
     if (slice && slice !== '|') return slice.slice(0, 400)
     return ''
   }
@@ -151,7 +165,8 @@ export async function readStableKeyFromFeedRoot(page, info) {
     const ancArt = v.locator('xpath=ancestor::article[1]')
     const scope = (await ancArt.count().catch(() => 0)) > 0 ? ancArt : page
     const parts = await readVideoKeyParts(v, scope)
-    return `vid|${parts.src}|${parts.poster}|${parts.vLink}`.slice(0, 400)
+    const og = parts.ogUrl ? `|og:${parts.ogUrl}` : ''
+    return `vid|${parts.src}|${parts.poster}|${parts.vLink}${og}`.slice(0, 400)
   }
   const art = info.root
   const href =
@@ -160,8 +175,9 @@ export async function readStableKeyFromFeedRoot(page, info) {
     ''
   const inner = art.locator('video').first()
   const parts = await readVideoKeyParts(inner, art)
+  const og = parts.ogUrl ? `|og:${parts.ogUrl}` : ''
   const slice =
-    `${String(href).trim()}|${parts.src.slice(0, 160)}|${parts.poster.slice(0, 160)}|${parts.vLink}`.trim()
+    `${String(href).trim()}|${parts.src.slice(0, 160)}|${parts.poster.slice(0, 160)}|${parts.vLink}${og}`.trim()
   if (slice && slice !== '|') return `art|${slice}`.slice(0, 400)
   return ''
 }
