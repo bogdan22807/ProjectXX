@@ -589,7 +589,16 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     )
 
     if (parsed.cookies.length > 0) {
+      const names = parsed.cookies.map((c) => String(c.name ?? '').trim()).filter(Boolean)
       logStep(accountId, 'cookies loaded', `${parsed.cookies.length} cookie(s)`)
+      logStep(accountId, 'COOKIE_NAMES_APPLIED', names.join(',') || '(none)')
+      if (engineIsFox && foxProfileDiskAuth) {
+        logStep(
+          accountId,
+          'FOX_SESSION_PRIORITY',
+          'disk_profile_user_data_dir wins over cookie jar for TikTok session; addCookies still runs for names above',
+        )
+      }
     } else {
       logStep(accountId, 'cookies loaded', 'none')
     }
