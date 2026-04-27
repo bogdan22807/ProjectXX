@@ -1,7 +1,7 @@
 /**
  * SAFE_TIKTOK_FEED_MODE — TikTok FYP: controlled one-video scroll, optional single rich action per video
- * (like 40% / comments 35% / profile 20% / else none ~5%), weighted watch times, irregular pauses.
- * Rich actions: focus feed card + scrollIntoView + short waits + expanded selectors before like/comment/profile clicks. No goto/reload/goBack, no upward scroll.
+ * (like 20% / comments 10% / none 70%), weighted watch times, irregular pauses.
+ * Rich actions: like or comments only (no profile). No goto/reload/goBack, no upward scroll.
  * LIVE: skip only via controlled scroll; LIVE URL: navigate to For You via nav clicks only.
  */
 
@@ -48,7 +48,7 @@ function pageInLiveSurfaceUrl(page) {
   }
 }
 
-/** On TikTok FYP URL (for You tab) — used before scroll after rich actions to avoid profile URL + scroll clash. */
+/** On TikTok FYP URL (for You tab) — used before scroll after rich actions if UI left /foryou (e.g. comments). */
 function isTikTokFypUrl(page) {
   try {
     const u = new URL(page.url())
@@ -401,26 +401,22 @@ function sampleWatchMsWeighted() {
   return randomInt(16000, 30000)
 }
 
-/** At most one of like | comments | profile | none (cumulative % on one roll). */
+/** At most one of like | comments | none (cumulative % on one roll). */
 function pickRichActionForVideo() {
-  const likePct = 40
-  const comPct = 35
-  const profPct = 20
+  const likePct = 20
+  const comPct = 10
   const r = Math.random() * 100
   const cutLike = likePct
   const cutCom = likePct + comPct
-  const cutProf = likePct + comPct + profPct
   let pick = 'none'
   if (r < cutLike) pick = 'like'
   else if (r < cutCom) pick = 'comments'
-  else if (r < cutProf) pick = 'profile'
-  return { pick, likePct, comPct, profPct, roll: r, cutLike, cutCom, cutProf }
+  return { pick, likePct, comPct, roll: r, cutLike, cutCom }
 }
 
 function minWatchMsForAction(action) {
   if (action === 'like') return randomInt(6000, 12000)
   if (action === 'comments') return randomInt(8000, 15000)
-  if (action === 'profile') return randomInt(10000, 18000)
   return 0
 }
 
@@ -480,7 +476,7 @@ async function focusFeedCardForRichActions(page, log, shouldHalt) {
 }
 
 /**
- * After profile/comments we may leave /foryou — re-open feed before scroll so actions do not overlap.
+ * After rich actions we may leave /foryou — re-open feed before scroll so actions do not overlap.
  */
 async function ensureOnFypBeforeScroll(page, log, shouldHalt) {
   if (await safePageClosed(page)) return
@@ -493,7 +489,7 @@ async function ensureOnFypBeforeScroll(page, log, shouldHalt) {
 }
 
 /**
- * Cooldown after rich action so UI (dialogs / profile) does not race with feed scroll.
+ * Cooldown after rich action so UI (dialogs) does not race with feed scroll.
  * @param {string} richAction
  */
 async function bufferAfterRichAction(page, log, shouldHalt, richAction) {
@@ -504,9 +500,6 @@ async function bufferAfterRichAction(page, log, shouldHalt, richAction) {
   } else if (richAction === 'comments') {
     await sleepMsHaltable(shouldHalt, randomInt(900, 2000))
     log('RICH_BUFFER', 'after_comments')
-  } else if (richAction === 'profile') {
-    await sleepMsHaltable(shouldHalt, randomInt(1400, 2800))
-    log('RICH_BUFFER', 'after_profile')
   }
   await haltIfNeeded(shouldHalt)
 }
@@ -764,79 +757,6 @@ async function tryCommentsPeek(page, log, shouldHalt) {
   await haltIfNeeded(shouldHalt)
 }
 
-/**
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- */
-async function tryProfilePeek(page, log, shouldHalt) {
-  if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
-    log('PROFILE_SKIPPED', 'LIVE')
-    return
-  }
-
-  await focusFeedCardForRichActions(page, log, shouldHalt)
-
-  const primary = await primaryFeedRoot(page)
-  if (!primary) {
-    log('PROFILE_SKIPPED', 'no_primary_root')
-    return
-  }
-  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
-  const authorCandidates = [
-    { loc: primary.locator('a[href^="/@"]').first(), label: 'primary>a_href^/@' },
-    { loc: primary.locator('a[href*="/@"]').first(), label: 'primary>a_href*/@' },
-    { loc: primary.locator('[data-e2e*="author"] a').first(), label: 'primary>author_e2e>a' },
-    { loc: primary.locator('[data-e2e*="author"]').first(), label: 'primary>author_e2e' },
-    { loc: primary.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'primary>video-author-uniqueid>a' },
-    { loc: primary.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'primary>video-author-uniqueid' },
-  ]
-  let authorLabel = ''
-  let clicked = false
-  for (const { loc, label } of authorCandidates) {
-    if ((await loc.count().catch(() => 0)) === 0) continue
-    const ok = await tryClickRichControl(loc, log, shouldHalt, label)
-    if (ok) {
-      authorLabel = label
-      clicked = true
-      break
-    }
-  }
-  if (!clicked) {
-    log('PROFILE_SKIPPED', 'no_author_in_primary_root')
-    return
-  }
-  log('PROFILE_CLICK', authorLabel)
-
-  let openUrl = ''
-  try {
-    openUrl = page.url()
-  } catch {
-    openUrl = ''
-  }
-  log('PROFILE_OPEN', openUrl.slice(0, 200))
-  await sleepMsHaltable(shouldHalt, randomInt(1200, 2200))
-  await haltIfNeeded(shouldHalt)
-
-  const dwell = randomInt(5000, 15000)
-  await viewVideoWeighted(page, log, shouldHalt, dwell)
-
-  if (randomChance(45)) {
-    try {
-      await tiktokWheelDownOnly(page, randomInt(280, 520), log)
-      log('PROFILE_SCROLL', 'once_light')
-      await sleepMsHaltable(shouldHalt, randomInt(400, 900))
-    } catch {
-      /* ignore */
-    }
-  }
-
-  const ok = await tryClickForYouNav(page)
-  log('PROFILE_EXIT', ok ? 'nav_foryou' : 'nav_failed')
-  await sleepMsHaltable(shouldHalt, randomInt(2000, 4000))
-  await haltIfNeeded(shouldHalt)
-}
-
 /** Feed videos advanced since last long break (module state). */
 let videosSinceLongBreak = 0
 let nextLongBreakEvery = randomInt(8, 15)
@@ -1031,7 +951,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     sum.richAction = richAction
     log(
       'RICH_ACTION_ROLL',
-      `pick=${richAction} r=${roll.roll.toFixed(2)} like<=${roll.cutLike} com<=${roll.cutCom} prof<=${roll.cutProf} (like%=${roll.likePct} com%=${roll.comPct} prof%=${roll.profPct} none≈${(100 - roll.cutProf).toFixed(0)}%)`,
+      `pick=${richAction} r=${roll.roll.toFixed(2)} like<=${roll.cutLike} com<=${roll.cutCom} (like%=${roll.likePct} com%=${roll.comPct} none%=${(100 - roll.cutCom).toFixed(0)})`,
     )
     const baseWatch = sampleWatchMsWeighted()
     const minNeed = minWatchMsForAction(richAction)
@@ -1063,9 +983,6 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     } else if (richAction === 'comments') {
       log('RICH_ACTION', 'comments')
       await tryCommentsPeek(page, log, shouldHalt)
-    } else if (richAction === 'profile') {
-      log('RICH_ACTION', 'profile')
-      await tryProfilePeek(page, log, shouldHalt)
     } else {
       log('RICH_ACTION', 'none')
     }
