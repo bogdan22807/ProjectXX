@@ -668,15 +668,39 @@ async function focusFeedCardForRichActions(page, log, shouldHalt, lockedRoot = u
 
 /**
  * After rich actions we may leave /foryou — re-open feed before scroll so actions do not overlap.
+ * @returns {Promise<Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | null>} fresh root after goto restore; null if already on FYP, live surface, or restore failed
  */
 async function ensureOnFypBeforeScroll(page, log, shouldHalt) {
-  if (await safePageClosed(page)) return
-  if (pageInLiveSurfaceUrl(page)) return
-  if (isTikTokFypUrl(page)) return
-  log('SCROLL_PREP_FYP', `nav_from=${page.url().slice(0, 220)}`)
-  await tryClickForYouNav(page)
+  if (await safePageClosed(page)) return null
+  if (pageInLiveSurfaceUrl(page)) return null
+  if (isTikTokFypUrl(page)) return null
+  const fromUrl = page.url().slice(0, 220)
+  log('SCROLL_PREP_FYP', `nav_from=${fromUrl}`)
+  const clicked = await tryClickForYouNav(page)
+  log('SCROLL_PREP_FYP_NAV', clicked ? 'for_you_click' : 'for_you_click_miss')
   await sleepMsHaltable(shouldHalt, randomInt(1200, 2400))
   await haltIfNeeded(shouldHalt)
+  if (!isTikTokFypUrl(page)) {
+    log('SCROLL_PREP_FYP_GOTO', 'fallback page.goto /foryou')
+    try {
+      await page.goto('https://www.tiktok.com/foryou', { waitUntil: 'domcontentloaded', timeout: 28000 }).catch(() => {})
+      await sleepMsHaltable(shouldHalt, randomInt(1400, 2600))
+      await haltIfNeeded(shouldHalt)
+    } catch {
+      /* ignore */
+    }
+  }
+  if (!isTikTokFypUrl(page)) {
+    log('SCROLL_PREP_FYP_STILL_OFF', `url=${page.url().slice(0, 220)}`)
+    return null
+  }
+  const fresh = await resolvePrimaryFeedRoot(page)
+  if (fresh) {
+    log('SCROLL_PREP_FYP_ROOT', `rebound kind=${fresh.kind}`)
+  } else {
+    log('SCROLL_PREP_FYP_ROOT', 'rebound miss resolvePrimaryFeedRoot=null')
+  }
+  return fresh
 }
 
 /**
@@ -938,7 +962,7 @@ const COMMENT_ICON_SELECTORS = [
 /** Union locator for TikTok comment drawer / list / dialog. */
 function commentPanelLocator(page) {
   return page.locator(
-    '[data-e2e="comment-list"], [data-e2e="comment-list-scroll"], [data-e2e="comment-drawer"], [data-e2e="comment-drawer-container"], [data-e2e="comment-sidebar"], div[role="dialog"][class*="Comment"]',
+    '[data-e2e="comment-list"], [data-e2e="comment-list-scroll"], [data-e2e="comment-drawer"], [data-e2e="comment-drawer-container"], [data-e2e="comment-sidebar"], [data-e2e="comment-input"], [data-e2e="comment-input-box"], div[role="dialog"][class*="Comment"]',
   )
 }
 
@@ -948,7 +972,7 @@ function commentPanelLocator(page) {
  * @param {number} maxMs
  * @returns {Promise<boolean>}
  */
-async function waitCommentPanelVisible(page, shouldHalt, maxMs = 4000) {
+async function waitCommentPanelVisible(page, shouldHalt, maxMs = 5500) {
   const panel = commentPanelLocator(page)
   const deadline = Date.now() + Math.max(400, Math.floor(maxMs))
   while (Date.now() < deadline) {
@@ -1078,7 +1102,7 @@ async function tryCommentsPeek(page, log, shouldHalt, lockedRoot = undefined, vi
 
   await maybeVisualScreenshot(page, log, 'after_comments_click', visual)
 
-  const hasPanel = await waitCommentPanelVisible(page, shouldHalt, 4000)
+  const hasPanel = await waitCommentPanelVisible(page, shouldHalt, 5500)
   if (!hasPanel) {
     log('COMMENTS_SKIPPED', 'reason=panel_not_opened')
     return 'skipped'
@@ -1504,7 +1528,11 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
     await haltIfNeeded(shouldHalt)
     await bufferAfterRichAction(page, log, shouldHalt, richAction)
-    await ensureOnFypBeforeScroll(page, log, shouldHalt)
+    const restoredRoot = await ensureOnFypBeforeScroll(page, log, shouldHalt)
+    if (restoredRoot) {
+      iterationRoot = restoredRoot
+      sum.rootKind = restoredRoot.kind
+    }
 
     if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
       repeatStuckCount = 0
