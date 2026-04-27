@@ -448,7 +448,7 @@ async function viewVideoWeighted(page, log, shouldHalt, totalMs) {
   }
 }
 
-/** Largest article / e2e card — same as scroll key (for scoping like/comment/author). */
+/** Largest article / e2e card — same as scroll key (for scoping like/comment). */
 async function primaryFeedRoot(page) {
   const info = await resolvePrimaryFeedRoot(page)
   if (!info || (info.kind !== 'e2e' && info.kind !== 'article')) return null
