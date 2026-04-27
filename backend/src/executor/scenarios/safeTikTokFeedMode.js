@@ -2,11 +2,15 @@
  * SAFE_TIKTOK_FEED_MODE — TikTok FYP scroll-only baseline.
  * One iteration watches one video and performs one controlled down-scroll attempt.
  * Rich actions/recovery/long breaks are intentionally disabled while stabilizing scroll.
+ * TEST_SCROLL_DIAGNOSTICS=1 runs a temporary five-method scroll diagnostic instead.
  * LIVE: skip only via controlled scroll; LIVE URL: navigate to For You via nav clicks only.
  *
  * Optional: DEBUG_VISUAL_ACTIONS=1 and DEBUG_VISUAL_DIR (optional) for PNG screenshots around scroll.
  */
 
+import { mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { randomInt, sleep } from '../asyncUtils.js'
 import {
   readStableKeyFromFeedRoot,
@@ -244,6 +248,252 @@ async function getStableVideoKey(page, lockedRoot = undefined) {
   } catch {
     return ''
   }
+}
+
+function primaryRootSource(root) {
+  if (!root) return 'none'
+  return root.kind === 'e2e' || root.kind === 'article' || root.kind === 'video' ? root.kind : 'none'
+}
+
+function testScrollDiagnosticsEnabled() {
+  return String(process.env.TEST_SCROLL_DIAGNOSTICS ?? '').trim() === '1'
+}
+
+function scrollDiagDir() {
+  return String(process.env.DEBUG_VISUAL_DIR ?? '').trim() || join(tmpdir(), 'tiktok-scroll-diagnostics')
+}
+
+function scrollDiagSafeLabel(label) {
+  return String(label).replace(/[^a-z0-9_-]+/gi, '_').slice(0, 80)
+}
+
+async function scrollDiagScreenshot(page, log, label) {
+  if (await safePageClosed(page)) return ''
+  const dir = scrollDiagDir()
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch {
+    /* ignore */
+  }
+  const fp = join(dir, `${scrollDiagSafeLabel(label)}-${Date.now()}.png`)
+  try {
+    await page.screenshot({ path: fp, fullPage: false })
+    return fp
+  } catch (e) {
+    log('SCROLL_DIAG_SCREENSHOT_FAILED', `${label} err=${String(e).slice(0, 160)}`)
+    return ''
+  }
+}
+
+async function scrollDiagActiveElement(page) {
+  try {
+    return await page.evaluate(() => {
+      const el = document.activeElement
+      if (!el) return 'none'
+      const tag = String(el.tagName || '').toLowerCase() || 'unknown'
+      const cls =
+        typeof el.className === 'string'
+          ? el.className
+          : el.className && typeof el.className.baseVal === 'string'
+            ? el.className.baseVal
+            : ''
+      return `${tag}${cls ? ` class=${String(cls).slice(0, 180)}` : ''}`
+    })
+  } catch {
+    return 'unreadable'
+  }
+}
+
+async function scrollDiagScrollY(page) {
+  try {
+    return await page.evaluate(() => Number(window.scrollY) || 0)
+  } catch {
+    return -1
+  }
+}
+
+async function scrollDiagSnapshot(page, label, log) {
+  const root = await resolvePrimaryFeedRoot(page)
+  const key = await getStableVideoKey(page, root ?? undefined)
+  const scrollY = await scrollDiagScrollY(page)
+  const active = await scrollDiagActiveElement(page)
+  let url = ''
+  try {
+    url = page.url()
+  } catch {
+    url = '(unreadable)'
+  }
+  const screenshot = await scrollDiagScreenshot(page, log, label)
+  return {
+    root,
+    key,
+    scrollY,
+    active,
+    url,
+    screenshot,
+  }
+}
+
+function scrollDiagSnapshotDetails(snap) {
+  return `source=${primaryRootSource(snap.root)} key=${String(snap.key).slice(0, 220)} scrollY=${snap.scrollY} active=${snap.active} url=${String(snap.url).slice(0, 260)} screenshot=${snap.screenshot || 'none'}`
+}
+
+async function scrollDiagRootBox(root) {
+  if (!root) return null
+  try {
+    if (root.kind === 'e2e' || root.kind === 'article') {
+      const video = root.root.locator('video').first()
+      if ((await video.count().catch(() => 0)) > 0 && (await video.isVisible().catch(() => false))) {
+        const vb = await video.boundingBox().catch(() => null)
+        if (vb && vb.width > 20 && vb.height > 20) return vb
+      }
+    }
+    const rb = await root.root.boundingBox().catch(() => null)
+    if (rb && rb.width > 20 && rb.height > 20) return rb
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+async function scrollDiagMoveToRootCenter(page, root, log, method) {
+  const box = await scrollDiagRootBox(root)
+  if (!box) {
+    log('SCROLL_DIAG_METHOD', `method=${method} root_center_missing source=${primaryRootSource(root)}`)
+    return false
+  }
+  const vp = page.viewportSize()
+  const vw = vp && Number.isFinite(vp.width) ? vp.width : 1280
+  const vh = vp && Number.isFinite(vp.height) ? vp.height : 720
+  const x = Math.max(1, Math.min(vw - 1, Math.floor(box.x + box.width / 2)))
+  const y = Math.max(1, Math.min(vh - 1, Math.floor(box.y + box.height / 2)))
+  await page.mouse.move(x, y)
+  log('SCROLL_DIAG_METHOD', `method=${method} move=root_center x=${x} y=${y} source=${primaryRootSource(root)}`)
+  return true
+}
+
+async function scrollDiagClickRoot(page, root, log, method) {
+  const box = await scrollDiagRootBox(root)
+  if (!box) {
+    log('SCROLL_DIAG_METHOD', `method=${method} click_root_missing source=${primaryRootSource(root)}`)
+    return false
+  }
+  const vp = page.viewportSize()
+  const vw = vp && Number.isFinite(vp.width) ? vp.width : 1280
+  const vh = vp && Number.isFinite(vp.height) ? vp.height : 720
+  const x = Math.max(1, Math.min(vw - 1, Math.floor(box.x + box.width / 2)))
+  const y = Math.max(1, Math.min(vh - 1, Math.floor(box.y + box.height / 2)))
+  await page.mouse.click(x, y)
+  log('SCROLL_DIAG_METHOD', `method=${method} click=root_center x=${x} y=${y} source=${primaryRootSource(root)}`)
+  return true
+}
+
+async function scrollDiagDispatchWheel(page, root, log, method) {
+  if (root) {
+    const dispatched = await root.root
+      .evaluate((el) => {
+        const target = el.querySelector('video') || el
+        const ev = new WheelEvent('wheel', {
+          deltaY: 1200,
+          bubbles: true,
+          cancelable: true,
+          view: window,
+        })
+        return target.dispatchEvent(ev)
+      })
+      .catch(() => null)
+    if (dispatched != null) {
+      log('SCROLL_DIAG_METHOD', `method=${method} dispatch=primary target=video_or_root default_not_prevented=${dispatched}`)
+      return
+    }
+  }
+  await page.evaluate(() => {
+    const ev = new WheelEvent('wheel', {
+      deltaY: 1200,
+      bubbles: true,
+      cancelable: true,
+      view: window,
+    })
+    document.dispatchEvent(ev)
+  })
+  log('SCROLL_DIAG_METHOD', `method=${method} dispatch=document`)
+}
+
+async function runScrollDiagnosticsMethod(page, log, shouldHalt, method) {
+  await haltIfNeeded(shouldHalt)
+  log('SCROLL_DIAG_METHOD', `method=${method.name} start`)
+  const before = await scrollDiagSnapshot(page, `${method.name}_before`, log)
+  log('SCROLL_DIAG_BEFORE', `method=${method.name} ${scrollDiagSnapshotDetails(before)}`)
+
+  await method.run(before.root)
+  await sleepMsHaltable(shouldHalt, 1200)
+  await haltIfNeeded(shouldHalt)
+
+  const after = await scrollDiagSnapshot(page, `${method.name}_after`, log)
+  log('SCROLL_DIAG_AFTER', `method=${method.name} ${scrollDiagSnapshotDetails(after)}`)
+  const changed = Boolean(String(after.key).trim()) && String(after.key).trim() !== String(before.key).trim()
+  const scrollYChanged = after.scrollY !== before.scrollY
+  log(
+    'SCROLL_DIAG_RESULT',
+    `method=${method.name} changed=${changed} scrollY_changed=${scrollYChanged} key_before=${String(before.key).slice(0, 160)} key_after=${String(after.key).slice(0, 160)} scrollY_before=${before.scrollY} scrollY_after=${after.scrollY} url=${String(after.url).slice(0, 260)}`,
+  )
+}
+
+async function runTestScrollDiagnostics(page, log, shouldHalt) {
+  log('TEST_SCROLL_DIAGNOSTICS', 'start')
+  try {
+    await page.bringToFront()
+  } catch {
+    /* ignore */
+  }
+  await sleepMsHaltable(shouldHalt, 300)
+  await haltIfNeeded(shouldHalt)
+
+  const vp = page.viewportSize()
+  const vw = vp && Number.isFinite(vp.width) ? vp.width : 1280
+  const vh = vp && Number.isFinite(vp.height) ? vp.height : 720
+  const methods = [
+    {
+      name: 'viewport_center_wheel',
+      run: async () => {
+        await page.mouse.move(Math.floor(vw / 2), Math.floor(vh / 2))
+        log('SCROLL_DIAG_METHOD', `method=viewport_center_wheel move=viewport_center x=${Math.floor(vw / 2)} y=${Math.floor(vh / 2)}`)
+        await page.mouse.wheel(0, 1200)
+      },
+    },
+    {
+      name: 'primary_root_center_wheel',
+      run: async (root) => {
+        await scrollDiagMoveToRootCenter(page, root, log, 'primary_root_center_wheel')
+        await page.mouse.wheel(0, 1200)
+      },
+    },
+    {
+      name: 'keyboard_arrow_down',
+      run: async (root) => {
+        await scrollDiagClickRoot(page, root, log, 'keyboard_arrow_down')
+        await page.keyboard.press('ArrowDown')
+      },
+    },
+    {
+      name: 'keyboard_page_down',
+      run: async (root) => {
+        await scrollDiagClickRoot(page, root, log, 'keyboard_page_down')
+        await page.keyboard.press('PageDown')
+      },
+    },
+    {
+      name: 'js_wheel_event',
+      run: async (root) => {
+        await scrollDiagDispatchWheel(page, root, log, 'js_wheel_event')
+      },
+    },
+  ]
+
+  for (const method of methods) {
+    await runScrollDiagnosticsMethod(page, log, shouldHalt, method)
+  }
+  log('TEST_SCROLL_DIAGNOSTICS', 'done')
 }
 
 /**
@@ -602,6 +852,25 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     if (pageInLiveSurfaceUrl(page)) {
       sum.path = 'live_surface'
       await escapeLiveSurface(page, log, shouldHalt)
+      return
+    }
+
+    if (testScrollDiagnosticsEnabled()) {
+      sum.path = 'scroll_diagnostics'
+      sum.actionOutcome = 'skipped'
+      const diagRoot = await waitForIterationRootReady(page, log, shouldHalt)
+      logPrimaryRootResolved(log, diagRoot)
+      sum.rootKind = diagRoot?.kind ?? 'none'
+      sum.videoFound = diagRoot != null
+      if (!diagRoot) {
+        sum.videoFailReason = 'primary_root_none'
+      }
+      const counts0 = await collectVideoDetectionCounts(page)
+      sum.feedHasVideoTag = counts0.video_tag_count > 0
+      sum.feedHasArticleWithVideo = await hasArticleWithVideo(page)
+      await runTestScrollDiagnostics(page, log, shouldHalt)
+      sum.scrollRan = true
+      sum.scrollOk = null
       return
     }
 
