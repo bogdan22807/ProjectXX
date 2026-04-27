@@ -3,12 +3,39 @@
  * Focus uses shared `tiktokFeedLayout` (largest article with video when e2e missing) so scroll matches stable key.
  */
 
+import { mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   tiktokScrollHaltIfNeeded,
   tiktokScrollSleepMsHaltable,
   tiktokStableKeyAdvanced,
 } from './tiktokScrollHelpers.js'
 import { focusPrimaryFeedVideo } from './tiktokFeedLayout.js'
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {string} label
+ */
+async function maybeScrollVisualScreenshot(page, log, label) {
+  if (String(process.env.DEBUG_VISUAL_ACTIONS ?? '').trim() !== '1') return
+  if (safePageClosed(page)) return
+  const dir = String(process.env.DEBUG_VISUAL_DIR ?? '').trim() || join(tmpdir(), 'tiktok-safe-visual-debug')
+  try {
+    mkdirSync(dir, { recursive: true })
+  } catch {
+    /* ignore */
+  }
+  const safe = String(label).replace(/[^a-z0-9_-]+/gi, '_').slice(0, 80)
+  const fp = join(dir, `${safe}-${Date.now()}.png`)
+  try {
+    await page.screenshot({ path: fp, fullPage: false })
+    log('VISUAL_DEBUG_SCREENSHOT', `${label} path=${fp}`)
+  } catch (e) {
+    log('VISUAL_DEBUG_SCREENSHOT', `${label} failed err=${String(e).slice(0, 120)}`)
+  }
+}
 
 /**
  * @param {import('playwright').Page} page
@@ -65,6 +92,17 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
     return false
   }
 
+  try {
+    await page.bringToFront()
+  } catch {
+    /* ignore */
+  }
+  await tiktokScrollSleepMsHaltable(shouldHalt, 300)
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  log('PAGE_BROUGHT_TO_FRONT', '')
+
+  await maybeScrollVisualScreenshot(page, log, 'before_scroll')
+
   log('SCROLL_ATTEMPT', 'focus_then_ArrowDown_poll_5s_optional_PageDown')
 
   const before = await safeReadStableKey(page, getStableKey)
@@ -103,6 +141,7 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
   if (advancedArrow) {
     log('SCROLL_KEY_CHANGED', 'after_ArrowDown')
     log('SCROLL_SUCCESS', 'method=ArrowDown')
+    await maybeScrollVisualScreenshot(page, log, 'after_scroll')
     return true
   }
 
@@ -133,9 +172,11 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
   if (advancedPd) {
     log('SCROLL_KEY_CHANGED', 'after_PageDown_fallback')
     log('SCROLL_SUCCESS', 'method=PageDown')
+    await maybeScrollVisualScreenshot(page, log, 'after_scroll')
     return true
   }
 
   log('SCROLL_STUCK', 'stable_key_unchanged_after_ArrowDown_5s_and_PageDown')
+  await maybeScrollVisualScreenshot(page, log, 'after_scroll')
   return false
 }
