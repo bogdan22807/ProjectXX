@@ -1,5 +1,6 @@
 /**
- * SAFE_TIKTOK_FEED_MODE scroll: bringToFront → focus → ArrowDown ×2 (1200ms) → PageDown (1500ms) → wheel (1500ms); compare stable key after each step.
+ * SAFE_TIKTOK_FEED_MODE scroll-only flow: resolve active root → mouse wheel → fresh root/key check
+ * → one ArrowDown fallback. Never compare against the old iteration root after scrolling.
  */
 
 import { mkdirSync } from 'node:fs'
@@ -11,7 +12,7 @@ import {
   tiktokScrollSleepMsHaltable,
   tiktokStableKeyAdvanced,
 } from './tiktokScrollHelpers.js'
-import { focusPrimaryFeedVideo } from './tiktokFeedLayout.js'
+import { readStableKeyFromFeedRoot, resolvePrimaryFeedRoot } from './tiktokFeedLayout.js'
 
 /**
  * @param {import('playwright').Page} page
@@ -48,38 +49,78 @@ function safePageClosed(page) {
   }
 }
 
-/**
- * @param {import('playwright').Page} page
- * @param {() => Promise<string>} getStableKey
- */
-async function safeReadStableKey(page, getStableKey) {
+function primaryRootSource(info) {
+  if (!info) return 'none'
+  if (info.kind === 'e2e' || info.kind === 'article' || info.kind === 'video') return info.kind
+  return 'none'
+}
+
+async function safeReadStableKeyFromInfo(page, info) {
   if (safePageClosed(page)) return ''
   try {
-    return await getStableKey()
+    return await readStableKeyFromFeedRoot(page, info)
   } catch {
     return ''
   }
 }
 
-/**
- * @param {import('playwright').Page} page
- * @param {() => Promise<string>} getStableKey
- * @param {string} before
- */
-async function keyAdvancedFrom(page, getStableKey, before) {
-  const after = await safeReadStableKey(page, getStableKey)
-  return tiktokStableKeyAdvanced(before, after)
+async function targetBoxForRoot(info) {
+  if (!info) return null
+  try {
+    if (info.kind === 'e2e' || info.kind === 'article') {
+      const video = info.root.locator('video').first()
+      if ((await video.count().catch(() => 0)) > 0 && (await video.isVisible().catch(() => false))) {
+        const videoBox = await video.boundingBox().catch(() => null)
+        if (videoBox && videoBox.width > 20 && videoBox.height > 20) return videoBox
+      }
+    }
+    const rootBox = await info.root.boundingBox().catch(() => null)
+    if (rootBox && rootBox.width > 20 && rootBox.height > 20) return rootBox
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+async function moveMouseToRootCenter(page, info, log, label) {
+  const box = await targetBoxForRoot(info)
+  if (!box) {
+    log('SCROLL_MOUSE_MOVE_FAILED', `${label} source=${primaryRootSource(info)} reason=no_box`)
+    return false
+  }
+  const vp = page.viewportSize()
+  const vw = vp && Number.isFinite(vp.width) ? vp.width : 1280
+  const vh = vp && Number.isFinite(vp.height) ? vp.height : 720
+  const x = Math.max(1, Math.min(vw - 1, Math.floor(box.x + box.width / 2)))
+  const y = Math.max(1, Math.min(vh - 1, Math.floor(box.y + box.height / 2)))
+  try {
+    await page.mouse.move(x, y)
+    log('SCROLL_MOUSE_MOVE', `${label} x=${x} y=${y} source=${primaryRootSource(info)}`)
+    return true
+  } catch {
+    log('SCROLL_MOUSE_MOVE_FAILED', `${label} source=${primaryRootSource(info)} reason=mouse_move_error`)
+    return false
+  }
 }
 
 /**
- * Multi-step scroll: ArrowDown ×2 (1200ms settle each), PageDown (1500ms), wheel 900–1400 (1500ms).
+ * Scroll-only SAFE TikTok FYP advance.
  *
- * @param {{ resolvedInfo?: Awaited<ReturnType<import('./tiktokFeedLayout.js').resolvePrimaryFeedRoot>> | null }} [focusOptions]
- * @returns {Promise<boolean>} true if stable key changed vs initial `before`
+ * @returns {Promise<boolean>} true if a freshly resolved stable key changed
  */
-export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, getStableKey, focusOptions) {
+export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt) {
   if (safePageClosed(page)) {
     log('PAGE_CLOSED_DURING_STOP', 'scroll_start')
+    return false
+  }
+
+  const beforeRoot = await resolvePrimaryFeedRoot(page)
+  log('PRIMARY_ROOT_BEFORE', `source=${primaryRootSource(beforeRoot)} found=${beforeRoot != null}`)
+  const before = await safeReadStableKeyFromInfo(page, beforeRoot)
+  log('KEY_BEFORE', before.slice(0, 240))
+  if (!beforeRoot) {
+    log('SCROLL_SUCCESS', 'false')
+    log('SCROLL_STUCK', 'reason=no_primary_root_before')
     return false
   }
 
@@ -94,73 +135,11 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
 
   await maybeScrollVisualScreenshot(page, log, 'before_scroll')
 
-  log('SCROLL_ATTEMPT', 'bringToFront_focus_ArrowDown_x2_PageDown_wheel_fixed_waits')
-
-  const before = await safeReadStableKey(page, getStableKey)
-  const focusOpts = { ...(focusOptions ?? {}), scrollOnlyFocus: true }
-  const focused = await focusPrimaryFeedVideo(page, log, shouldHalt, 'SCROLL_VIDEO_FOCUSED', focusOpts)
-  if (!focused) {
-    log('SCROLL_VIDEO_FOCUS_FAILED', 'keyboard_without_focus_click')
-  }
-
-  const tryArrow = async (attemptLabel) => {
-    if (safePageClosed(page)) return false
-    await tiktokScrollHaltIfNeeded(shouldHalt)
-    log('SCROLL_KEYBOARD_ARROW', attemptLabel)
-    try {
-      await page.keyboard.press('ArrowDown')
-    } catch {
-      if (safePageClosed(page)) return false
-    }
-    await tiktokScrollSleepMsHaltable(shouldHalt, 1200)
-    await tiktokScrollHaltIfNeeded(shouldHalt)
-    return keyAdvancedFrom(page, getStableKey, before)
-  }
-
-  if (await tryArrow('attempt=1')) {
-    log('SCROLL_KEY_CHANGED', 'after_ArrowDown_1')
-    log('SCROLL_SUCCESS', 'method=ArrowDown')
-    await maybeScrollVisualScreenshot(page, log, 'after_scroll')
-    return true
-  }
-
-  if (await tryArrow('attempt=2')) {
-    log('SCROLL_KEY_CHANGED', 'after_ArrowDown_2')
-    log('SCROLL_SUCCESS', 'method=ArrowDown')
-    await maybeScrollVisualScreenshot(page, log, 'after_scroll')
-    return true
-  }
-
-  if (safePageClosed(page)) {
-    log('PAGE_CLOSED_DURING_STOP', 'before_PageDown')
-    return false
-  }
-  await tiktokScrollHaltIfNeeded(shouldHalt)
-  log('SCROLL_PAGEDOWN_FALLBACK', 'after_ArrowDown_x2_unchanged')
-  try {
-    await page.keyboard.press('PageDown')
-  } catch {
-    if (safePageClosed(page)) {
-      log('PAGE_CLOSED_DURING_STOP', 'during_PageDown')
-      return false
-    }
-  }
-  await tiktokScrollSleepMsHaltable(shouldHalt, 1500)
-  await tiktokScrollHaltIfNeeded(shouldHalt)
-  if (await keyAdvancedFrom(page, getStableKey, before)) {
-    log('SCROLL_KEY_CHANGED', 'after_PageDown')
-    log('SCROLL_SUCCESS', 'method=PageDown')
-    await maybeScrollVisualScreenshot(page, log, 'after_scroll')
-    return true
-  }
-
-  if (safePageClosed(page)) {
-    log('PAGE_CLOSED_DURING_STOP', 'before_wheel')
-    return false
-  }
+  log('SCROLL_ATTEMPT', 'mouse_wheel_then_single_ArrowDown_fallback')
+  await moveMouseToRootCenter(page, beforeRoot, log, 'before_wheel')
   await tiktokScrollHaltIfNeeded(shouldHalt)
   const dy = randomInt(900, 1400)
-  log('SCROLL_WHEEL_FALLBACK', `dy=${dy}`)
+  log('SCROLL_MOUSE_WHEEL', `dy=${dy}`)
   try {
     await page.mouse.wheel(0, dy)
   } catch {
@@ -169,16 +148,50 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
       return false
     }
   }
-  await tiktokScrollSleepMsHaltable(shouldHalt, 1500)
+  await tiktokScrollSleepMsHaltable(shouldHalt, randomInt(1000, 1500))
   await tiktokScrollHaltIfNeeded(shouldHalt)
-  if (await keyAdvancedFrom(page, getStableKey, before)) {
-    log('SCROLL_KEY_CHANGED', 'after_wheel')
-    log('SCROLL_SUCCESS', 'method=wheel')
+
+  let afterRoot = await resolvePrimaryFeedRoot(page)
+  let after = await safeReadStableKeyFromInfo(page, afterRoot)
+  log('PRIMARY_ROOT_AFTER', `source=${primaryRootSource(afterRoot)} found=${afterRoot != null} phase=wheel`)
+  log('KEY_AFTER', after.slice(0, 240))
+  if (tiktokStableKeyAdvanced(before, after)) {
+    log('SCROLL_SUCCESS', 'true')
     await maybeScrollVisualScreenshot(page, log, 'after_scroll')
     return true
   }
 
-  log('SCROLL_STUCK', 'stable_key_unchanged_after_ArrowDown_x2_PageDown_wheel')
+  if (safePageClosed(page)) {
+    log('PAGE_CLOSED_DURING_STOP', 'before_ArrowDown_fallback')
+    return false
+  }
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  const fallbackRoot = afterRoot ?? beforeRoot
+  await moveMouseToRootCenter(page, fallbackRoot, log, 'before_arrow_fallback')
+  log('SCROLL_KEYBOARD_ARROW', 'fallback=1')
+  try {
+    await page.keyboard.press('ArrowDown')
+  } catch {
+    if (safePageClosed(page)) {
+      log('PAGE_CLOSED_DURING_STOP', 'during_ArrowDown_fallback')
+      return false
+    }
+  }
+  await tiktokScrollSleepMsHaltable(shouldHalt, 1200)
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+
+  afterRoot = await resolvePrimaryFeedRoot(page)
+  after = await safeReadStableKeyFromInfo(page, afterRoot)
+  log('PRIMARY_ROOT_AFTER', `source=${primaryRootSource(afterRoot)} found=${afterRoot != null} phase=arrow_fallback`)
+  log('KEY_AFTER', after.slice(0, 240))
+  if (tiktokStableKeyAdvanced(before, after)) {
+    log('SCROLL_SUCCESS', 'true')
+    await maybeScrollVisualScreenshot(page, log, 'after_scroll')
+    return true
+  }
+
+  log('SCROLL_SUCCESS', 'false')
+  log('SCROLL_STUCK', 'stable_key_unchanged_after_mouse_wheel_and_single_ArrowDown')
   await maybeScrollVisualScreenshot(page, log, 'after_scroll')
   return false
 }

@@ -25,7 +25,7 @@ export async function runPostLiveHardScrollSequence(opts) {
 
     log('POST_LIVE_HARD_SCROLL', `round=${round + 1}/${maxRounds}`)
 
-    await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, getStableKey)
+    await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt)
     const now = await getStableKey()
     if (tiktokStableKeyAdvanced(refAtRound, now)) {
       log('POST_LIVE_HARD_SCROLL_OK', `round=${round + 1}`)
