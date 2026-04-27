@@ -1,10 +1,11 @@
 /**
- * SAFE_TIKTOK_FEED_MODE clean baseline.
+ * SAFE_TIKTOK_FEED_MODE scroll-only baseline.
  *
- * This module intentionally performs no feed actions. It keeps the public
- * iteration export used by the runner while the TikTok SAFE scenario is rebuilt.
+ * One iteration watches the current FYP video, then performs one simple wheel
+ * movement over the viewport center. No other feed actions are performed here.
  */
 
+import { randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 
 /**
@@ -15,6 +16,20 @@ async function haltIfNeeded(shouldHalt) {
   const v = await shouldHalt()
   if (v === 'stop') throw new ExecutorHaltError('stop')
   if (v === 'max_duration') throw new ExecutorHaltError('max_duration')
+}
+
+/**
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {number} ms
+ */
+async function sleepMsHaltable(shouldHalt, ms) {
+  let left = Math.max(0, Math.floor(Number(ms) || 0))
+  while (left > 0) {
+    await haltIfNeeded(shouldHalt)
+    const step = Math.min(400, left)
+    await sleep(step)
+    left -= step
+  }
 }
 
 /**
@@ -89,6 +104,47 @@ async function detectLiveFeedCard(page) {
 }
 
 /**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function viewCurrentVideo(page, log, shouldHalt) {
+  const durationMs = randomInt(5000, 12000)
+  log('VIEW_VIDEO', `durationMs=${durationMs}`)
+  await sleepMsHaltable(shouldHalt, durationMs)
+  if (await detectChallengeBlocking(page)) {
+    log('TIKTOK_CHALLENGE_DETECTED', 'challenge/verify during VIEW_VIDEO')
+    throw new ExecutorHaltError('challenge')
+  }
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function simpleScroll(page, log, shouldHalt) {
+  log('SIMPLE_SCROLL_START', '')
+  try {
+    await page.bringToFront()
+  } catch {
+    /* ignore */
+  }
+
+  const viewport = page.viewportSize()
+  const width = viewport && Number.isFinite(viewport.width) ? viewport.width : 1280
+  const height = viewport && Number.isFinite(viewport.height) ? viewport.height : 720
+  await page.mouse.move(Math.floor(width / 2), Math.floor(height / 2))
+  await sleepMsHaltable(shouldHalt, randomInt(200, 400))
+
+  const dy = randomInt(900, 1400)
+  log('SIMPLE_SCROLL_WHEEL', `dy=${dy}`)
+  await page.mouse.wheel(0, dy)
+  await sleepMsHaltable(shouldHalt, randomInt(1200, 1800))
+  log('SIMPLE_SCROLL_DONE', '')
+}
+
+/**
  * Clean SAFE TikTok iteration. Signature is kept stable for playwrightTestRun.
  *
  * @param {import('playwright').Page} page
@@ -98,6 +154,11 @@ async function detectLiveFeedCard(page) {
  * @returns {Promise<void>}
  */
 export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options = {}) {
+  const iteration =
+    _options && _options.iterationIndex != null && Number.isFinite(Number(_options.iterationIndex))
+      ? Math.max(0, Math.floor(Number(_options.iterationIndex)))
+      : '?'
+
   try {
     if (page.isClosed()) {
       log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
@@ -116,14 +177,35 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
   await haltIfNeeded(shouldHalt)
 
   if (pageInLiveSurfaceUrl(page)) {
-    log('SAFE_TIKTOK_FEED_MODE_CLEAN_READY', 'status=live_surface_no_action')
+    log('SAFE_TIKTOK_FEED_MODE_SCROLL_ONLY', 'status=live_surface_no_scroll')
     return
   }
 
   if (await detectLiveFeedCard(page)) {
-    log('SAFE_TIKTOK_FEED_MODE_CLEAN_READY', 'status=live_card_no_action')
+    log('SAFE_TIKTOK_FEED_MODE_SCROLL_ONLY', 'status=live_card_no_scroll')
     return
   }
 
-  log('SAFE_TIKTOK_FEED_MODE_CLEAN_READY', 'status=ready_no_action')
+  let currentUrl = ''
+  try {
+    currentUrl = page.url()
+  } catch {
+    currentUrl = '(unreadable)'
+  }
+  log('SAFE_TIKTOK_FEED_MODE_SCROLL_ONLY', `url=${currentUrl.slice(0, 400)}`)
+
+  await viewCurrentVideo(page, log, shouldHalt)
+  await haltIfNeeded(shouldHalt)
+
+  if (pageInLiveSurfaceUrl(page)) {
+    log('SAFE_TIKTOK_FEED_MODE_SCROLL_ONLY', 'status=live_surface_after_view_no_scroll')
+    return
+  }
+  if (await detectLiveFeedCard(page)) {
+    log('SAFE_TIKTOK_FEED_MODE_SCROLL_ONLY', 'status=live_card_after_view_no_scroll')
+    return
+  }
+
+  await simpleScroll(page, log, shouldHalt)
+  log('ITERATION_FINAL', `iteration=${iteration} scroll=done mode=scroll_only`)
 }
