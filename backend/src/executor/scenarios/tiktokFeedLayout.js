@@ -1,6 +1,5 @@
 /**
- * TikTok FYP: resolve the primary feed card (e2e or largest article with video) for stable keys + focus.
- * Avoids first random <article> (nav/sidebar) breaking scroll and rich actions when feed-active-video is absent.
+ * TikTok FYP: single primary root for an iteration — e2e feed card, largest visible article+video, or first visible video.
  */
 
 import { randomInt, sleep } from '../asyncUtils.js'
@@ -26,8 +25,19 @@ async function sleepMsHaltable(shouldHalt, ms) {
 }
 
 /**
+ * @param {{ x: number; y: number; width: number; height: number }} box
+ * @param {number} vw
+ * @param {number} vh
+ */
+function rectViewportOverlapArea(box, vw, vh) {
+  const ix = Math.max(0, Math.min(box.x + box.width, vw) - Math.max(0, box.x))
+  const iy = Math.max(0, Math.min(box.y + box.height, vh) - Math.max(0, box.y))
+  return Math.max(0, ix) * Math.max(0, iy)
+}
+
+/**
  * @param {import('playwright').Page} page
- * @returns {Promise<null | { kind: 'e2e'; root: import('playwright').Locator } | { kind: 'article'; root: import('playwright').Locator }>}
+ * @returns {Promise<null | { kind: 'e2e'; root: import('playwright').Locator } | { kind: 'article'; root: import('playwright').Locator } | { kind: 'video'; root: import('playwright').Locator }>}
  */
 export async function resolvePrimaryFeedRoot(page) {
   try {
@@ -36,14 +46,16 @@ export async function resolvePrimaryFeedRoot(page) {
     return null
   }
 
+  const vp = page.viewportSize()
+  const vw = vp && Number.isFinite(vp.width) ? vp.width : 1280
+  const vh = vp && Number.isFinite(vp.height) ? vp.height : 720
+  const cx = vw * 0.5
+  const cy = vh * 0.42
+
   const feed = page.locator('[data-e2e="feed-active-video"]').first()
-  if ((await feed.count().catch(() => 0)) > 0) {
+  if ((await feed.count().catch(() => 0)) > 0 && (await feed.isVisible().catch(() => false))) {
     return { kind: 'e2e', root: feed }
   }
-
-  const vp = page.viewportSize()
-  const cx = vp && Number.isFinite(vp.width) ? vp.width * 0.5 : 640
-  const cy = vp && Number.isFinite(vp.height) ? vp.height * 0.42 : 360
 
   const articles = page.locator('article')
   const n = await articles.count().catch(() => 0)
@@ -52,6 +64,7 @@ export async function resolvePrimaryFeedRoot(page) {
   for (let i = 0; i < Math.min(n, 36); i += 1) {
     const art = articles.nth(i)
     if ((await art.locator('video').count().catch(() => 0)) === 0) continue
+    if (!(await art.isVisible().catch(() => false))) continue
     const liveHref =
       (await art.locator('a[href*="/live"]').first().getAttribute('href').catch(() => null)) ?? ''
     if (String(liveHref).toLowerCase().includes('/live')) continue
@@ -60,14 +73,17 @@ export async function resolvePrimaryFeedRoot(page) {
     ) {
       continue
     }
+    const vid = art.locator('video').first()
+    if (!(await vid.isVisible().catch(() => false))) continue
     const box = await art.boundingBox().catch(() => null)
     if (!box || box.width < 120 || box.height < 160) continue
+    const visArea = rectViewportOverlapArea(box, vw, vh)
+    if (visArea < 4000) continue
     const mx = box.x + box.width / 2
     const my = box.y + box.height / 2
     const dist = Math.hypot(mx - cx, my - cy)
-    const area = box.width * box.height
-    /** Prefer large feed card near viewport center (main column), not small sidebar previews. */
-    const score = area / (80 + dist)
+    /** Largest visible-on-viewport card near center. */
+    const score = visArea / (80 + dist)
     if (score > bestScore) {
       bestScore = score
       bestIdx = i
@@ -75,6 +91,17 @@ export async function resolvePrimaryFeedRoot(page) {
   }
   if (bestIdx >= 0) {
     return { kind: 'article', root: articles.nth(bestIdx) }
+  }
+
+  const videos = page.locator('video')
+  const nv = await videos.count().catch(() => 0)
+  for (let j = 0; j < Math.min(nv, 40); j += 1) {
+    const v = videos.nth(j)
+    if (!(await v.isVisible().catch(() => false))) continue
+    const box = await v.boundingBox().catch(() => null)
+    if (!box || box.width < 80 || box.height < 80) continue
+    if (rectViewportOverlapArea(box, vw, vh) < 500) continue
+    return { kind: 'video', root: v }
   }
 
   return null
@@ -100,6 +127,12 @@ export async function readStableKeyFromFeedRoot(page, info) {
     const src = (await r.locator('video').first().getAttribute('src').catch(() => null)) ?? ''
     return `${String(href).trim()}|${String(src).trim().slice(0, 160)}`.slice(0, 400)
   }
+  if (info.kind === 'video') {
+    const v = info.root
+    const src = (await v.getAttribute('src').catch(() => null)) ?? ''
+    const poster = (await v.getAttribute('poster').catch(() => null)) ?? ''
+    return `vid|${String(src).trim().slice(0, 180)}|${String(poster).trim().slice(0, 120)}`.slice(0, 400)
+  }
   const art = info.root
   const href =
     (await art.locator('a[href*="/@"]').first().getAttribute('href').catch(() => null)) ??
@@ -113,17 +146,21 @@ export async function readStableKeyFromFeedRoot(page, info) {
 
 /**
  * Focus primary feed video (same target as stable key). `okAction` defaults to SCROLL logs; use RICH_FOCUS for likes etc.
- * @param {{ rich?: boolean }} [options] — `rich: true`: no page-level `video:first` fallback (keeps actions on the same card as `resolvePrimaryFeedRoot`).
+ * @param {{ rich?: boolean; resolvedInfo?: Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | null }} [options]
+ *   `resolvedInfo`: use this root for the whole iteration (no re-resolve).
+ *   `rich: true`: no extra page-level `video:first` fallback beyond `resolvedInfo` / resolve.
  * @returns {Promise<boolean>}
  */
 export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'SCROLL_VIDEO_FOCUSED', options = {}) {
   const richOnly = options.rich === true
+  const fixed = options.resolvedInfo !== undefined ? options.resolvedInfo : undefined
   if (page.isClosed()) {
     log('PAGE_CLOSED_DURING_STOP', 'before_video_focus')
     return false
   }
 
-  const info = await resolvePrimaryFeedRoot(page)
+  const info = fixed !== undefined ? fixed : await resolvePrimaryFeedRoot(page)
+
   if (info?.kind === 'e2e') {
     try {
       await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
@@ -168,7 +205,20 @@ export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'S
     }
   }
 
-  if (!richOnly) {
+  if (info?.kind === 'video') {
+    try {
+      await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+      await sleepMsHaltable(shouldHalt, randomInt(200, 400))
+      await tiktokScrollHaltIfNeeded(shouldHalt)
+      await info.root.click({ position: { x: 48, y: 48 }, timeout: 8000 }).catch(() => {})
+      log(okAction, 'primary_video_root')
+      return true
+    } catch {
+      /* fall through */
+    }
+  }
+
+  if (!richOnly && fixed === undefined) {
     const v = page.locator('video').first()
     if ((await v.count().catch(() => 0)) > 0) {
       try {

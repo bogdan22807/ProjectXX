@@ -1,12 +1,12 @@
 /**
  * SAFE_TIKTOK_FEED_MODE — TikTok FYP: controlled one-video scroll, optional single rich action per video
- * (like 40% / comments 35% / profile 20% / else none ~5%), weighted watch times, irregular pauses.
- * Rich actions: focus feed card + scrollIntoView + short waits + expanded selectors before like/comment/profile clicks. No goto/reload/goBack, no upward scroll.
+ * (like 20% / comments 10% / none 70%), weighted watch times, irregular pauses.
+ * Rich actions: like or comments only (no profile). No goto/reload/goBack, no upward scroll.
  * LIVE: skip only via controlled scroll; LIVE URL: navigate to For You via nav clicks only.
  */
 
 import { randomChance, randomInt, sleep } from '../asyncUtils.js'
-import { tiktokStableKeyAdvanced, tiktokWheelDownOnly } from './tiktokScrollHelpers.js'
+import { tiktokStableKeyAdvanced } from './tiktokScrollHelpers.js'
 import {
   focusPrimaryFeedVideo,
   readStableKeyFromFeedRoot,
@@ -48,7 +48,7 @@ function pageInLiveSurfaceUrl(page) {
   }
 }
 
-/** On TikTok FYP URL (for You tab) — used before scroll after rich actions to avoid profile URL + scroll clash. */
+/** On TikTok FYP URL (for You tab) — used before scroll after rich actions if UI left /foryou (e.g. comments). */
 function isTikTokFypUrl(page) {
   try {
     const u = new URL(page.url())
@@ -140,7 +140,7 @@ async function isLocatorUsableInViewport(loc, page) {
  * @param {(action: string, details?: string) => void} log
  * @returns {Promise<{ hasUsableVideo: boolean; failureReason: string | null }>}
  */
-async function logVideoDetectionResult(page, log) {
+async function logVideoDetectionResult(page, log, lockedRoot = undefined) {
   if (await safePageClosed(page)) {
     log('VIDEO_DETECTION_RESULT', 'feed_active_video_count=0 (page_closed)')
     log('VIDEO_DETECTION_FAILED_REASON', 'reason=page_closed')
@@ -153,6 +153,10 @@ async function logVideoDetectionResult(page, log) {
     'VIDEO_DETECTION_RESULT',
     `feed_active_video_count=${feed_active_video_count} video_tag_count=${video_tag_count} video_player_count=${video_player_count} article_count=${article_count}`,
   )
+
+  if (lockedRoot != null) {
+    return { hasUsableVideo: true, failureReason: null }
+  }
 
   if (feed_active_video_count === 0 && video_tag_count === 0) {
     log('VIDEO_DETECTION_FAILED_REASON', 'reason=video_not_found')
@@ -244,11 +248,12 @@ async function detectLiveFeedCard(page) {
 /**
  * Stable key: same primary card as scroll/focus (`resolvePrimaryFeedRoot` + href|src).
  * @param {import('playwright').Page} page
+ * @param {Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | undefined} [lockedRoot] — iteration-locked root from `PRIMARY_ROOT_RESOLVED`; omit to resolve live DOM.
  */
-async function getStableVideoKey(page) {
+async function getStableVideoKey(page, lockedRoot = undefined) {
   try {
     if (page.isClosed()) return ''
-    const info = await resolvePrimaryFeedRoot(page)
+    const info = lockedRoot !== undefined ? lockedRoot : await resolvePrimaryFeedRoot(page)
     return await readStableKeyFromFeedRoot(page, info)
   } catch {
     return ''
@@ -259,8 +264,8 @@ async function getStableVideoKey(page) {
  * Key for anti-repeat: stable key if non-empty, else url + first video src/poster + article count.
  * @param {import('playwright').Page} page
  */
-async function getRepeatTrackingKey(page) {
-  const primary = await getStableVideoKey(page)
+async function getRepeatTrackingKey(page, lockedRoot = undefined) {
+  const primary = await getStableVideoKey(page, lockedRoot)
   if (String(primary).trim()) return primary
   let url = ''
   try {
@@ -277,6 +282,53 @@ async function getRepeatTrackingKey(page) {
   }
   const ac = await page.locator('article').count().catch(() => 0)
   return `fb|${url.slice(0, 240)}|${String(src).trim().slice(0, 120)}|${String(poster).trim().slice(0, 120)}|a=${ac}`.slice(0, 400)
+}
+
+/**
+ * @param {(action: string, details?: string) => void} log
+ * @param {Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | null} root
+ */
+function logPrimaryRootResolved(log, root) {
+  const found = root != null
+  const source =
+    root == null ? 'none' : root.kind === 'e2e' ? 'e2e' : root.kind === 'article' ? 'article' : 'video'
+  log('PRIMARY_ROOT_RESOLVED', `source=${source} found=${found}`)
+}
+
+/**
+ * Any `article` containing a `video` (for summary vs no_active_video when DOM has feed).
+ * @param {import('playwright').Page} page
+ */
+async function hasArticleWithVideo(page) {
+  const articles = page.locator('article')
+  const n = await articles.count().catch(() => 0)
+  for (let i = 0; i < Math.min(n, 40); i += 1) {
+    if ((await articles.nth(i).locator('video').count().catch(() => 0)) > 0) return true
+  }
+  return false
+}
+
+/**
+ * When `resolvePrimaryFeedRoot` is null but DOM still has video/article+video, use a loose root so scroll + key still run.
+ * @param {import('playwright').Page} page
+ * @param {Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | null} initial
+ */
+async function ensureIterationRootForScroll(page, initial) {
+  if (initial) return initial
+  const { video_tag_count, article_count } = await collectVideoDetectionCounts(page)
+  if (video_tag_count > 0) {
+    return { kind: 'video', root: page.locator('video').first() }
+  }
+  if (article_count > 0) {
+    const articles = page.locator('article')
+    for (let i = 0; i < Math.min(article_count, 40); i += 1) {
+      const art = articles.nth(i)
+      if ((await art.locator('video').count().catch(() => 0)) > 0) {
+        return { kind: 'article', root: art }
+      }
+    }
+  }
+  return null
 }
 
 /** Consecutive iterations ended with scroll stuck on same repeat-tracking key (module state). */
@@ -374,6 +426,8 @@ async function handleLiveFeedCard(page, log, shouldHalt, browserLabel) {
     'SCROLL_DEBUG',
     `key_before=${k0.slice(0, 120)} key_after=${kFinal.slice(0, 120)} changed=${changed}`,
   )
+  const rr = await resolvePrimaryFeedRoot(page)
+  const rk = rr && (rr.kind === 'e2e' || rr.kind === 'article' || rr.kind === 'video') ? rr.kind : 'none'
   return {
     path: 'live_card',
     viewedMs: 0,
@@ -385,6 +439,8 @@ async function handleLiveFeedCard(page, log, shouldHalt, browserLabel) {
     keyBefore: k0,
     keyAfter: kFinal,
     scrollChanged: changed,
+    rootKind: rk,
+    actionOutcome: 'skipped',
   }
 }
 
@@ -401,26 +457,22 @@ function sampleWatchMsWeighted() {
   return randomInt(16000, 30000)
 }
 
-/** At most one of like | comments | profile | none (cumulative % on one roll). */
+/** At most one of like | comments | none (cumulative % on one roll). */
 function pickRichActionForVideo() {
-  const likePct = 40
-  const comPct = 35
-  const profPct = 20
+  const likePct = 20
+  const comPct = 10
   const r = Math.random() * 100
   const cutLike = likePct
   const cutCom = likePct + comPct
-  const cutProf = likePct + comPct + profPct
   let pick = 'none'
   if (r < cutLike) pick = 'like'
   else if (r < cutCom) pick = 'comments'
-  else if (r < cutProf) pick = 'profile'
-  return { pick, likePct, comPct, profPct, roll: r, cutLike, cutCom, cutProf }
+  return { pick, likePct, comPct, roll: r, cutLike, cutCom }
 }
 
 function minWatchMsForAction(action) {
   if (action === 'like') return randomInt(6000, 12000)
   if (action === 'comments') return randomInt(8000, 15000)
-  if (action === 'profile') return randomInt(10000, 18000)
   return 0
 }
 
@@ -452,11 +504,21 @@ async function viewVideoWeighted(page, log, shouldHalt, totalMs) {
   }
 }
 
-/** Largest article / e2e card — same as scroll key (for scoping like/comment/author). */
-async function primaryFeedRoot(page) {
-  const info = await resolvePrimaryFeedRoot(page)
-  if (!info || (info.kind !== 'e2e' && info.kind !== 'article')) return null
-  return info.root
+/**
+ * Locator for rich controls: e2e/article root, or article ancestor of primary `video` root.
+ * @param {import('playwright').Page} page
+ * @param {Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | undefined} [lockedRoot]
+ */
+async function primaryFeedRoot(page, lockedRoot = undefined) {
+  const info = lockedRoot !== undefined ? lockedRoot : await resolvePrimaryFeedRoot(page)
+  if (!info) return null
+  if (info.kind === 'e2e' || info.kind === 'article') return info.root
+  if (info.kind === 'video') {
+    const anc = info.root.locator('xpath=ancestor::article[1]')
+    if ((await anc.count().catch(() => 0)) > 0) return anc
+    return info.root
+  }
+  return null
 }
 
 /**
@@ -465,10 +527,15 @@ async function primaryFeedRoot(page) {
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
-async function focusFeedCardForRichActions(page, log, shouldHalt) {
-  const ok = await focusPrimaryFeedVideo(page, log, shouldHalt, 'RICH_FOCUS', { rich: true })
+/**
+ * @param {Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | undefined} lockedRoot
+ */
+async function focusFeedCardForRichActions(page, log, shouldHalt, lockedRoot = undefined) {
+  const focusOpts =
+    lockedRoot !== undefined ? { rich: true, resolvedInfo: lockedRoot } : { rich: true }
+  const ok = await focusPrimaryFeedVideo(page, log, shouldHalt, 'RICH_FOCUS', focusOpts)
   if (!ok) {
-    const info = await resolvePrimaryFeedRoot(page)
+    const info = lockedRoot !== undefined ? lockedRoot : await resolvePrimaryFeedRoot(page)
     if (info) {
       log('RICH_FOCUS', 'failed_after_primary_resolved')
     } else {
@@ -480,7 +547,7 @@ async function focusFeedCardForRichActions(page, log, shouldHalt) {
 }
 
 /**
- * After profile/comments we may leave /foryou — re-open feed before scroll so actions do not overlap.
+ * After rich actions we may leave /foryou — re-open feed before scroll so actions do not overlap.
  */
 async function ensureOnFypBeforeScroll(page, log, shouldHalt) {
   if (await safePageClosed(page)) return
@@ -493,7 +560,7 @@ async function ensureOnFypBeforeScroll(page, log, shouldHalt) {
 }
 
 /**
- * Cooldown after rich action so UI (dialogs / profile) does not race with feed scroll.
+ * Cooldown after rich action so UI (dialogs) does not race with feed scroll.
  * @param {string} richAction
  */
 async function bufferAfterRichAction(page, log, shouldHalt, richAction) {
@@ -504,9 +571,6 @@ async function bufferAfterRichAction(page, log, shouldHalt, richAction) {
   } else if (richAction === 'comments') {
     await sleepMsHaltable(shouldHalt, randomInt(900, 2000))
     log('RICH_BUFFER', 'after_comments')
-  } else if (richAction === 'profile') {
-    await sleepMsHaltable(shouldHalt, randomInt(1400, 2800))
-    log('RICH_BUFFER', 'after_profile')
   }
   await haltIfNeeded(shouldHalt)
 }
@@ -566,18 +630,62 @@ async function tryClickRichControl(loc, log, shouldHalt, label) {
   }
 }
 
+const LIKE_CONTROL_SELECTORS = [
+  '[data-e2e="browse-like-icon"]',
+  '[data-e2e="like-icon"]',
+  '[data-e2e="video-player-like-icon"]',
+  '[data-e2e="video-player"] [data-e2e="like-icon"]',
+  '[data-e2e="video-player"] button[aria-label*="Like" i]',
+  '[data-e2e="video-engagement-toolbar"] [data-e2e="like-icon"]',
+  'button[aria-label*="Like" i]',
+  '[data-e2e="strong-like-icon"]',
+]
+
+/**
+ * First visible matching control under `scope` (selectors only). If `scope` is null, searches whole page and includes role/label fallbacks.
+ * @param {import('playwright').Page} page
+ * @param {import('playwright').Locator | null} scope
+ * @param {string} scopeLabel
+ * @returns {Promise<{ loc: import('playwright').Locator; label: string } | null>}
+ */
+async function pickFirstVisibleLikeControl(page, scope, scopeLabel) {
+  const base = scope ?? page
+  for (const sel of LIKE_CONTROL_SELECTORS) {
+    const chain = base.locator(sel)
+    const n = await chain.count().catch(() => 0)
+    const cap = Math.min(n, 24)
+    for (let i = 0; i < cap; i += 1) {
+      const loc = chain.nth(i)
+      if (await loc.isVisible().catch(() => false)) {
+        return { loc, label: `${scopeLabel}>${sel}[${i}]` }
+      }
+    }
+  }
+  if (scope != null) return null
+  const roleChain = page.getByRole('button', { name: /\blike\b/i })
+  const rn = await roleChain.count().catch(() => 0)
+  for (let i = 0; i < Math.min(rn, 12); i += 1) {
+    const loc = roleChain.nth(i)
+    if (await loc.isVisible().catch(() => false)) {
+      return { loc, label: `${scopeLabel}>role=button_like[${i}]` }
+    }
+  }
+  const labelChain = page.getByLabel(/like/i)
+  const ln = await labelChain.count().catch(() => 0)
+  for (let i = 0; i < Math.min(ln, 12); i += 1) {
+    const loc = labelChain.nth(i)
+    if (await loc.isVisible().catch(() => false)) {
+      return { loc, label: `${scopeLabel}>aria_label_like[${i}]` }
+    }
+  }
+  return null
+}
+
 /**
  * @param {import('playwright').Page} page
  */
-async function readLikePressedState(page) {
-  const primary = await primaryFeedRoot(page)
-  const scopedSelectors = [
-    '[data-e2e="browse-like-icon"]',
-    '[data-e2e="like-icon"]',
-    '[data-e2e="video-player-like-icon"]',
-    'button[aria-label*="Like" i]',
-    '[data-e2e="video-player"] [data-e2e="like-icon"]',
-  ]
+async function readLikePressedState(page, lockedRoot = undefined) {
+  const primary = await primaryFeedRoot(page, lockedRoot)
   /** @param {import('playwright').Locator} loc */
   const tryLoc = async (loc) => {
     if ((await loc.count().catch(() => 0)) === 0) return false
@@ -588,88 +696,81 @@ async function readLikePressedState(page) {
     return false
   }
   if (primary) {
-    for (const sel of scopedSelectors) {
-      if (await tryLoc(primary.locator(sel).first())) return true
+    for (const sel of LIKE_CONTROL_SELECTORS) {
+      const chain = primary.locator(sel)
+      const n = await chain.count().catch(() => 0)
+      for (let i = 0; i < Math.min(n, 12); i += 1) {
+        if (await tryLoc(chain.nth(i))) return true
+      }
     }
   }
-  for (const sel of scopedSelectors) {
-    if (await tryLoc(page.locator(sel).first())) return true
+  for (const sel of LIKE_CONTROL_SELECTORS) {
+    const chain = page.locator(sel)
+    const n = await chain.count().catch(() => 0)
+    for (let i = 0; i < Math.min(n, 16); i += 1) {
+      if (await tryLoc(chain.nth(i))) return true
+    }
   }
   return false
 }
 
 /**
- * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @returns {Promise<'success' | 'skipped' | 'failed'>}
  */
-async function tryLikeWithVerify(page, log, shouldHalt) {
+async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined) {
   if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
-    log('LIKE_SKIPPED', 'LIVE')
-    return
+    log('LIKE_SKIPPED', 'reason=LIVE')
+    return 'skipped'
   }
   if (await detectChallengeBlocking(page)) {
-    log('LIKE_SKIPPED', 'challenge')
-    return
+    log('LIKE_SKIPPED', 'reason=challenge')
+    return 'skipped'
   }
 
-  await focusFeedCardForRichActions(page, log, shouldHalt)
+  await focusFeedCardForRichActions(page, log, shouldHalt, lockedRoot)
 
-  const primary = await primaryFeedRoot(page)
-
-  const likeSelectors = [
-    '[data-e2e="browse-like-icon"]',
-    '[data-e2e="like-icon"]',
-    '[data-e2e="video-player-like-icon"]',
-    '[data-e2e="video-player"] [data-e2e="like-icon"]',
-    '[data-e2e="video-player"] button[aria-label*="Like" i]',
-    '[data-e2e="video-engagement-toolbar"] [data-e2e="like-icon"]',
-    'button[aria-label*="Like" i]',
-    '[data-e2e="strong-like-icon"]',
-  ]
-  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
-  const candidates = []
-  if (primary) {
-    for (const sel of likeSelectors) {
-      candidates.push({ loc: primary.locator(sel).first(), label: `primary>${sel}` })
-    }
+  const primary = await primaryFeedRoot(page, lockedRoot)
+  let picked = primary ? await pickFirstVisibleLikeControl(page, primary, 'primary') : null
+  let pickScope = picked ? 'primary' : 'page'
+  if (!picked) {
+    picked = await pickFirstVisibleLikeControl(page, null, 'page')
+    pickScope = picked ? 'page' : 'none'
   }
-  for (const sel of likeSelectors) {
-    candidates.push({ loc: page.locator(sel).first(), label: `page>${sel}` })
-  }
-  candidates.push({
-    loc: page.getByRole('button', { name: /\blike\b/i }).first(),
-    label: 'role=button_name_like',
-  })
-  candidates.push({
-    loc: page.getByLabel(/like/i).first(),
-    label: 'aria_label_like',
-  })
 
-  const before = await readLikePressedState(page)
-  for (const { loc, label } of candidates) {
-    if ((await loc.count().catch(() => 0)) === 0) continue
-    const clicked = await tryClickRichControl(loc, log, shouldHalt, label)
-    if (!clicked) {
-      log('LIKE_TRY_NEXT', `not_clickable label=${label}`)
-      continue
-    }
-    log('LIKE_CLICK', label)
-    await sleepMsHaltable(shouldHalt, randomInt(450, 900))
-    await haltIfNeeded(shouldHalt)
-    const after = await readLikePressedState(page)
-    if (after && !before) {
-      log('LIKE_VERIFIED', 'state_on')
-    } else if (after && before) {
-      log('LIKE_VERIFIED', 'already_liked')
-    } else {
-      log('LIKE_NOT_VERIFIED', 'no_state_change — continue')
-    }
+  log('LIKE_ATTEMPT', `scope=${pickScope}${picked ? ` label=${picked.label}` : ''}`)
+
+  if (!picked) {
+    log('LIKE_SKIPPED', 'reason=no_visible_like_button')
+    return 'skipped'
+  }
+
+  const before = await readLikePressedState(page, lockedRoot)
+  if (before) {
+    log('LIKE_VERIFIED', 'reason=already_liked_before_click')
+    return 'success'
+  }
+
+  const clicked = await tryClickRichControl(picked.loc, log, shouldHalt, picked.label)
+  if (!clicked) {
+    log('LIKE_SKIPPED', 'reason=click_failed_or_not_visible')
+    return 'skipped'
+  }
+  log('LIKE_CLICKED', picked.label)
+
+  await sleepMsHaltable(shouldHalt, randomInt(450, 900))
+  await haltIfNeeded(shouldHalt)
+
+  const after = await readLikePressedState(page, lockedRoot)
+  if (after) {
+    log('LIKE_VERIFIED', 'reason=liked_after_click')
     await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
     await haltIfNeeded(shouldHalt)
-    return
+    return 'success'
   }
-  log('LIKE_SKIPPED', 'no_visible_like_control')
+  log('LIKE_SKIPPED', 'reason=no_state_change_after_click')
+  await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
+  await haltIfNeeded(shouldHalt)
+  return 'failed'
 }
 
 const COMMENT_ICON_SELECTORS = [
@@ -683,158 +784,126 @@ const COMMENT_ICON_SELECTORS = [
 ]
 
 /**
+ * First visible comment control under `scope` (selectors only). Page-wide includes role/label when `scope` is null.
  * @param {import('playwright').Page} page
- * @param {(action: string, details?: string) => void} log
- * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {import('playwright').Locator | null} scope
+ * @param {string} scopeLabel
+ * @returns {Promise<{ loc: import('playwright').Locator; label: string } | null>}
  */
-async function tryCommentsPeek(page, log, shouldHalt) {
-  if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
-    log('COMMENTS_SKIPPED', 'LIVE')
-    return
-  }
-
-  await focusFeedCardForRichActions(page, log, shouldHalt)
-
-  const primary = await primaryFeedRoot(page)
-  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
-  const candidates = []
-  if (primary) {
-    for (const sel of COMMENT_ICON_SELECTORS) {
-      candidates.push({ loc: primary.locator(sel).first(), label: `primary>${sel}` })
-    }
-  }
+async function pickFirstVisibleCommentControl(page, scope, scopeLabel) {
+  const base = scope ?? page
   for (const sel of COMMENT_ICON_SELECTORS) {
-    candidates.push({ loc: page.locator(sel).first(), label: `page>${sel}` })
-  }
-  candidates.push({
-    loc: page.getByRole('button', { name: /\bcomment\b/i }).first(),
-    label: 'role=button_name_comment',
-  })
-  candidates.push({
-    loc: page.getByLabel(/comment/i).first(),
-    label: 'aria_label_comment',
-  })
-
-  let opened = false
-  let openLabel = ''
-  for (const { loc, label } of candidates) {
-    if ((await loc.count().catch(() => 0)) === 0) continue
-    const ok = await tryClickRichControl(loc, log, shouldHalt, label)
-    if (ok) {
-      opened = true
-      openLabel = label
-      break
-    }
-  }
-  if (!opened) {
-    log('COMMENTS_SKIPPED', primary ? 'no_control_primary_and_page' : 'no_control_page_only')
-    return
-  }
-  log('COMMENTS_OPENED', openLabel)
-
-  await sleepMsHaltable(shouldHalt, randomInt(500, 1100))
-  await haltIfNeeded(shouldHalt)
-
-  const insideMs = randomInt(4000, 12000)
-  await viewVideoWeighted(page, log, shouldHalt, insideMs)
-
-  if (randomChance(50)) {
-    const panel = page
-      .locator(
-        '[data-e2e="comment-list"], [data-e2e="comment-list-scroll"], [class*="CommentList"], [class*="comment-list"], div[role="dialog"]',
-      )
-      .first()
-    if ((await panel.count().catch(() => 0)) > 0 && (await panel.isVisible().catch(() => false))) {
-      try {
-        await panel.scrollIntoViewIfNeeded({ timeout: 4000 }).catch(() => {})
-        await panel.locator('div').first().click({ timeout: 2500 }).catch(() => {})
-        await tiktokWheelDownOnly(page, randomInt(200, 450), log)
-        log('COMMENTS_SCROLL', 'once_light')
-      } catch {
-        /* ignore */
+    const chain = base.locator(sel)
+    const n = await chain.count().catch(() => 0)
+    const cap = Math.min(n, 24)
+    for (let i = 0; i < cap; i += 1) {
+      const loc = chain.nth(i)
+      if (await loc.isVisible().catch(() => false)) {
+        return { loc, label: `${scopeLabel}>${sel}[${i}]` }
       }
     }
   }
-
-  await page.keyboard.press('Escape').catch(() => {})
-  await sleepMsHaltable(shouldHalt, randomInt(150, 400))
-  await page.keyboard.press('Escape').catch(() => {})
-  log('COMMENTS_CLOSED', 'escape')
-  await sleepMsHaltable(shouldHalt, randomInt(1000, 2000))
-  await haltIfNeeded(shouldHalt)
+  if (scope != null) return null
+  const roleChain = page.getByRole('button', { name: /\bcomment\b/i })
+  const rn = await roleChain.count().catch(() => 0)
+  for (let i = 0; i < Math.min(rn, 12); i += 1) {
+    const loc = roleChain.nth(i)
+    if (await loc.isVisible().catch(() => false)) {
+      return { loc, label: `${scopeLabel}>role=button_comment[${i}]` }
+    }
+  }
+  const labelChain = page.getByLabel(/comment/i)
+  const ln = await labelChain.count().catch(() => 0)
+  for (let i = 0; i < Math.min(ln, 12); i += 1) {
+    const loc = labelChain.nth(i)
+    if (await loc.isVisible().catch(() => false)) {
+      return { loc, label: `${scopeLabel}>aria_label_comment[${i}]` }
+    }
+  }
+  return null
 }
 
 /**
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @returns {Promise<'close_button' | 'escape'>}
  */
-async function tryProfilePeek(page, log, shouldHalt) {
-  if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
-    log('PROFILE_SKIPPED', 'LIVE')
-    return
-  }
-
-  await focusFeedCardForRichActions(page, log, shouldHalt)
-
-  const primary = await primaryFeedRoot(page)
-  if (!primary) {
-    log('PROFILE_SKIPPED', 'no_primary_root')
-    return
-  }
-  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
-  const authorCandidates = [
-    { loc: primary.locator('a[href^="/@"]').first(), label: 'primary>a_href^/@' },
-    { loc: primary.locator('a[href*="/@"]').first(), label: 'primary>a_href*/@' },
-    { loc: primary.locator('[data-e2e*="author"] a').first(), label: 'primary>author_e2e>a' },
-    { loc: primary.locator('[data-e2e*="author"]').first(), label: 'primary>author_e2e' },
-    { loc: primary.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'primary>video-author-uniqueid>a' },
-    { loc: primary.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'primary>video-author-uniqueid' },
+async function closeCommentsPanel(page, log, shouldHalt) {
+  const closeCandidates = [
+    page.getByRole('button', { name: /^close$/i }).first(),
+    page.locator('[data-e2e*="close"]').first(),
+    page.locator('button[aria-label*="Close" i]').first(),
+    page.locator('[aria-label="Close"]').first(),
   ]
-  let authorLabel = ''
-  let clicked = false
-  for (const { loc, label } of authorCandidates) {
+  for (const loc of closeCandidates) {
     if ((await loc.count().catch(() => 0)) === 0) continue
-    const ok = await tryClickRichControl(loc, log, shouldHalt, label)
-    if (ok) {
-      authorLabel = label
-      clicked = true
-      break
-    }
-  }
-  if (!clicked) {
-    log('PROFILE_SKIPPED', 'no_author_in_primary_root')
-    return
-  }
-  log('PROFILE_CLICK', authorLabel)
-
-  let openUrl = ''
-  try {
-    openUrl = page.url()
-  } catch {
-    openUrl = ''
-  }
-  log('PROFILE_OPEN', openUrl.slice(0, 200))
-  await sleepMsHaltable(shouldHalt, randomInt(1200, 2200))
-  await haltIfNeeded(shouldHalt)
-
-  const dwell = randomInt(5000, 15000)
-  await viewVideoWeighted(page, log, shouldHalt, dwell)
-
-  if (randomChance(45)) {
+    if (!(await loc.isVisible().catch(() => false))) continue
     try {
-      await tiktokWheelDownOnly(page, randomInt(280, 520), log)
-      log('PROFILE_SCROLL', 'once_light')
-      await sleepMsHaltable(shouldHalt, randomInt(400, 900))
+      await loc.click({ timeout: 3500 })
+      await sleepMsHaltable(shouldHalt, randomInt(150, 400))
+      await haltIfNeeded(shouldHalt)
+      log('COMMENTS_CLOSED', 'reason=close_button')
+      return 'close_button'
     } catch {
-      /* ignore */
+      /* try next */
     }
   }
-
-  const ok = await tryClickForYouNav(page)
-  log('PROFILE_EXIT', ok ? 'nav_foryou' : 'nav_failed')
-  await sleepMsHaltable(shouldHalt, randomInt(2000, 4000))
+  await page.keyboard.press('Escape').catch(() => {})
+  await sleepMsHaltable(shouldHalt, randomInt(150, 400))
   await haltIfNeeded(shouldHalt)
+  await page.keyboard.press('Escape').catch(() => {})
+  log('COMMENTS_CLOSED', 'reason=escape')
+  return 'escape'
+}
+
+/**
+ * @returns {Promise<'success' | 'skipped' | 'failed'>}
+ */
+async function tryCommentsPeek(page, log, shouldHalt, lockedRoot = undefined) {
+  if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
+    log('COMMENTS_SKIPPED', 'reason=LIVE')
+    return 'skipped'
+  }
+  if (await detectChallengeBlocking(page)) {
+    log('COMMENTS_SKIPPED', 'reason=challenge')
+    return 'skipped'
+  }
+
+  await focusFeedCardForRichActions(page, log, shouldHalt, lockedRoot)
+
+  const primary = await primaryFeedRoot(page, lockedRoot)
+  let picked = primary ? await pickFirstVisibleCommentControl(page, primary, 'primary') : null
+  let pickScope = picked ? 'primary' : 'page'
+  if (!picked) {
+    picked = await pickFirstVisibleCommentControl(page, null, 'page')
+    pickScope = picked ? 'page' : 'none'
+  }
+
+  log('COMMENTS_ATTEMPT', `scope=${pickScope}${picked ? ` label=${picked.label}` : ''}`)
+
+  if (!picked) {
+    log('COMMENTS_SKIPPED', 'reason=no_visible_comment_button')
+    return 'skipped'
+  }
+
+  const opened = await tryClickRichControl(picked.loc, log, shouldHalt, picked.label)
+  if (!opened) {
+    log('COMMENTS_SKIPPED', 'reason=click_failed_or_not_visible')
+    return 'skipped'
+  }
+  log('COMMENTS_OPENED', picked.label)
+
+  const readMs = randomInt(4000, 10000)
+  log('COMMENTS_READ', `dwell_ms=${readMs}`)
+  await sleepMsHaltable(shouldHalt, readMs)
+  await haltIfNeeded(shouldHalt)
+
+  await closeCommentsPanel(page, log, shouldHalt)
+
+  await sleepMsHaltable(shouldHalt, randomInt(1000, 2000))
+  await haltIfNeeded(shouldHalt)
+  return 'success'
 }
 
 /** Feed videos advanced since last long break (module state). */
@@ -858,6 +927,10 @@ function resetLongBreakSchedule() {
  *   keyBefore: string
  *   keyAfter: string
  *   scrollChanged: boolean
+ *   feedHasVideoTag: boolean
+ *   feedHasArticleWithVideo: boolean
+ *   rootKind: 'none' | 'e2e' | 'article' | 'video'
+ *   actionOutcome: 'success' | 'skipped' | 'failed' | null
  * }} IterationDiagSummary
  */
 
@@ -866,13 +939,17 @@ function resetLongBreakSchedule() {
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
- * @param {{ debugScreenshots?: boolean; screenshotDir?: string; browserEngine?: string }} [_options]
+ * @param {{ debugScreenshots?: boolean; screenshotDir?: string; browserEngine?: string; iterationIndex?: number }} [_options]
  */
 export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options = {}) {
   const browserLabel =
     _options && _options.browserEngine != null && String(_options.browserEngine).trim() !== ''
       ? String(_options.browserEngine).trim()
       : 'chromium'
+  const iterationIndex =
+    _options && _options.iterationIndex != null && Number.isFinite(Number(_options.iterationIndex))
+      ? Math.max(0, Math.floor(Number(_options.iterationIndex)))
+      : null
 
   /** @type {IterationDiagSummary} */
   const sum = {
@@ -886,6 +963,10 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     keyBefore: '',
     keyAfter: '',
     scrollChanged: false,
+    feedHasVideoTag: false,
+    feedHasArticleWithVideo: false,
+    rootKind: 'none',
+    actionOutcome: null,
   }
 
   let finalized = false
@@ -898,7 +979,10 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       scrollStr = sum.scrollOk === true ? 'ok' : sum.scrollOk === false ? 'failed' : 'unknown'
     }
     let reason = 'reason='
-    if (!sum.videoFound) {
+    const domSuggestsFeed = sum.feedHasVideoTag || sum.feedHasArticleWithVideo
+    if (!sum.videoFound && domSuggestsFeed && sum.path === 'normal') {
+      reason = 'reason=key_unchanged_or_scroll_outcome'
+    } else if (!sum.videoFound) {
       reason = `reason=no_active_video${sum.videoFailReason ? ` (${sum.videoFailReason})` : ''}`
     } else if (sum.scrollRan && !sum.scrollChanged) {
       reason = 'reason=key_unchanged'
@@ -906,6 +990,43 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     log(
       'ITERATION_HUMAN_SUMMARY',
       `viewed=${viewedS}s action=${sum.richAction} video_found=${sum.videoFound} scroll=${scrollStr} ${reason} path=${sum.path}`,
+    )
+  }
+
+  function logIterationFinal() {
+    const iterStr = iterationIndex != null ? String(iterationIndex) : '?'
+    const viewS = Math.round(sum.viewedMs / 100) / 10
+    const root =
+      sum.rootKind === 'e2e' || sum.rootKind === 'article' || sum.rootKind === 'video'
+        ? sum.rootKind
+        : 'none'
+    let actionResult = 'skipped'
+    if (sum.richAction === 'none') {
+      actionResult = 'skipped'
+    } else if (sum.richAction === 'like' || sum.richAction === 'comments') {
+      actionResult =
+        sum.actionOutcome === 'success' || sum.actionOutcome === 'failed' || sum.actionOutcome === 'skipped'
+          ? sum.actionOutcome
+          : 'skipped'
+    } else {
+      actionResult = 'skipped'
+    }
+    let scrollFinal = 'skipped'
+    if (sum.scrollRan) {
+      scrollFinal = sum.scrollOk === true && sum.scrollChanged ? 'success' : 'stuck'
+    }
+    let reason = `path=${sum.path}`
+    const domSuggestsFeed = sum.feedHasVideoTag || sum.feedHasArticleWithVideo
+    if (!sum.videoFound && domSuggestsFeed && sum.path === 'normal') {
+      reason = `key_unchanged_or_scroll_outcome path=${sum.path}`
+    } else if (!sum.videoFound) {
+      reason = `no_active_video${sum.videoFailReason ? ` (${sum.videoFailReason})` : ''} path=${sum.path}`
+    } else if (sum.scrollRan && !sum.scrollChanged) {
+      reason = `key_unchanged path=${sum.path}`
+    }
+    log(
+      'ITERATION_FINAL',
+      `iteration=${iterStr} video_found=${sum.videoFound} root=${root} view=${viewS}s action=${sum.richAction} action_result=${actionResult} scroll=${scrollFinal} reason=${reason}`,
     )
   }
 
@@ -953,7 +1074,35 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       return
     }
 
-    const trackAtIterStart = await getRepeatTrackingKey(page)
+    let iterationRoot = await resolvePrimaryFeedRoot(page)
+    logPrimaryRootResolved(log, iterationRoot)
+    if (!iterationRoot) {
+      iterationRoot = await ensureIterationRootForScroll(page, iterationRoot)
+      if (iterationRoot) {
+        log('PRIMARY_ROOT_RESOLVED', 'source=fallback_dom found=true')
+      } else {
+        log('PRIMARY_ROOT_RESOLVED', 'source=fallback_dom found=false')
+      }
+    }
+    if (!iterationRoot) {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
+      sum.videoFound = false
+      sum.videoFailReason = 'primary_root_none'
+      sum.path = 'no_primary_root'
+      sum.rootKind = 'none'
+      sum.actionOutcome = 'skipped'
+      return
+    }
+    sum.rootKind = iterationRoot.kind
+    sum.videoFound = true
+    sum.videoFailReason = null
+
+    const counts0 = await collectVideoDetectionCounts(page)
+    sum.feedHasVideoTag = counts0.video_tag_count > 0
+    sum.feedHasArticleWithVideo = await hasArticleWithVideo(page)
+
+    const trackAtIterStart = await getRepeatTrackingKey(page, iterationRoot)
     if (
       repeatStuckCount >= 2 &&
       trackAtIterStart === lastRepeatTrackingKey &&
@@ -962,6 +1111,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       log('VIDEO_REPEAT_DETECTED', `repeatStuckCount=${repeatStuckCount} key=${trackAtIterStart.slice(0, 160)}`)
       sum.viewedMs = 0
       sum.richAction = 'repeat_recover'
+      sum.actionOutcome = 'skipped'
 
       if (repeatStuckCount >= 3) {
         await tryClickForYouNav(page)
@@ -971,9 +1121,13 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       }
 
       await logVideoDetectionStart(page, log, browserLabel)
-      const detR = await logVideoDetectionResult(page, log)
-      sum.videoFound = detR.hasUsableVideo
-      sum.videoFailReason = detR.failureReason
+      const detR = await logVideoDetectionResult(page, log, iterationRoot)
+      const countsR = await collectVideoDetectionCounts(page)
+      sum.feedHasVideoTag = countsR.video_tag_count > 0
+      sum.feedHasArticleWithVideo = await hasArticleWithVideo(page)
+      sum.videoFound =
+        detR.hasUsableVideo || sum.feedHasVideoTag || sum.feedHasArticleWithVideo || iterationRoot != null
+      sum.videoFailReason = sum.videoFound ? null : detR.failureReason
       let curUrlR = ''
       try {
         curUrlR = page.url()
@@ -982,23 +1136,29 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       }
       log(
         'SCROLL_CONTEXT',
-        `has_video=${detR.hasUsableVideo} current_url=${curUrlR.slice(0, 400)} is_live=${await detectLiveFeedCard(page)}`,
+        `has_video=${sum.videoFound} current_url=${curUrlR.slice(0, 400)} is_live=${await detectLiveFeedCard(page)}`,
       )
 
-      sum.keyBefore = await getStableVideoKey(page)
+      sum.keyBefore = await getStableVideoKey(page, iterationRoot)
       sum.scrollRan = true
       sum.scrollOk = false
-      sum.scrollOk = await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
+      sum.scrollOk = await runSafeTikTokControlledOneVideoScroll(
+        page,
+        log,
+        shouldHalt,
+        () => getStableVideoKey(page, iterationRoot),
+        { resolvedInfo: iterationRoot },
+      )
       await haltIfNeeded(shouldHalt)
       await ensureAdvancedAfterScroll(page, log, shouldHalt, sum.keyBefore)
-      sum.keyAfter = await getStableVideoKey(page)
+      sum.keyAfter = await getStableVideoKey(page, iterationRoot)
       sum.scrollChanged = tiktokStableKeyAdvanced(sum.keyBefore, sum.keyAfter)
       log(
         'SCROLL_DEBUG',
         `key_before=${sum.keyBefore.slice(0, 120)} key_after=${sum.keyAfter.slice(0, 120)} changed=${sum.scrollChanged} repeat_recover=1`,
       )
 
-      const trackAfterRecover = await getRepeatTrackingKey(page)
+      const trackAfterRecover = await getRepeatTrackingKey(page, iterationRoot)
       if (sum.scrollRan && !sum.scrollChanged) {
         if (trackAfterRecover === lastRepeatTrackingKey && lastRepeatTrackingKey !== '') {
           repeatStuckCount += 1
@@ -1031,7 +1191,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     sum.richAction = richAction
     log(
       'RICH_ACTION_ROLL',
-      `pick=${richAction} r=${roll.roll.toFixed(2)} like<=${roll.cutLike} com<=${roll.cutCom} prof<=${roll.cutProf} (like%=${roll.likePct} com%=${roll.comPct} prof%=${roll.profPct} none≈${(100 - roll.cutProf).toFixed(0)}%)`,
+      `pick=${richAction} r=${roll.roll.toFixed(2)} like<=${roll.cutLike} com<=${roll.cutCom} (like%=${roll.likePct} com%=${roll.comPct} none%=${(100 - roll.cutCom).toFixed(0)})`,
     )
     const baseWatch = sampleWatchMsWeighted()
     const minNeed = minWatchMsForAction(richAction)
@@ -1059,15 +1219,13 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
     if (richAction === 'like') {
       log('RICH_ACTION', 'like')
-      await tryLikeWithVerify(page, log, shouldHalt)
+      sum.actionOutcome = await tryLikeWithVerify(page, log, shouldHalt, iterationRoot)
     } else if (richAction === 'comments') {
       log('RICH_ACTION', 'comments')
-      await tryCommentsPeek(page, log, shouldHalt)
-    } else if (richAction === 'profile') {
-      log('RICH_ACTION', 'profile')
-      await tryProfilePeek(page, log, shouldHalt)
+      sum.actionOutcome = await tryCommentsPeek(page, log, shouldHalt, iterationRoot)
     } else {
       log('RICH_ACTION', 'none')
+      sum.actionOutcome = 'skipped'
     }
 
     await haltIfNeeded(shouldHalt)
@@ -1087,6 +1245,20 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       return
     }
 
+    try {
+      if (page.isClosed()) {
+        repeatStuckCount = 0
+        lastRepeatTrackingKey = ''
+        sum.path = 'page_closed'
+        return
+      }
+    } catch {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
+      sum.path = 'page_closed'
+      return
+    }
+
     if (!randomChance(30)) {
       await sleepMsHaltable(shouldHalt, randomInt(800, 2500))
     } else {
@@ -1095,9 +1267,13 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     await haltIfNeeded(shouldHalt)
 
     await logVideoDetectionStart(page, log, browserLabel)
-    const det = await logVideoDetectionResult(page, log)
-    sum.videoFound = det.hasUsableVideo
-    sum.videoFailReason = det.failureReason
+    const det = await logVideoDetectionResult(page, log, iterationRoot)
+    const countsPost = await collectVideoDetectionCounts(page)
+    sum.feedHasVideoTag = countsPost.video_tag_count > 0
+    sum.feedHasArticleWithVideo = await hasArticleWithVideo(page)
+    sum.videoFound =
+      det.hasUsableVideo || sum.feedHasVideoTag || sum.feedHasArticleWithVideo || iterationRoot != null
+    sum.videoFailReason = sum.videoFound ? null : det.failureReason
 
     let curUrl = ''
     try {
@@ -1108,24 +1284,30 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     const liveNow = await detectLiveFeedCard(page)
     log(
       'SCROLL_CONTEXT',
-      `has_video=${det.hasUsableVideo} current_url=${curUrl.slice(0, 400)} is_live=${liveNow}`,
+      `has_video=${sum.videoFound} current_url=${curUrl.slice(0, 400)} is_live=${liveNow}`,
     )
 
-    sum.keyBefore = await getStableVideoKey(page)
+    sum.keyBefore = await getStableVideoKey(page, iterationRoot)
     sum.scrollRan = true
     sum.scrollOk = false
-    sum.scrollOk = await runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, () => getStableVideoKey(page))
+    sum.scrollOk = await runSafeTikTokControlledOneVideoScroll(
+      page,
+      log,
+      shouldHalt,
+      () => getStableVideoKey(page, iterationRoot),
+      { resolvedInfo: iterationRoot },
+    )
     await haltIfNeeded(shouldHalt)
     await ensureAdvancedAfterScroll(page, log, shouldHalt, sum.keyBefore)
 
-    sum.keyAfter = await getStableVideoKey(page)
+    sum.keyAfter = await getStableVideoKey(page, iterationRoot)
     sum.scrollChanged = tiktokStableKeyAdvanced(sum.keyBefore, sum.keyAfter)
     log(
       'SCROLL_DEBUG',
       `key_before=${sum.keyBefore.slice(0, 120)} key_after=${sum.keyAfter.slice(0, 120)} changed=${sum.scrollChanged}`,
     )
 
-    const trackAfterNormal = await getRepeatTrackingKey(page)
+    const trackAfterNormal = await getRepeatTrackingKey(page, iterationRoot)
     if (sum.scrollRan && !sum.scrollChanged) {
       if (trackAfterNormal === lastRepeatTrackingKey && lastRepeatTrackingKey !== '') {
         repeatStuckCount += 1
@@ -1155,5 +1337,6 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     await haltIfNeeded(shouldHalt)
   } finally {
     logIterationHumanSummary()
+    logIterationFinal()
   }
 }
