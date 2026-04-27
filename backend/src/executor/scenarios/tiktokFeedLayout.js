@@ -113,9 +113,11 @@ export async function readStableKeyFromFeedRoot(page, info) {
 
 /**
  * Focus primary feed video (same target as stable key). `okAction` defaults to SCROLL logs; use RICH_FOCUS for likes etc.
+ * @param {{ rich?: boolean }} [options] — `rich: true`: no page-level `video:first` fallback (keeps actions on the same card as `resolvePrimaryFeedRoot`).
  * @returns {Promise<boolean>}
  */
-export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'SCROLL_VIDEO_FOCUSED') {
+export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'SCROLL_VIDEO_FOCUSED', options = {}) {
+  const richOnly = options.rich === true
   if (page.isClosed()) {
     log('PAGE_CLOSED_DURING_STOP', 'before_video_focus')
     return false
@@ -143,12 +145,22 @@ export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'S
   if (info?.kind === 'article') {
     try {
       const vid = info.root.locator('video').first()
-      await vid.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-      await sleepMsHaltable(shouldHalt, randomInt(200, 450))
-      await tiktokScrollHaltIfNeeded(shouldHalt)
-      if (await vid.isVisible().catch(() => false)) {
-        await vid.click({ position: { x: 48, y: 52 }, timeout: 8000 }).catch(() => {})
-        log(okAction, 'largest_article_video')
+      if ((await vid.count().catch(() => 0)) > 0) {
+        await vid.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+        await sleepMsHaltable(shouldHalt, randomInt(200, 450))
+        await tiktokScrollHaltIfNeeded(shouldHalt)
+        if (await vid.isVisible().catch(() => false)) {
+          await vid.click({ position: { x: 48, y: 52 }, timeout: 8000 }).catch(() => {})
+          log(okAction, 'largest_article_video')
+          return true
+        }
+      }
+      if (richOnly) {
+        await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+        await sleepMsHaltable(shouldHalt, randomInt(200, 400))
+        await tiktokScrollHaltIfNeeded(shouldHalt)
+        await info.root.click({ position: { x: 52, y: 120 }, timeout: 8000 }).catch(() => {})
+        log(okAction, 'article_shell_click')
         return true
       }
     } catch {
@@ -156,17 +168,19 @@ export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'S
     }
   }
 
-  const v = page.locator('video').first()
-  if ((await v.count().catch(() => 0)) > 0) {
-    try {
-      await v.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-      await sleepMsHaltable(shouldHalt, randomInt(200, 400))
-      await tiktokScrollHaltIfNeeded(shouldHalt)
-      await v.click({ position: { x: 48, y: 48 }, timeout: 8000 }).catch(() => {})
-      log(okAction, 'fallback_first_video')
-      return true
-    } catch {
-      /* ignore */
+  if (!richOnly) {
+    const v = page.locator('video').first()
+    if ((await v.count().catch(() => 0)) > 0) {
+      try {
+        await v.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+        await sleepMsHaltable(shouldHalt, randomInt(200, 400))
+        await tiktokScrollHaltIfNeeded(shouldHalt)
+        await v.click({ position: { x: 48, y: 48 }, timeout: 8000 }).catch(() => {})
+        log(okAction, 'fallback_first_video')
+        return true
+      } catch {
+        /* ignore */
+      }
     }
   }
   log('SCROLL_VIDEO_FOCUS_FAILED', 'no_feed_active_video')

@@ -452,11 +452,6 @@ async function viewVideoWeighted(page, log, shouldHalt, totalMs) {
   }
 }
 
-/** Active FYP card root when present (empty locator if count 0 — callers use count). */
-function feedActiveRoot(page) {
-  return page.locator('[data-e2e="feed-active-video"]').first()
-}
-
 /** Largest article / e2e card — same as scroll key (for scoping like/comment/author). */
 async function primaryFeedRoot(page) {
   const info = await resolvePrimaryFeedRoot(page)
@@ -465,13 +460,21 @@ async function primaryFeedRoot(page) {
 }
 
 /**
- * Same focus path as scroll (`focusPrimaryFeedVideo` / `resolvePrimaryFeedRoot`) so rich actions target the main card.
+ * Same primary root as scroll; rich mode skips scroll-only wake / page-level video fallback so controls stay scoped to the card.
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
 async function focusFeedCardForRichActions(page, log, shouldHalt) {
-  await focusPrimaryFeedVideo(page, log, shouldHalt, 'RICH_FOCUS')
+  const ok = await focusPrimaryFeedVideo(page, log, shouldHalt, 'RICH_FOCUS', { rich: true })
+  if (!ok) {
+    const info = await resolvePrimaryFeedRoot(page)
+    if (info) {
+      log('RICH_FOCUS', 'failed_after_primary_resolved')
+    } else {
+      log('RICH_FOCUS', 'no_primary_root')
+    }
+  }
   await sleepMsHaltable(shouldHalt, randomInt(400, 900))
   await haltIfNeeded(shouldHalt)
 }
@@ -568,7 +571,6 @@ async function tryClickRichControl(loc, log, shouldHalt, label) {
  */
 async function readLikePressedState(page) {
   const primary = await primaryFeedRoot(page)
-  const feed = feedActiveRoot(page)
   const scopedSelectors = [
     '[data-e2e="browse-like-icon"]',
     '[data-e2e="like-icon"]',
@@ -588,11 +590,6 @@ async function readLikePressedState(page) {
   if (primary) {
     for (const sel of scopedSelectors) {
       if (await tryLoc(primary.locator(sel).first())) return true
-    }
-  }
-  if ((await feed.count().catch(() => 0)) > 0) {
-    for (const sel of scopedSelectors) {
-      if (await tryLoc(feed.locator(sel).first())) return true
     }
   }
   for (const sel of scopedSelectors) {
@@ -630,7 +627,6 @@ async function tryLikeWithVerify(page, log, shouldHalt) {
     'button[aria-label*="Like" i]',
     '[data-e2e="strong-like-icon"]',
   ]
-  const feed = feedActiveRoot(page)
   /** @type {{ loc: import('playwright').Locator; label: string }[]} */
   const candidates = []
   if (primary) {
@@ -638,13 +634,8 @@ async function tryLikeWithVerify(page, log, shouldHalt) {
       candidates.push({ loc: primary.locator(sel).first(), label: `primary>${sel}` })
     }
   }
-  if ((await feed.count().catch(() => 0)) > 0) {
-    for (const sel of likeSelectors) {
-      candidates.push({ loc: feed.locator(sel).first(), label: `feed>${sel}` })
-    }
-  }
   for (const sel of likeSelectors) {
-    candidates.push({ loc: page.locator(sel).first(), label: sel })
+    candidates.push({ loc: page.locator(sel).first(), label: `page>${sel}` })
   }
   candidates.push({
     loc: page.getByRole('button', { name: /\blike\b/i }).first(),
@@ -678,7 +669,7 @@ async function tryLikeWithVerify(page, log, shouldHalt) {
     await haltIfNeeded(shouldHalt)
     return
   }
-  log('LIKE_SKIPPED', 'no visible like control')
+  log('LIKE_SKIPPED', 'no_visible_like_control')
 }
 
 const COMMENT_ICON_SELECTORS = [
@@ -705,7 +696,6 @@ async function tryCommentsPeek(page, log, shouldHalt) {
   await focusFeedCardForRichActions(page, log, shouldHalt)
 
   const primary = await primaryFeedRoot(page)
-  const feed = feedActiveRoot(page)
   /** @type {{ loc: import('playwright').Locator; label: string }[]} */
   const candidates = []
   if (primary) {
@@ -713,13 +703,8 @@ async function tryCommentsPeek(page, log, shouldHalt) {
       candidates.push({ loc: primary.locator(sel).first(), label: `primary>${sel}` })
     }
   }
-  if ((await feed.count().catch(() => 0)) > 0) {
-    for (const sel of COMMENT_ICON_SELECTORS) {
-      candidates.push({ loc: feed.locator(sel).first(), label: `feed>${sel}` })
-    }
-  }
   for (const sel of COMMENT_ICON_SELECTORS) {
-    candidates.push({ loc: page.locator(sel).first(), label: sel })
+    candidates.push({ loc: page.locator(sel).first(), label: `page>${sel}` })
   }
   candidates.push({
     loc: page.getByRole('button', { name: /\bcomment\b/i }).first(),
@@ -742,10 +727,10 @@ async function tryCommentsPeek(page, log, shouldHalt) {
     }
   }
   if (!opened) {
-    log('COMMENTS_SKIPPED', 'no control')
+    log('COMMENTS_SKIPPED', primary ? 'no_control_primary_and_page' : 'no_control_page_only')
     return
   }
-  log('COMMENTS_OPEN', openLabel)
+  log('COMMENTS_OPENED', openLabel)
 
   await sleepMsHaltable(shouldHalt, randomInt(500, 1100))
   await haltIfNeeded(shouldHalt)
@@ -774,7 +759,7 @@ async function tryCommentsPeek(page, log, shouldHalt) {
   await page.keyboard.press('Escape').catch(() => {})
   await sleepMsHaltable(shouldHalt, randomInt(150, 400))
   await page.keyboard.press('Escape').catch(() => {})
-  log('COMMENTS_CLOSE', 'escape')
+  log('COMMENTS_CLOSED', 'escape')
   await sleepMsHaltable(shouldHalt, randomInt(1000, 2000))
   await haltIfNeeded(shouldHalt)
 }
@@ -793,27 +778,19 @@ async function tryProfilePeek(page, log, shouldHalt) {
   await focusFeedCardForRichActions(page, log, shouldHalt)
 
   const primary = await primaryFeedRoot(page)
-  const feed = feedActiveRoot(page)
-  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
-  const authorCandidates = []
-  if (primary) {
-    authorCandidates.push(
-      { loc: primary.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'primary>video-author-uniqueid>a' },
-      { loc: primary.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'primary>video-author-uniqueid' },
-      { loc: primary.locator('a[href^="/@"]').first(), label: 'primary>a_href_/@' },
-      { loc: primary.locator('a[href*="@"]').first(), label: 'primary>a_href_@' },
-    )
+  if (!primary) {
+    log('PROFILE_SKIPPED', 'no_primary_root')
+    return
   }
-  authorCandidates.push(
-    { loc: feed.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'feed>video-author-uniqueid>a' },
-    { loc: feed.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'feed>video-author-uniqueid' },
-    { loc: feed.locator('a[href^="/@"]').first(), label: 'feed>a_href_/@' },
-    { loc: feed.locator('a[href*="@"]').first(), label: 'feed>a_href_@' },
-    { loc: page.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'page>video-author-uniqueid>a' },
-    { loc: page.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'page>video-author-uniqueid' },
-    { loc: page.locator('[data-e2e="feed-active-video"] a[href^="/@"]').first(), label: 'page>feed-active>a_/@' },
-    { loc: page.locator('[data-e2e="feed-active-video"] a[href*="@"]').first(), label: 'page>feed-active-video>a_@' },
-  )
+  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
+  const authorCandidates = [
+    { loc: primary.locator('a[href^="/@"]').first(), label: 'primary>a_href^/@' },
+    { loc: primary.locator('a[href*="/@"]').first(), label: 'primary>a_href*/@' },
+    { loc: primary.locator('[data-e2e*="author"] a').first(), label: 'primary>author_e2e>a' },
+    { loc: primary.locator('[data-e2e*="author"]').first(), label: 'primary>author_e2e' },
+    { loc: primary.locator('[data-e2e="video-author-uniqueid"] a').first(), label: 'primary>video-author-uniqueid>a' },
+    { loc: primary.locator('[data-e2e="video-author-uniqueid"]').first(), label: 'primary>video-author-uniqueid' },
+  ]
   let authorLabel = ''
   let clicked = false
   for (const { loc, label } of authorCandidates) {
@@ -826,7 +803,7 @@ async function tryProfilePeek(page, log, shouldHalt) {
     }
   }
   if (!clicked) {
-    log('PROFILE_SKIPPED', 'no author')
+    log('PROFILE_SKIPPED', 'no_author_in_primary_root')
     return
   }
   log('PROFILE_CLICK', authorLabel)
