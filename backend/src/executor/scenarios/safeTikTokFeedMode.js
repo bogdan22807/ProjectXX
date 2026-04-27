@@ -655,7 +655,6 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       return
     }
 
-    log('RICH_ACTION', 'disabled_scroll_only')
     sum.actionOutcome = 'skipped'
 
     try {
