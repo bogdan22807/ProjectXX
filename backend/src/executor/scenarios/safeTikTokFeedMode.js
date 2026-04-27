@@ -295,6 +295,42 @@ function logPrimaryRootResolved(log, root) {
   log('PRIMARY_ROOT_RESOLVED', `source=${source} found=${found}`)
 }
 
+/**
+ * Any `article` containing a `video` (for summary vs no_active_video when DOM has feed).
+ * @param {import('playwright').Page} page
+ */
+async function hasArticleWithVideo(page) {
+  const articles = page.locator('article')
+  const n = await articles.count().catch(() => 0)
+  for (let i = 0; i < Math.min(n, 40); i += 1) {
+    if ((await articles.nth(i).locator('video').count().catch(() => 0)) > 0) return true
+  }
+  return false
+}
+
+/**
+ * When `resolvePrimaryFeedRoot` is null but DOM still has video/article+video, use a loose root so scroll + key still run.
+ * @param {import('playwright').Page} page
+ * @param {Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | null} initial
+ */
+async function ensureIterationRootForScroll(page, initial) {
+  if (initial) return initial
+  const { video_tag_count, article_count } = await collectVideoDetectionCounts(page)
+  if (video_tag_count > 0) {
+    return { kind: 'video', root: page.locator('video').first() }
+  }
+  if (article_count > 0) {
+    const articles = page.locator('article')
+    for (let i = 0; i < Math.min(article_count, 40); i += 1) {
+      const art = articles.nth(i)
+      if ((await art.locator('video').count().catch(() => 0)) > 0) {
+        return { kind: 'article', root: art }
+      }
+    }
+  }
+  return null
+}
+
 /** Consecutive iterations ended with scroll stuck on same repeat-tracking key (module state). */
 let lastRepeatTrackingKey = ''
 let repeatStuckCount = 0
@@ -889,6 +925,8 @@ function resetLongBreakSchedule() {
  *   keyBefore: string
  *   keyAfter: string
  *   scrollChanged: boolean
+ *   feedHasVideoTag: boolean
+ *   feedHasArticleWithVideo: boolean
  * }} IterationDiagSummary
  */
 
@@ -917,6 +955,8 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     keyBefore: '',
     keyAfter: '',
     scrollChanged: false,
+    feedHasVideoTag: false,
+    feedHasArticleWithVideo: false,
   }
 
   let finalized = false
@@ -929,7 +969,10 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       scrollStr = sum.scrollOk === true ? 'ok' : sum.scrollOk === false ? 'failed' : 'unknown'
     }
     let reason = 'reason='
-    if (!sum.videoFound) {
+    const domSuggestsFeed = sum.feedHasVideoTag || sum.feedHasArticleWithVideo
+    if (!sum.videoFound && domSuggestsFeed && sum.path === 'normal') {
+      reason = 'reason=key_unchanged_or_scroll_outcome'
+    } else if (!sum.videoFound) {
       reason = `reason=no_active_video${sum.videoFailReason ? ` (${sum.videoFailReason})` : ''}`
     } else if (sum.scrollRan && !sum.scrollChanged) {
       reason = 'reason=key_unchanged'
@@ -984,8 +1027,16 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       return
     }
 
-    const iterationRoot = await resolvePrimaryFeedRoot(page)
+    let iterationRoot = await resolvePrimaryFeedRoot(page)
     logPrimaryRootResolved(log, iterationRoot)
+    if (!iterationRoot) {
+      iterationRoot = await ensureIterationRootForScroll(page, iterationRoot)
+      if (iterationRoot) {
+        log('PRIMARY_ROOT_RESOLVED', 'source=fallback_dom found=true')
+      } else {
+        log('PRIMARY_ROOT_RESOLVED', 'source=fallback_dom found=false')
+      }
+    }
     if (!iterationRoot) {
       repeatStuckCount = 0
       lastRepeatTrackingKey = ''
@@ -996,6 +1047,10 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     }
     sum.videoFound = true
     sum.videoFailReason = null
+
+    const counts0 = await collectVideoDetectionCounts(page)
+    sum.feedHasVideoTag = counts0.video_tag_count > 0
+    sum.feedHasArticleWithVideo = await hasArticleWithVideo(page)
 
     const trackAtIterStart = await getRepeatTrackingKey(page, iterationRoot)
     if (
@@ -1016,8 +1071,12 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
       await logVideoDetectionStart(page, log, browserLabel)
       const detR = await logVideoDetectionResult(page, log, iterationRoot)
-      sum.videoFound = detR.hasUsableVideo
-      sum.videoFailReason = detR.failureReason
+      const countsR = await collectVideoDetectionCounts(page)
+      sum.feedHasVideoTag = countsR.video_tag_count > 0
+      sum.feedHasArticleWithVideo = await hasArticleWithVideo(page)
+      sum.videoFound =
+        detR.hasUsableVideo || sum.feedHasVideoTag || sum.feedHasArticleWithVideo || iterationRoot != null
+      sum.videoFailReason = sum.videoFound ? null : detR.failureReason
       let curUrlR = ''
       try {
         curUrlR = page.url()
@@ -1026,7 +1085,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       }
       log(
         'SCROLL_CONTEXT',
-        `has_video=${detR.hasUsableVideo} current_url=${curUrlR.slice(0, 400)} is_live=${await detectLiveFeedCard(page)}`,
+        `has_video=${sum.videoFound} current_url=${curUrlR.slice(0, 400)} is_live=${await detectLiveFeedCard(page)}`,
       )
 
       sum.keyBefore = await getStableVideoKey(page, iterationRoot)
@@ -1134,6 +1193,20 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       return
     }
 
+    try {
+      if (page.isClosed()) {
+        repeatStuckCount = 0
+        lastRepeatTrackingKey = ''
+        sum.path = 'page_closed'
+        return
+      }
+    } catch {
+      repeatStuckCount = 0
+      lastRepeatTrackingKey = ''
+      sum.path = 'page_closed'
+      return
+    }
+
     if (!randomChance(30)) {
       await sleepMsHaltable(shouldHalt, randomInt(800, 2500))
     } else {
@@ -1143,8 +1216,12 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
     await logVideoDetectionStart(page, log, browserLabel)
     const det = await logVideoDetectionResult(page, log, iterationRoot)
-    sum.videoFound = det.hasUsableVideo
-    sum.videoFailReason = det.failureReason
+    const countsPost = await collectVideoDetectionCounts(page)
+    sum.feedHasVideoTag = countsPost.video_tag_count > 0
+    sum.feedHasArticleWithVideo = await hasArticleWithVideo(page)
+    sum.videoFound =
+      det.hasUsableVideo || sum.feedHasVideoTag || sum.feedHasArticleWithVideo || iterationRoot != null
+    sum.videoFailReason = sum.videoFound ? null : det.failureReason
 
     let curUrl = ''
     try {
@@ -1155,7 +1232,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     const liveNow = await detectLiveFeedCard(page)
     log(
       'SCROLL_CONTEXT',
-      `has_video=${det.hasUsableVideo} current_url=${curUrl.slice(0, 400)} is_live=${liveNow}`,
+      `has_video=${sum.videoFound} current_url=${curUrl.slice(0, 400)} is_live=${liveNow}`,
     )
 
     sum.keyBefore = await getStableVideoKey(page, iterationRoot)

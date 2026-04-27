@@ -65,13 +65,15 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
     return false
   }
 
+  log('SCROLL_ATTEMPT', 'focus_then_ArrowDown_poll_5s_optional_PageDown')
+
   const before = await safeReadStableKey(page, getStableKey)
   const focused = await focusPrimaryFeedVideo(page, log, shouldHalt, 'SCROLL_VIDEO_FOCUSED', focusOptions ?? {})
   if (!focused) {
     log('SCROLL_VIDEO_FOCUS_FAILED', 'keyboard_without_focus_click')
   }
 
-  const keyPollMs = 5500
+  const keyPollMs = 5000
   const keyPollStepMs = 220
 
   if (safePageClosed(page)) {
@@ -100,7 +102,7 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
   )
   if (advancedArrow) {
     log('SCROLL_KEY_CHANGED', 'after_ArrowDown')
-    log('SCROLL_SUCCESS', 'ArrowDown')
+    log('SCROLL_SUCCESS', 'method=ArrowDown')
     return true
   }
 
@@ -130,10 +132,10 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
   )
   if (advancedPd) {
     log('SCROLL_KEY_CHANGED', 'after_PageDown_fallback')
-    log('SCROLL_SUCCESS', 'PageDown_fallback')
+    log('SCROLL_SUCCESS', 'method=PageDown')
     return true
   }
 
-  log('SCROLL_STILL_STUCK', 'stable_key_unchanged_after_ArrowDown_poll_and_PageDown')
+  log('SCROLL_STUCK', 'stable_key_unchanged_after_ArrowDown_5s_and_PageDown')
   return false
 }
