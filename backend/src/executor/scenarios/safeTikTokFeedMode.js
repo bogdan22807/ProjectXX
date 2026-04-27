@@ -590,18 +590,62 @@ async function tryClickRichControl(loc, log, shouldHalt, label) {
   }
 }
 
+const LIKE_CONTROL_SELECTORS = [
+  '[data-e2e="browse-like-icon"]',
+  '[data-e2e="like-icon"]',
+  '[data-e2e="video-player-like-icon"]',
+  '[data-e2e="video-player"] [data-e2e="like-icon"]',
+  '[data-e2e="video-player"] button[aria-label*="Like" i]',
+  '[data-e2e="video-engagement-toolbar"] [data-e2e="like-icon"]',
+  'button[aria-label*="Like" i]',
+  '[data-e2e="strong-like-icon"]',
+]
+
+/**
+ * First visible matching control under `scope` (selectors only). If `scope` is null, searches whole page and includes role/label fallbacks.
+ * @param {import('playwright').Page} page
+ * @param {import('playwright').Locator | null} scope
+ * @param {string} scopeLabel
+ * @returns {Promise<{ loc: import('playwright').Locator; label: string } | null>}
+ */
+async function pickFirstVisibleLikeControl(page, scope, scopeLabel) {
+  const base = scope ?? page
+  for (const sel of LIKE_CONTROL_SELECTORS) {
+    const chain = base.locator(sel)
+    const n = await chain.count().catch(() => 0)
+    const cap = Math.min(n, 24)
+    for (let i = 0; i < cap; i += 1) {
+      const loc = chain.nth(i)
+      if (await loc.isVisible().catch(() => false)) {
+        return { loc, label: `${scopeLabel}>${sel}[${i}]` }
+      }
+    }
+  }
+  if (scope != null) return null
+  const roleChain = page.getByRole('button', { name: /\blike\b/i })
+  const rn = await roleChain.count().catch(() => 0)
+  for (let i = 0; i < Math.min(rn, 12); i += 1) {
+    const loc = roleChain.nth(i)
+    if (await loc.isVisible().catch(() => false)) {
+      return { loc, label: `${scopeLabel}>role=button_like[${i}]` }
+    }
+  }
+  const labelChain = page.getByLabel(/like/i)
+  const ln = await labelChain.count().catch(() => 0)
+  for (let i = 0; i < Math.min(ln, 12); i += 1) {
+    const loc = labelChain.nth(i)
+    if (await loc.isVisible().catch(() => false)) {
+      return { loc, label: `${scopeLabel}>aria_label_like[${i}]` }
+    }
+  }
+  return null
+}
+
 /**
  * @param {import('playwright').Page} page
  */
 async function readLikePressedState(page, lockedRoot = undefined) {
   const primary = await primaryFeedRoot(page, lockedRoot)
-  const scopedSelectors = [
-    '[data-e2e="browse-like-icon"]',
-    '[data-e2e="like-icon"]',
-    '[data-e2e="video-player-like-icon"]',
-    'button[aria-label*="Like" i]',
-    '[data-e2e="video-player"] [data-e2e="like-icon"]',
-  ]
   /** @param {import('playwright').Locator} loc */
   const tryLoc = async (loc) => {
     if ((await loc.count().catch(() => 0)) === 0) return false
@@ -612,12 +656,20 @@ async function readLikePressedState(page, lockedRoot = undefined) {
     return false
   }
   if (primary) {
-    for (const sel of scopedSelectors) {
-      if (await tryLoc(primary.locator(sel).first())) return true
+    for (const sel of LIKE_CONTROL_SELECTORS) {
+      const chain = primary.locator(sel)
+      const n = await chain.count().catch(() => 0)
+      for (let i = 0; i < Math.min(n, 12); i += 1) {
+        if (await tryLoc(chain.nth(i))) return true
+      }
     }
   }
-  for (const sel of scopedSelectors) {
-    if (await tryLoc(page.locator(sel).first())) return true
+  for (const sel of LIKE_CONTROL_SELECTORS) {
+    const chain = page.locator(sel)
+    const n = await chain.count().catch(() => 0)
+    for (let i = 0; i < Math.min(n, 16); i += 1) {
+      if (await tryLoc(chain.nth(i))) return true
+    }
   }
   return false
 }
@@ -629,73 +681,57 @@ async function readLikePressedState(page, lockedRoot = undefined) {
  */
 async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined) {
   if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
-    log('LIKE_SKIPPED', 'LIVE')
+    log('LIKE_SKIPPED', 'reason=LIVE')
     return
   }
   if (await detectChallengeBlocking(page)) {
-    log('LIKE_SKIPPED', 'challenge')
+    log('LIKE_SKIPPED', 'reason=challenge')
     return
   }
 
   await focusFeedCardForRichActions(page, log, shouldHalt, lockedRoot)
 
   const primary = await primaryFeedRoot(page, lockedRoot)
-
-  const likeSelectors = [
-    '[data-e2e="browse-like-icon"]',
-    '[data-e2e="like-icon"]',
-    '[data-e2e="video-player-like-icon"]',
-    '[data-e2e="video-player"] [data-e2e="like-icon"]',
-    '[data-e2e="video-player"] button[aria-label*="Like" i]',
-    '[data-e2e="video-engagement-toolbar"] [data-e2e="like-icon"]',
-    'button[aria-label*="Like" i]',
-    '[data-e2e="strong-like-icon"]',
-  ]
-  /** @type {{ loc: import('playwright').Locator; label: string }[]} */
-  const candidates = []
-  if (primary) {
-    for (const sel of likeSelectors) {
-      candidates.push({ loc: primary.locator(sel).first(), label: `primary>${sel}` })
-    }
+  let picked = primary ? await pickFirstVisibleLikeControl(page, primary, 'primary') : null
+  let pickScope = picked ? 'primary' : 'page'
+  if (!picked) {
+    picked = await pickFirstVisibleLikeControl(page, null, 'page')
+    pickScope = picked ? 'page' : 'none'
   }
-  if (lockedRoot === undefined) {
-    for (const sel of likeSelectors) {
-      candidates.push({ loc: page.locator(sel).first(), label: `page>${sel}` })
-    }
-    candidates.push({
-      loc: page.getByRole('button', { name: /\blike\b/i }).first(),
-      label: 'role=button_name_like',
-    })
-    candidates.push({
-      loc: page.getByLabel(/like/i).first(),
-      label: 'aria_label_like',
-    })
+
+  log('LIKE_ATTEMPT', `scope=${pickScope}${picked ? ` label=${picked.label}` : ''}`)
+
+  if (!picked) {
+    log('LIKE_SKIPPED', 'reason=no_visible_like_button')
+    return
   }
 
   const before = await readLikePressedState(page, lockedRoot)
-  for (const { loc, label } of candidates) {
-    if ((await loc.count().catch(() => 0)) === 0) continue
-    const clicked = await tryClickRichControl(loc, log, shouldHalt, label)
-    if (!clicked) {
-      log('LIKE_TRY_NEXT', `not_clickable label=${label}`)
-      continue
-    }
-    log('LIKE_CLICK', label)
-    await sleepMsHaltable(shouldHalt, randomInt(450, 900))
-    await haltIfNeeded(shouldHalt)
-    const after = await readLikePressedState(page, lockedRoot)
-    if (after && !before) {
-      log('LIKE_VERIFIED', 'state_on')
-    } else if (after && before) {
-      log('LIKE_VERIFIED', 'already_liked')
-    } else {
-      log('LIKE_NOT_VERIFIED', 'no_state_change — continue')
-    }
+  if (before) {
+    log('LIKE_VERIFIED', 'reason=already_liked_before_click')
+    return
+  }
+
+  const clicked = await tryClickRichControl(picked.loc, log, shouldHalt, picked.label)
+  if (!clicked) {
+    log('LIKE_SKIPPED', 'reason=click_failed_or_not_visible')
+    return
+  }
+  log('LIKE_CLICKED', picked.label)
+
+  await sleepMsHaltable(shouldHalt, randomInt(450, 900))
+  await haltIfNeeded(shouldHalt)
+
+  const after = await readLikePressedState(page, lockedRoot)
+  if (after) {
+    log('LIKE_VERIFIED', 'reason=liked_after_click')
     await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
     await haltIfNeeded(shouldHalt)
     return
   }
-  log('LIKE_SKIPPED', 'no_visible_like_control')
+  log('LIKE_SKIPPED', 'reason=no_state_change_after_click')
+  await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
+  await haltIfNeeded(shouldHalt)
 }
 
 const COMMENT_ICON_SELECTORS = [
