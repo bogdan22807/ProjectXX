@@ -3,8 +3,13 @@
  * (like 20% / comments 10% / none 70%), weighted watch times, irregular pauses.
  * Rich actions: like or comments only (no profile). No goto/reload/goBack, no upward scroll.
  * LIVE: skip only via controlled scroll; LIVE URL: navigate to For You via nav clicks only.
+ *
+ * Optional: DEBUG_VISUAL_ACTIONS=1 and DEBUG_VISUAL_DIR (optional) for PNG screenshots around rich/scroll.
  */
 
+import { mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { randomChance, randomInt, sleep } from '../asyncUtils.js'
 import { tiktokStableKeyAdvanced } from './tiktokScrollHelpers.js'
 import {
@@ -38,6 +43,63 @@ async function sleepMsHaltable(shouldHalt, ms) {
     await sleep(step)
     left -= step
   }
+}
+
+/** Fixed-duration sleep (e.g. bringToFront settle); does not replace weighted random ranges elsewhere. */
+async function sleepMsHaltableFixed(shouldHalt, ms) {
+  const total = Math.max(0, Math.floor(Number(ms) || 0))
+  let left = total
+  while (left > 0) {
+    await haltIfNeeded(shouldHalt)
+    const step = Math.min(400, left)
+    await sleep(step)
+    left -= step
+  }
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function bringPageToFrontForVisual(page, log, shouldHalt) {
+  if (await safePageClosed(page)) return
+  try {
+    await page.bringToFront()
+  } catch {
+    /* ignore */
+  }
+  await sleepMsHaltableFixed(shouldHalt, 300)
+  log('PAGE_BROUGHT_TO_FRONT', '')
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {string} label
+ * @param {{ enabled: boolean; dir: string }} visual
+ */
+async function maybeVisualScreenshot(page, log, label, visual) {
+  if (!visual.enabled || (await safePageClosed(page))) return
+  try {
+    mkdirSync(visual.dir, { recursive: true })
+  } catch {
+    /* ignore */
+  }
+  const safe = String(label).replace(/[^a-z0-9_-]+/gi, '_').slice(0, 80)
+  const fp = join(visual.dir, `${safe}-${Date.now()}.png`)
+  try {
+    await page.screenshot({ path: fp, fullPage: false })
+    log('VISUAL_DEBUG_SCREENSHOT', `${label} path=${fp}`)
+  } catch (e) {
+    log('VISUAL_DEBUG_SCREENSHOT', `${label} failed err=${String(e).slice(0, 120)}`)
+  }
+}
+
+function resolveVisualDebugOptions() {
+  const enabled = String(process.env.DEBUG_VISUAL_ACTIONS ?? '').trim() === '1'
+  const dir = String(process.env.DEBUG_VISUAL_DIR ?? '').trim() || join(tmpdir(), 'tiktok-safe-visual-debug')
+  return { enabled, dir }
 }
 
 function pageInLiveSurfaceUrl(page) {
@@ -682,25 +744,47 @@ async function pickFirstVisibleLikeControl(page, scope, scopeLabel) {
 }
 
 /**
+ * Strict like-on state: aria-pressed, TikTok liked e2e, or non-white filled SVG inside control (no class heuristics).
+ * @param {import('playwright').Locator} loc
+ */
+async function isLikeControlInVerifiedLikedState(loc) {
+  if ((await loc.count().catch(() => 0)) === 0) return false
+  const pressedSelf = await loc.getAttribute('aria-pressed').catch(() => null)
+  if (pressedSelf === 'true') return true
+  const btn = loc.locator('xpath=ancestor-or-self::button[1]').first()
+  if ((await btn.count().catch(() => 0)) > 0) {
+    const pb = await btn.getAttribute('aria-pressed').catch(() => null)
+    if (pb === 'true') return true
+  }
+  const e2eSelf = (await loc.getAttribute('data-e2e').catch(() => null)) ?? ''
+  if (/liked/i.test(String(e2eSelf))) return true
+  if ((await loc.locator('[data-e2e*="liked"]').first().count().catch(() => 0)) > 0) {
+    if (await loc.locator('[data-e2e*="liked"]').first().isVisible().catch(() => false)) return true
+  }
+  const paths = loc.locator('svg path[fill]')
+  const pn = await paths.count().catch(() => 0)
+  for (let pi = 0; pi < Math.min(pn, 8); pi += 1) {
+    const p = paths.nth(pi)
+    if (!(await p.isVisible().catch(() => false))) continue
+    const fill = ((await p.getAttribute('fill').catch(() => null)) ?? '').trim().toLowerCase()
+    if (!fill || fill === 'none' || fill === 'transparent' || fill === 'currentcolor') continue
+    if (fill === '#fff' || fill === '#ffffff' || fill === 'white') continue
+    return true
+  }
+  return false
+}
+
+/**
  * @param {import('playwright').Page} page
  */
-async function readLikePressedState(page, lockedRoot = undefined) {
+async function readLikeVerifiedState(page, lockedRoot = undefined) {
   const primary = await primaryFeedRoot(page, lockedRoot)
-  /** @param {import('playwright').Locator} loc */
-  const tryLoc = async (loc) => {
-    if ((await loc.count().catch(() => 0)) === 0) return false
-    const pressed = await loc.getAttribute('aria-pressed').catch(() => null)
-    if (pressed === 'true') return true
-    const cls = (await loc.getAttribute('class').catch(() => '')) ?? ''
-    if (/fill|liked|active/i.test(cls)) return true
-    return false
-  }
   if (primary) {
     for (const sel of LIKE_CONTROL_SELECTORS) {
       const chain = primary.locator(sel)
       const n = await chain.count().catch(() => 0)
       for (let i = 0; i < Math.min(n, 12); i += 1) {
-        if (await tryLoc(chain.nth(i))) return true
+        if (await isLikeControlInVerifiedLikedState(chain.nth(i))) return true
       }
     }
   }
@@ -708,7 +792,7 @@ async function readLikePressedState(page, lockedRoot = undefined) {
     const chain = page.locator(sel)
     const n = await chain.count().catch(() => 0)
     for (let i = 0; i < Math.min(n, 16); i += 1) {
-      if (await tryLoc(chain.nth(i))) return true
+      if (await isLikeControlInVerifiedLikedState(chain.nth(i))) return true
     }
   }
   return false
@@ -717,7 +801,7 @@ async function readLikePressedState(page, lockedRoot = undefined) {
 /**
  * @returns {Promise<'success' | 'skipped' | 'failed'>}
  */
-async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined) {
+async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined, visual = { enabled: false, dir: '' }) {
   if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
     log('LIKE_SKIPPED', 'reason=LIVE')
     return 'skipped'
@@ -726,6 +810,9 @@ async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined) 
     log('LIKE_SKIPPED', 'reason=challenge')
     return 'skipped'
   }
+
+  await bringPageToFrontForVisual(page, log, shouldHalt)
+  await maybeVisualScreenshot(page, log, 'before_like', visual)
 
   await focusFeedCardForRichActions(page, log, shouldHalt, lockedRoot)
 
@@ -744,9 +831,10 @@ async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined) 
     return 'skipped'
   }
 
-  const before = await readLikePressedState(page, lockedRoot)
+  const before = await readLikeVerifiedState(page, lockedRoot)
   if (before) {
     log('LIKE_VERIFIED', 'reason=already_liked_before_click')
+    await maybeVisualScreenshot(page, log, 'after_like', visual)
     return 'success'
   }
 
@@ -760,17 +848,19 @@ async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined) 
   await sleepMsHaltable(shouldHalt, randomInt(450, 900))
   await haltIfNeeded(shouldHalt)
 
-  const after = await readLikePressedState(page, lockedRoot)
+  const after = await readLikeVerifiedState(page, lockedRoot)
   if (after) {
     log('LIKE_VERIFIED', 'reason=liked_after_click')
+    await maybeVisualScreenshot(page, log, 'after_like', visual)
     await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
     await haltIfNeeded(shouldHalt)
     return 'success'
   }
-  log('LIKE_SKIPPED', 'reason=no_state_change_after_click')
+  log('LIKE_SKIPPED', 'reason=not_verified')
+  await maybeVisualScreenshot(page, log, 'after_like', visual)
   await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
   await haltIfNeeded(shouldHalt)
-  return 'failed'
+  return 'skipped'
 }
 
 const COMMENT_ICON_SELECTORS = [
@@ -782,6 +872,34 @@ const COMMENT_ICON_SELECTORS = [
   '[data-e2e="video-engagement-toolbar"] [data-e2e="comment-icon"]',
   'button[aria-label*="Comment" i]',
 ]
+
+/** Union locator for TikTok comment drawer / list / dialog. */
+function commentPanelLocator(page) {
+  return page.locator(
+    '[data-e2e="comment-list"], [data-e2e="comment-list-scroll"], [data-e2e="comment-drawer"], [data-e2e="comment-drawer-container"], [data-e2e="comment-sidebar"], div[role="dialog"][class*="Comment"]',
+  )
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ * @param {number} maxMs
+ * @returns {Promise<boolean>}
+ */
+async function waitCommentPanelVisible(page, shouldHalt, maxMs = 4000) {
+  const panel = commentPanelLocator(page)
+  const deadline = Date.now() + Math.max(400, Math.floor(maxMs))
+  while (Date.now() < deadline) {
+    await haltIfNeeded(shouldHalt)
+    const n = await panel.count().catch(() => 0)
+    const cap = Math.min(n, 6)
+    for (let i = 0; i < cap; i += 1) {
+      if (await panel.nth(i).isVisible().catch(() => false)) return true
+    }
+    await sleepMsHaltable(shouldHalt, 220)
+  }
+  return false
+}
 
 /**
  * First visible comment control under `scope` (selectors only). Page-wide includes role/label when `scope` is null.
@@ -860,7 +978,7 @@ async function closeCommentsPanel(page, log, shouldHalt) {
 /**
  * @returns {Promise<'success' | 'skipped' | 'failed'>}
  */
-async function tryCommentsPeek(page, log, shouldHalt, lockedRoot = undefined) {
+async function tryCommentsPeek(page, log, shouldHalt, lockedRoot = undefined, visual = { enabled: false, dir: '' }) {
   if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
     log('COMMENTS_SKIPPED', 'reason=LIVE')
     return 'skipped'
@@ -869,6 +987,9 @@ async function tryCommentsPeek(page, log, shouldHalt, lockedRoot = undefined) {
     log('COMMENTS_SKIPPED', 'reason=challenge')
     return 'skipped'
   }
+
+  await bringPageToFrontForVisual(page, log, shouldHalt)
+  await maybeVisualScreenshot(page, log, 'before_comments', visual)
 
   await focusFeedCardForRichActions(page, log, shouldHalt, lockedRoot)
 
@@ -892,6 +1013,14 @@ async function tryCommentsPeek(page, log, shouldHalt, lockedRoot = undefined) {
     log('COMMENTS_SKIPPED', 'reason=click_failed_or_not_visible')
     return 'skipped'
   }
+
+  await maybeVisualScreenshot(page, log, 'after_comments_click', visual)
+
+  const hasPanel = await waitCommentPanelVisible(page, shouldHalt, 4000)
+  if (!hasPanel) {
+    log('COMMENTS_SKIPPED', 'reason=panel_not_opened')
+    return 'skipped'
+  }
   log('COMMENTS_OPENED', picked.label)
 
   const readMs = randomInt(4000, 10000)
@@ -900,6 +1029,7 @@ async function tryCommentsPeek(page, log, shouldHalt, lockedRoot = undefined) {
   await haltIfNeeded(shouldHalt)
 
   await closeCommentsPanel(page, log, shouldHalt)
+  await maybeVisualScreenshot(page, log, 'after_comments_close', visual)
 
   await sleepMsHaltable(shouldHalt, randomInt(1000, 2000))
   await haltIfNeeded(shouldHalt)
@@ -946,6 +1076,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     _options && _options.browserEngine != null && String(_options.browserEngine).trim() !== ''
       ? String(_options.browserEngine).trim()
       : 'chromium'
+  const visualDebug = resolveVisualDebugOptions()
   const iterationIndex =
     _options && _options.iterationIndex != null && Number.isFinite(Number(_options.iterationIndex))
       ? Math.max(0, Math.floor(Number(_options.iterationIndex)))
@@ -1139,6 +1270,10 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
         `has_video=${sum.videoFound} current_url=${curUrlR.slice(0, 400)} is_live=${await detectLiveFeedCard(page)}`,
       )
 
+      const visualRecover = resolveVisualDebugOptions()
+      await bringPageToFrontForVisual(page, log, shouldHalt)
+      await maybeVisualScreenshot(page, log, 'before_scroll', visualRecover)
+
       sum.keyBefore = await getStableVideoKey(page, iterationRoot)
       sum.scrollRan = true
       sum.scrollOk = false
@@ -1219,10 +1354,10 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
     if (richAction === 'like') {
       log('RICH_ACTION', 'like')
-      sum.actionOutcome = await tryLikeWithVerify(page, log, shouldHalt, iterationRoot)
+      sum.actionOutcome = await tryLikeWithVerify(page, log, shouldHalt, iterationRoot, visualDebug)
     } else if (richAction === 'comments') {
       log('RICH_ACTION', 'comments')
-      sum.actionOutcome = await tryCommentsPeek(page, log, shouldHalt, iterationRoot)
+      sum.actionOutcome = await tryCommentsPeek(page, log, shouldHalt, iterationRoot, visualDebug)
     } else {
       log('RICH_ACTION', 'none')
       sum.actionOutcome = 'skipped'
@@ -1286,6 +1421,9 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       'SCROLL_CONTEXT',
       `has_video=${sum.videoFound} current_url=${curUrl.slice(0, 400)} is_live=${liveNow}`,
     )
+
+    await bringPageToFrontForVisual(page, log, shouldHalt)
+    await maybeVisualScreenshot(page, log, 'before_scroll', visualDebug)
 
     sum.keyBefore = await getStableVideoKey(page, iterationRoot)
     sum.scrollRan = true
