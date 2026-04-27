@@ -183,14 +183,88 @@ export async function readStableKeyFromFeedRoot(page, info) {
 }
 
 /**
+ * Scroll path: avoid clicking the video surface (opens /@user/video/… and breaks FYP). Rich path: prefer rail/shell, not center of &lt;video&gt;.
+ */
+async function focusFeedForKeyboardScroll(page, info, log, okAction, shouldHalt) {
+  if (!info) return false
+  try {
+    if (info.kind === 'e2e') {
+      await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+      await sleepMsHaltable(shouldHalt, randomInt(120, 280))
+      await tiktokScrollHaltIfNeeded(shouldHalt)
+      await page.keyboard.press('Tab').catch(() => {})
+      await sleepMsHaltable(shouldHalt, randomInt(80, 180))
+      await page.keyboard.press('Tab').catch(() => {})
+      log(okAction, 'e2e_scroll_tab_focus')
+      return true
+    }
+    if (info.kind === 'article') {
+      const vid = info.root.locator('video').first()
+      if ((await vid.count().catch(() => 0)) > 0) {
+        await vid.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+        await sleepMsHaltable(shouldHalt, randomInt(200, 400))
+        await tiktokScrollHaltIfNeeded(shouldHalt)
+        await page.keyboard.press('Tab').catch(() => {})
+        await sleepMsHaltable(shouldHalt, randomInt(80, 180))
+        log(okAction, 'article_scroll_tab_focus')
+        return true
+      }
+    }
+    if (info.kind === 'video') {
+      await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+      await sleepMsHaltable(shouldHalt, randomInt(200, 400))
+      await tiktokScrollHaltIfNeeded(shouldHalt)
+      await page.keyboard.press('Tab').catch(() => {})
+      await sleepMsHaltable(shouldHalt, randomInt(80, 180))
+      log(okAction, 'video_scroll_tab_focus')
+      return true
+    }
+  } catch {
+    /* fall through */
+  }
+  return false
+}
+
+/** Last resort for scroll-only: card in view so ArrowDown targets the feed without clicking the video surface. */
+async function scrollOnlyViewOnly(page, info, log, okAction, shouldHalt) {
+  if (!info) return false
+  try {
+    if (info.kind === 'e2e') {
+      await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+      await sleepMsHaltable(shouldHalt, randomInt(150, 320))
+      await tiktokScrollHaltIfNeeded(shouldHalt)
+      log(okAction, 'e2e_view_only')
+      return true
+    }
+    if (info.kind === 'article') {
+      await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+      await sleepMsHaltable(shouldHalt, randomInt(150, 320))
+      await tiktokScrollHaltIfNeeded(shouldHalt)
+      log(okAction, 'article_view_only')
+      return true
+    }
+    if (info.kind === 'video') {
+      await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+      await sleepMsHaltable(shouldHalt, randomInt(150, 320))
+      await tiktokScrollHaltIfNeeded(shouldHalt)
+      log(okAction, 'video_view_only')
+      return true
+    }
+  } catch {
+    /* ignore */
+  }
+  return false
+}
+
+/**
  * Focus primary feed video (same target as stable key). `okAction` defaults to SCROLL logs; use RICH_FOCUS for likes etc.
- * @param {{ rich?: boolean; resolvedInfo?: Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | null }} [options]
- *   `resolvedInfo`: use this root for the whole iteration (no re-resolve).
- *   `rich: true`: no extra page-level `video:first` fallback beyond `resolvedInfo` / resolve.
+ * Options: `rich`, `resolvedInfo`, `scrollOnlyFocus` (scroll path: in-view + Tab, no video surface click — avoids opening /@…/video/ and leaving FYP).
+ * @param {{ rich?: boolean; resolvedInfo?: Awaited<ReturnType<typeof resolvePrimaryFeedRoot>> | null; scrollOnlyFocus?: boolean }} [options]
  * @returns {Promise<boolean>}
  */
 export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'SCROLL_VIDEO_FOCUSED', options = {}) {
   const richOnly = options.rich === true
+  const scrollOnlyFocus = options.scrollOnlyFocus === true
   const fixed = options.resolvedInfo !== undefined ? options.resolvedInfo : undefined
   if (page.isClosed()) {
     log('PAGE_CLOSED_DURING_STOP', 'before_video_focus')
@@ -199,10 +273,35 @@ export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'S
 
   const info = fixed !== undefined ? fixed : await resolvePrimaryFeedRoot(page)
 
+  if (scrollOnlyFocus) {
+    const ok = await focusFeedForKeyboardScroll(page, info, log, okAction, shouldHalt)
+    if (ok) return true
+    const viewOk = await scrollOnlyViewOnly(page, info, log, okAction, shouldHalt)
+    if (viewOk) return true
+    log('SCROLL_VIDEO_FOCUS_FAILED', 'scroll_only_no_click_exhausted')
+    return false
+  }
+
   if (info?.kind === 'e2e') {
     try {
       await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
       await tiktokScrollHaltIfNeeded(shouldHalt)
+      if (richOnly) {
+        const rail = info.root.locator(
+          '[data-e2e="video-engagement-toolbar"], [data-e2e="browse-like-icon"], [data-e2e="comment-icon"]',
+        )
+        if ((await rail.count().catch(() => 0)) > 0 && (await rail.first().isVisible().catch(() => false))) {
+          await rail.first().click({ position: { x: 6, y: 10 }, timeout: 8000 }).catch(() => {})
+          log(okAction, 'e2e_engagement_rail')
+          return true
+        }
+        const box = await info.root.boundingBox().catch(() => null)
+        const rx = box && box.width > 80 ? Math.max(12, Math.floor(box.width * 0.88)) : 50
+        const ry = box && box.height > 80 ? Math.min(Math.floor(box.height * 0.42), box.height - 20) : 50
+        await info.root.click({ position: { x: rx, y: ry }, timeout: 8000 }).catch(() => {})
+        log(okAction, 'e2e_container_right_focus')
+        return true
+      }
       const inner = info.root.locator('video').first()
       if ((await inner.count()) > 0 && (await inner.isVisible().catch(() => false))) {
         await inner.click({ timeout: 8000 }).catch(() => {})
@@ -225,6 +324,16 @@ export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'S
         await sleepMsHaltable(shouldHalt, randomInt(200, 450))
         await tiktokScrollHaltIfNeeded(shouldHalt)
         if (await vid.isVisible().catch(() => false)) {
+          if (richOnly) {
+            const box = await vid.boundingBox().catch(() => null)
+            const w = box && Number.isFinite(box.width) ? box.width : 200
+            const h = box && Number.isFinite(box.height) ? box.height : 300
+            const rx = Math.max(8, Math.floor(w * 0.88))
+            const ry = Math.min(Math.floor(h * 0.38), Math.max(24, h - 40))
+            await vid.click({ position: { x: rx, y: ry }, timeout: 8000 }).catch(() => {})
+            log(okAction, 'article_video_rail_focus')
+            return true
+          }
           await vid.click({ position: { x: 48, y: 52 }, timeout: 8000 }).catch(() => {})
           log(okAction, 'largest_article_video')
           return true
@@ -248,6 +357,16 @@ export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'S
       await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
       await sleepMsHaltable(shouldHalt, randomInt(200, 400))
       await tiktokScrollHaltIfNeeded(shouldHalt)
+      if (richOnly) {
+        const box = await info.root.boundingBox().catch(() => null)
+        const w = box && Number.isFinite(box.width) ? box.width : 200
+        const h = box && Number.isFinite(box.height) ? box.height : 300
+        const rx = Math.max(8, Math.floor(w * 0.88))
+        const ry = Math.min(Math.floor(h * 0.38), Math.max(24, h - 40))
+        await info.root.click({ position: { x: rx, y: ry }, timeout: 8000 }).catch(() => {})
+        log(okAction, 'primary_video_rail_focus')
+        return true
+      }
       await info.root.click({ position: { x: 48, y: 48 }, timeout: 8000 }).catch(() => {})
       log(okAction, 'primary_video_root')
       return true

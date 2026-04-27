@@ -97,7 +97,8 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
   log('SCROLL_ATTEMPT', 'bringToFront_focus_ArrowDown_x2_PageDown_wheel_fixed_waits')
 
   const before = await safeReadStableKey(page, getStableKey)
-  const focused = await focusPrimaryFeedVideo(page, log, shouldHalt, 'SCROLL_VIDEO_FOCUSED', focusOptions ?? {})
+  const focusOpts = { ...(focusOptions ?? {}), scrollOnlyFocus: true }
+  const focused = await focusPrimaryFeedVideo(page, log, shouldHalt, 'SCROLL_VIDEO_FOCUSED', focusOpts)
   if (!focused) {
     log('SCROLL_VIDEO_FOCUS_FAILED', 'keyboard_without_focus_click')
   }
