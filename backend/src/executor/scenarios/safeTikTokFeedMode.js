@@ -398,6 +398,8 @@ let lastRepeatTrackingKey = ''
 let repeatStuckCount = 0
 /** After scroll stuck, next iteration skips VIEW_VIDEO and goes straight to scroll recovery. */
 let skipViewUntilScrollAdvances = false
+/** At most one like click per iteration (blocks duplicate like attempts). */
+let likedThisIteration = false
 
 /**
  * @param {import('playwright').Page} page
@@ -746,10 +748,10 @@ async function pickFirstVisibleLikeControl(page, scope, scopeLabel) {
 }
 
 /**
- * Strict like-on state: aria-pressed, TikTok liked e2e, or non-white filled SVG inside control (no class heuristics).
+ * Strict liked state only (for LIKE_VERIFIED): aria-pressed or TikTok liked e2e markers.
  * @param {import('playwright').Locator} loc
  */
-async function isLikeControlInVerifiedLikedState(loc) {
+async function isLikeStrictLikedOnLocator(loc) {
   if ((await loc.count().catch(() => 0)) === 0) return false
   const pressedSelf = await loc.getAttribute('aria-pressed').catch(() => null)
   if (pressedSelf === 'true') return true
@@ -760,9 +762,20 @@ async function isLikeControlInVerifiedLikedState(loc) {
   }
   const e2eSelf = (await loc.getAttribute('data-e2e').catch(() => null)) ?? ''
   if (/liked/i.test(String(e2eSelf))) return true
-  if ((await loc.locator('[data-e2e*="liked"]').first().count().catch(() => 0)) > 0) {
-    if (await loc.locator('[data-e2e*="liked"]').first().isVisible().catch(() => false)) return true
+  const likedChild = loc.locator('[data-e2e*="liked"]').first()
+  if ((await likedChild.count().catch(() => 0)) > 0 && (await likedChild.isVisible().catch(() => false))) {
+    return true
   }
+  return false
+}
+
+/**
+ * Softer hint (filled icon) — LIKE_SOFT_SUCCESS only, never a second click.
+ * @param {import('playwright').Locator} loc
+ */
+async function isLikeSoftLikedHintOnLocator(loc) {
+  if (await isLikeStrictLikedOnLocator(loc)) return true
+  if ((await loc.count().catch(() => 0)) === 0) return false
   const paths = loc.locator('svg path[fill]')
   const pn = await paths.count().catch(() => 0)
   for (let pi = 0; pi < Math.min(pn, 8); pi += 1) {
@@ -777,33 +790,22 @@ async function isLikeControlInVerifiedLikedState(loc) {
 }
 
 /**
+ * First visible like control inside primary root only (no page-wide fallback).
  * @param {import('playwright').Page} page
+ * @param {import('playwright').Locator} primary
  */
-async function readLikeVerifiedState(page, lockedRoot = undefined) {
-  const primary = await primaryFeedRoot(page, lockedRoot)
-  if (primary) {
-    for (const sel of LIKE_CONTROL_SELECTORS) {
-      const chain = primary.locator(sel)
-      const n = await chain.count().catch(() => 0)
-      for (let i = 0; i < Math.min(n, 12); i += 1) {
-        if (await isLikeControlInVerifiedLikedState(chain.nth(i))) return true
-      }
-    }
-  }
-  for (const sel of LIKE_CONTROL_SELECTORS) {
-    const chain = page.locator(sel)
-    const n = await chain.count().catch(() => 0)
-    for (let i = 0; i < Math.min(n, 16); i += 1) {
-      if (await isLikeControlInVerifiedLikedState(chain.nth(i))) return true
-    }
-  }
-  return false
+async function pickFirstVisibleLikeControlInPrimary(page, primary) {
+  return pickFirstVisibleLikeControl(page, primary, 'primary')
 }
 
 /**
  * @returns {Promise<'success' | 'skipped' | 'failed'>}
  */
 async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined, visual = { enabled: false, dir: '' }) {
+  if (likedThisIteration) {
+    log('LIKE_SECOND_CLICK_BLOCKED', 'max_one_like_click_per_iteration')
+    return 'skipped'
+  }
   if (pageInLiveSurfaceUrl(page) || (await detectLiveFeedCard(page))) {
     log('LIKE_SKIPPED', 'reason=LIVE')
     return 'skipped'
@@ -819,23 +821,25 @@ async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined, 
   await focusFeedCardForRichActions(page, log, shouldHalt, lockedRoot)
 
   const primary = await primaryFeedRoot(page, lockedRoot)
-  let picked = primary ? await pickFirstVisibleLikeControl(page, primary, 'primary') : null
-  let pickScope = picked ? 'primary' : 'page'
-  if (!picked) {
-    picked = await pickFirstVisibleLikeControl(page, null, 'page')
-    pickScope = picked ? 'page' : 'none'
-  }
+  const picked = primary ? await pickFirstVisibleLikeControlInPrimary(page, primary) : null
+  const pickScope = picked ? 'primary' : 'none'
 
   log('LIKE_ATTEMPT', `scope=${pickScope}${picked ? ` label=${picked.label}` : ''}`)
 
   if (!picked) {
-    log('LIKE_SKIPPED', 'reason=no_visible_like_button')
+    log('LIKE_SKIPPED', 'reason=no_visible_like_button_primary')
     return 'skipped'
   }
 
-  const before = await readLikeVerifiedState(page, lockedRoot)
-  if (before) {
+  if (await isLikeStrictLikedOnLocator(picked.loc)) {
+    likedThisIteration = true
     log('LIKE_VERIFIED', 'reason=already_liked_before_click')
+    await maybeVisualScreenshot(page, log, 'after_like', visual)
+    return 'success'
+  }
+  if (await isLikeSoftLikedHintOnLocator(picked.loc)) {
+    likedThisIteration = true
+    log('LIKE_SOFT_SUCCESS', 'reason=already_liked_uncertain_no_click')
     await maybeVisualScreenshot(page, log, 'after_like', visual)
     return 'success'
   }
@@ -845,20 +849,27 @@ async function tryLikeWithVerify(page, log, shouldHalt, lockedRoot = undefined, 
     log('LIKE_SKIPPED', 'reason=click_failed_or_not_visible')
     return 'skipped'
   }
+  likedThisIteration = true
   log('LIKE_CLICKED', picked.label)
 
   await sleepMsHaltable(shouldHalt, randomInt(450, 900))
   await haltIfNeeded(shouldHalt)
 
-  const after = await readLikeVerifiedState(page, lockedRoot)
-  if (after) {
+  if (await isLikeStrictLikedOnLocator(picked.loc)) {
     log('LIKE_VERIFIED', 'reason=liked_after_click')
     await maybeVisualScreenshot(page, log, 'after_like', visual)
     await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
     await haltIfNeeded(shouldHalt)
     return 'success'
   }
-  log('LIKE_SKIPPED', 'reason=not_verified')
+  if (await isLikeSoftLikedHintOnLocator(picked.loc)) {
+    log('LIKE_SOFT_SUCCESS', 'reason=liked_after_click_uncertain')
+    await maybeVisualScreenshot(page, log, 'after_like', visual)
+    await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
+    await haltIfNeeded(shouldHalt)
+    return 'success'
+  }
+  log('LIKE_SKIPPED', 'reason=not_verified_strict')
   await maybeVisualScreenshot(page, log, 'after_like', visual)
   await sleepMsHaltable(shouldHalt, randomInt(1000, 2500))
   await haltIfNeeded(shouldHalt)
@@ -1256,6 +1267,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
 
   try {
     log('SAFE_TIKTOK_FEED_MODE', 'iteration start')
+    likedThisIteration = false
 
     try {
       if (page.isClosed()) {
