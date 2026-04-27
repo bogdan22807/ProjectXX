@@ -11,6 +11,7 @@ import {
   focusPrimaryFeedVideo,
   readStableKeyFromFeedRoot,
   resolvePrimaryFeedRoot,
+  wakeFypWithViewportClick,
 } from './tiktokFeedLayout.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 import { runPostLiveHardScrollSequence } from './postLiveHardScroll.js'
@@ -138,6 +139,9 @@ async function waitForFeedDomReady(page, log, shouldHalt, maxMs = 28000) {
     attempt += 1
     if (attempt === 1 || attempt % 5 === 0) {
       log('FEED_READY_WAIT', `attempt=${attempt} video_tags=${video_tag_count} feed_e2e=${feed_active_video_count}`)
+    }
+    if (attempt % 8 === 0) {
+      await wakeFypWithViewportClick(page, log, shouldHalt)
     }
     await sleepMsHaltable(shouldHalt, 450)
   }
