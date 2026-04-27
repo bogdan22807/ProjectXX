@@ -937,6 +937,7 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
                   debugScreenshots,
                   screenshotDir: options.screenshotDir,
                   browserEngine: String(runConfig.browserEngine ?? 'chromium').trim() || 'chromium',
+                  iterationIndex: loopIteration,
                 },
               )
             } else {
