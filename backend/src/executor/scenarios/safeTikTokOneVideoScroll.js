@@ -56,16 +56,17 @@ async function waitForStableKeyChange(page, log, shouldHalt, getStableKey, befor
 /**
  * At most one keyboard "step" from ArrowDown: focus → single ArrowDown → poll → optional PageDown.
  *
+ * @param {{ resolvedInfo?: Awaited<ReturnType<import('./tiktokFeedLayout.js').resolvePrimaryFeedRoot>> | null }} [focusOptions] — passed to `focusPrimaryFeedVideo` when set (iteration-locked primary root).
  * @returns {Promise<boolean>} true if stable key changed vs initial `before`
  */
-export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, getStableKey) {
+export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, getStableKey, focusOptions) {
   if (safePageClosed(page)) {
     log('PAGE_CLOSED_DURING_STOP', 'scroll_start')
     return false
   }
 
   const before = await safeReadStableKey(page, getStableKey)
-  const focused = await focusPrimaryFeedVideo(page, log, shouldHalt)
+  const focused = await focusPrimaryFeedVideo(page, log, shouldHalt, 'SCROLL_VIDEO_FOCUSED', focusOptions ?? {})
   if (!focused) {
     log('SCROLL_VIDEO_FOCUS_FAILED', 'keyboard_without_focus_click')
   }
