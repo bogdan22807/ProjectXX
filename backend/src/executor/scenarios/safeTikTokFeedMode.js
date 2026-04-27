@@ -393,6 +393,60 @@ async function ensureIterationRootForScroll(page, initial) {
   return null
 }
 
+/**
+ * Wait until TikTok feed DOM yields a primary root (fixes empty first iterations on slow / landing URL).
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function waitForIterationRootReady(page, log, shouldHalt, maxMs = 26000) {
+  const deadline = Date.now() + Math.max(3000, maxMs)
+  let attempt = 0
+  let didGotoForyou = false
+  while (Date.now() < deadline) {
+    await haltIfNeeded(shouldHalt)
+    if (await safePageClosed(page)) return null
+    let r = await resolvePrimaryFeedRoot(page)
+    if (r) {
+      log('FEED_ROOT_READY', `resolved_primary attempts=${attempt + 1}`)
+      return r
+    }
+    r = await ensureIterationRootForScroll(page, null)
+    if (r) {
+      log('FEED_ROOT_READY', `fallback_dom attempts=${attempt + 1}`)
+      return r
+    }
+    attempt += 1
+    if (attempt === 1 || attempt % 5 === 0) {
+      log('FEED_ROOT_WAIT', `attempt=${attempt}`)
+    }
+    if (!didGotoForyou && attempt >= 4) {
+      try {
+        const u = new URL(page.url())
+        if (u.hostname.toLowerCase().includes('tiktok.com')) {
+          const p = u.pathname.toLowerCase()
+          if (!p.includes('foryou')) {
+            didGotoForyou = true
+            log('FEED_NAV_GOTO_FORYOU', 'explicit /foryou while waiting for root')
+            await page.goto('https://www.tiktok.com/foryou', { waitUntil: 'domcontentloaded', timeout: 28000 }).catch(() => {})
+            await sleepMsHaltable(shouldHalt, randomInt(1800, 3200))
+            await haltIfNeeded(shouldHalt)
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    if (attempt % 7 === 0 && attempt > 0) {
+      await tryClickForYouNav(page)
+      await sleepMsHaltable(shouldHalt, randomInt(900, 1600))
+      await haltIfNeeded(shouldHalt)
+    }
+    await sleepMsHaltable(shouldHalt, 450)
+  }
+  log('FEED_ROOT_WAIT_TIMEOUT', `after_ms=${maxMs}`)
+  return null
+}
+
 /** Consecutive iterations ended with scroll stuck on same repeat-tracking key (module state). */
 let lastRepeatTrackingKey = ''
 let repeatStuckCount = 0
@@ -1324,7 +1378,7 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       return
     }
 
-    let iterationRoot = await resolvePrimaryFeedRoot(page)
+    let iterationRoot = await waitForIterationRootReady(page, log, shouldHalt)
     logPrimaryRootResolved(log, iterationRoot)
     if (!iterationRoot) {
       iterationRoot = await ensureIterationRootForScroll(page, iterationRoot)
