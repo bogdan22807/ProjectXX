@@ -872,32 +872,62 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
         updateStatus(accountId, 'Ready')
         return
       }
-      logStep(accountId, 'WAITING', 'initial TikTok settle 3–7s')
-      try {
-        await interruptibleRandomDelay(3000, 7000, shouldHalt)
-      } catch (e) {
-        if (isExecutorHaltError(e)) {
-          if (e.reason === 'max_duration') {
-            logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()}`)
-            state.lifecycle = 'max_duration_reached'
-          } else {
-            state.lifecycle = 'stopped'
+      if (useSafeTikTokFeedMode) {
+        logStep(accountId, 'WAITING', 'initial TikTok settle 0.4–0.9s (SAFE feed)')
+        try {
+          await interruptibleRandomDelay(400, 900, shouldHalt)
+        } catch (e) {
+          if (isExecutorHaltError(e)) {
+            if (e.reason === 'max_duration') {
+              logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()}`)
+              state.lifecycle = 'max_duration_reached'
+            } else {
+              state.lifecycle = 'stopped'
+            }
+            logStep(
+              accountId,
+              'EXECUTOR_STOPPED',
+              `reason=${state.lifecycle} runId=${runId} iterations=0`,
+            )
+            logStep(
+              accountId,
+              'EXECUTOR_FINISHED',
+              `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle}`,
+            )
+            logStep(accountId, 'completed', runConfig.startUrl)
+            updateStatus(accountId, 'Ready')
+            return
           }
-          logStep(
-            accountId,
-            'EXECUTOR_STOPPED',
-            `reason=${state.lifecycle} runId=${runId} iterations=0`,
-          )
-          logStep(
-            accountId,
-            'EXECUTOR_FINISHED',
-            `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle}`,
-          )
-          logStep(accountId, 'completed', runConfig.startUrl)
-          updateStatus(accountId, 'Ready')
-          return
+          throw e
         }
-        throw e
+      } else {
+        logStep(accountId, 'WAITING', 'initial TikTok settle 3–7s')
+        try {
+          await interruptibleRandomDelay(3000, 7000, shouldHalt)
+        } catch (e) {
+          if (isExecutorHaltError(e)) {
+            if (e.reason === 'max_duration') {
+              logStep(accountId, 'MAX_DURATION_REACHED', `runId=${runId} elapsedMs=${elapsedMs()}`)
+              state.lifecycle = 'max_duration_reached'
+            } else {
+              state.lifecycle = 'stopped'
+            }
+            logStep(
+              accountId,
+              'EXECUTOR_STOPPED',
+              `reason=${state.lifecycle} runId=${runId} iterations=0`,
+            )
+            logStep(
+              accountId,
+              'EXECUTOR_FINISHED',
+              `${runConfig.startUrl} | runId=${runId} | outcome=${state.lifecycle}`,
+            )
+            logStep(accountId, 'completed', runConfig.startUrl)
+            updateStatus(accountId, 'Ready')
+            return
+          }
+          throw e
+        }
       }
     }
 
@@ -1127,8 +1157,13 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
           break
         }
 
-        logStep(accountId, 'WAITING', 'between loop iterations 2000–5000ms')
-        await sleepRandom(2000, 5000)
+        if (useSafeTikTokFeedMode) {
+          logStep(accountId, 'WAITING', 'between loop iterations 300–800ms (SAFE feed)')
+          await sleepRandom(300, 800)
+        } else {
+          logStep(accountId, 'WAITING', 'between loop iterations 2000–5000ms')
+          await sleepRandom(2000, 5000)
+        }
     }
 
     if (state.cancelled && state.forceAbort) return
