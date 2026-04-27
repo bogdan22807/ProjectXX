@@ -121,6 +121,31 @@ async function collectVideoDetectionCounts(page) {
 }
 
 /**
+ * TikTok FYP can render shell first (title ok, auth ok) while feed nodes mount — wait before rich/scroll.
+ * @returns {Promise<boolean>} true if video or feed card appeared or primary root resolvable
+ */
+async function waitForFeedDomReady(page, log, shouldHalt, maxMs = 28000) {
+  const deadline = Date.now() + Math.max(2000, maxMs)
+  let attempt = 0
+  while (Date.now() < deadline) {
+    await haltIfNeeded(shouldHalt)
+    if (await safePageClosed(page)) return false
+    const { feed_active_video_count, video_tag_count } = await collectVideoDetectionCounts(page)
+    if (feed_active_video_count > 0 || video_tag_count > 0) {
+      log('FEED_READY', `after_attempts=${attempt + 1} video_tags=${video_tag_count} feed_e2e=${feed_active_video_count}`)
+      return true
+    }
+    attempt += 1
+    if (attempt === 1 || attempt % 5 === 0) {
+      log('FEED_READY_WAIT', `attempt=${attempt} video_tags=${video_tag_count} feed_e2e=${feed_active_video_count}`)
+    }
+    await sleepMsHaltable(shouldHalt, 450)
+  }
+  log('FEED_READY_TIMEOUT', `no_video_in_dom after_ms=${maxMs}`)
+  return false
+}
+
+/**
  * @param {import('playwright').Locator} loc
  * @param {import('playwright').Page} page
  */
@@ -921,7 +946,9 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       scrollStr = sum.scrollOk === true ? 'ok' : sum.scrollOk === false ? 'failed' : 'unknown'
     }
     let reason = 'reason='
-    if (!sum.videoFound) {
+    if (!sum.scrollRan && sum.viewedMs > 0) {
+      reason = `reason=user_stop_before_scroll${!sum.videoFound ? ' (feed_not_confirmed)' : ''}`
+    } else if (!sum.videoFound) {
       reason = `reason=no_active_video${sum.videoFailReason ? ` (${sum.videoFailReason})` : ''}`
     } else if (sum.scrollRan && !sum.scrollChanged) {
       reason = 'reason=key_unchanged'
@@ -959,6 +986,10 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
       throw new ExecutorHaltError('challenge')
     }
     await haltIfNeeded(shouldHalt)
+
+    const feedReady = await waitForFeedDomReady(page, log, shouldHalt)
+    sum.videoFound = feedReady
+    sum.videoFailReason = feedReady ? null : 'feed_ready_timeout'
 
     if (pageInLiveSurfaceUrl(page)) {
       repeatStuckCount = 0
