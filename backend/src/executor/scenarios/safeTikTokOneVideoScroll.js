@@ -1,11 +1,11 @@
 /**
- * SAFE_TIKTOK_FEED_MODE only: exactly one ArrowDown per invocation, then poll stable key.
- * Focus uses shared `tiktokFeedLayout` (largest article with video when e2e missing) so scroll matches stable key.
+ * SAFE_TIKTOK_FEED_MODE scroll: bringToFront → focus → ArrowDown ×2 (1200ms) → PageDown (1500ms) → wheel (1500ms); compare stable key after each step.
  */
 
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { randomInt } from '../asyncUtils.js'
 import {
   tiktokScrollHaltIfNeeded,
   tiktokScrollSleepMsHaltable,
@@ -62,28 +62,19 @@ async function safeReadStableKey(page, getStableKey) {
 }
 
 /**
- * Wait until stable key differs from `before`, or `maxMs` elapses.
+ * @param {import('playwright').Page} page
+ * @param {() => Promise<string>} getStableKey
+ * @param {string} before
  */
-async function waitForStableKeyChange(page, log, shouldHalt, getStableKey, before, maxMs, stepMs) {
-  const deadline = Date.now() + Math.max(200, Math.floor(maxMs))
-  const step = Math.max(120, Math.floor(stepMs))
-  while (Date.now() < deadline) {
-    if (safePageClosed(page)) {
-      log('PAGE_CLOSED_DURING_STOP', 'during_key_poll')
-      return false
-    }
-    await tiktokScrollSleepMsHaltable(shouldHalt, step)
-    await tiktokScrollHaltIfNeeded(shouldHalt)
-    const after = await safeReadStableKey(page, getStableKey)
-    if (tiktokStableKeyAdvanced(before, after)) return true
-  }
-  return false
+async function keyAdvancedFrom(page, getStableKey, before) {
+  const after = await safeReadStableKey(page, getStableKey)
+  return tiktokStableKeyAdvanced(before, after)
 }
 
 /**
- * At most one keyboard "step" from ArrowDown: focus → single ArrowDown → poll → optional PageDown.
+ * Multi-step scroll: ArrowDown ×2 (1200ms settle each), PageDown (1500ms), wheel 900–1400 (1500ms).
  *
- * @param {{ resolvedInfo?: Awaited<ReturnType<import('./tiktokFeedLayout.js').resolvePrimaryFeedRoot>> | null }} [focusOptions] — passed to `focusPrimaryFeedVideo` when set (iteration-locked primary root).
+ * @param {{ resolvedInfo?: Awaited<ReturnType<import('./tiktokFeedLayout.js').resolvePrimaryFeedRoot>> | null }} [focusOptions]
  * @returns {Promise<boolean>} true if stable key changed vs initial `before`
  */
 export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHalt, getStableKey, focusOptions) {
@@ -103,7 +94,7 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
 
   await maybeScrollVisualScreenshot(page, log, 'before_scroll')
 
-  log('SCROLL_ATTEMPT', 'focus_then_ArrowDown_poll_5s_optional_PageDown')
+  log('SCROLL_ATTEMPT', 'bringToFront_focus_ArrowDown_x2_PageDown_wheel_fixed_waits')
 
   const before = await safeReadStableKey(page, getStableKey)
   const focused = await focusPrimaryFeedVideo(page, log, shouldHalt, 'SCROLL_VIDEO_FOCUSED', focusOptions ?? {})
@@ -111,46 +102,40 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
     log('SCROLL_VIDEO_FOCUS_FAILED', 'keyboard_without_focus_click')
   }
 
-  const keyPollMs = 5000
-  const keyPollStepMs = 220
-
-  if (safePageClosed(page)) {
-    log('PAGE_CLOSED_DURING_STOP', 'before_ArrowDown')
-    return false
-  }
-  await tiktokScrollHaltIfNeeded(shouldHalt)
-  log('SCROLL_KEYBOARD_ARROW', 'attempt=1_single')
-  try {
-    await page.keyboard.press('ArrowDown')
-  } catch {
-    if (safePageClosed(page)) {
-      log('PAGE_CLOSED_DURING_STOP', 'during_ArrowDown')
-      return false
+  const tryArrow = async (attemptLabel) => {
+    if (safePageClosed(page)) return false
+    await tiktokScrollHaltIfNeeded(shouldHalt)
+    log('SCROLL_KEYBOARD_ARROW', attemptLabel)
+    try {
+      await page.keyboard.press('ArrowDown')
+    } catch {
+      if (safePageClosed(page)) return false
     }
+    await tiktokScrollSleepMsHaltable(shouldHalt, 1200)
+    await tiktokScrollHaltIfNeeded(shouldHalt)
+    return keyAdvancedFrom(page, getStableKey, before)
   }
 
-  const advancedArrow = await waitForStableKeyChange(
-    page,
-    log,
-    shouldHalt,
-    getStableKey,
-    before,
-    keyPollMs,
-    keyPollStepMs,
-  )
-  if (advancedArrow) {
-    log('SCROLL_KEY_CHANGED', 'after_ArrowDown')
+  if (await tryArrow('attempt=1')) {
+    log('SCROLL_KEY_CHANGED', 'after_ArrowDown_1')
+    log('SCROLL_SUCCESS', 'method=ArrowDown')
+    await maybeScrollVisualScreenshot(page, log, 'after_scroll')
+    return true
+  }
+
+  if (await tryArrow('attempt=2')) {
+    log('SCROLL_KEY_CHANGED', 'after_ArrowDown_2')
     log('SCROLL_SUCCESS', 'method=ArrowDown')
     await maybeScrollVisualScreenshot(page, log, 'after_scroll')
     return true
   }
 
   if (safePageClosed(page)) {
-    log('PAGE_CLOSED_DURING_STOP', 'before_PageDown_fallback')
+    log('PAGE_CLOSED_DURING_STOP', 'before_PageDown')
     return false
   }
   await tiktokScrollHaltIfNeeded(shouldHalt)
-  log('SCROLL_PAGEDOWN_FALLBACK', 'after_ArrowDown_poll_unchanged')
+  log('SCROLL_PAGEDOWN_FALLBACK', 'after_ArrowDown_x2_unchanged')
   try {
     await page.keyboard.press('PageDown')
   } catch {
@@ -159,24 +144,40 @@ export async function runSafeTikTokControlledOneVideoScroll(page, log, shouldHal
       return false
     }
   }
-
-  const advancedPd = await waitForStableKeyChange(
-    page,
-    log,
-    shouldHalt,
-    getStableKey,
-    before,
-    keyPollMs,
-    keyPollStepMs,
-  )
-  if (advancedPd) {
-    log('SCROLL_KEY_CHANGED', 'after_PageDown_fallback')
+  await tiktokScrollSleepMsHaltable(shouldHalt, 1500)
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  if (await keyAdvancedFrom(page, getStableKey, before)) {
+    log('SCROLL_KEY_CHANGED', 'after_PageDown')
     log('SCROLL_SUCCESS', 'method=PageDown')
     await maybeScrollVisualScreenshot(page, log, 'after_scroll')
     return true
   }
 
-  log('SCROLL_STUCK', 'stable_key_unchanged_after_ArrowDown_5s_and_PageDown')
+  if (safePageClosed(page)) {
+    log('PAGE_CLOSED_DURING_STOP', 'before_wheel')
+    return false
+  }
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  const dy = randomInt(900, 1400)
+  log('SCROLL_WHEEL_FALLBACK', `dy=${dy}`)
+  try {
+    await page.mouse.wheel(0, dy)
+  } catch {
+    if (safePageClosed(page)) {
+      log('PAGE_CLOSED_DURING_STOP', 'during_wheel')
+      return false
+    }
+  }
+  await tiktokScrollSleepMsHaltable(shouldHalt, 1500)
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+  if (await keyAdvancedFrom(page, getStableKey, before)) {
+    log('SCROLL_KEY_CHANGED', 'after_wheel')
+    log('SCROLL_SUCCESS', 'method=wheel')
+    await maybeScrollVisualScreenshot(page, log, 'after_scroll')
+    return true
+  }
+
+  log('SCROLL_STUCK', 'stable_key_unchanged_after_ArrowDown_x2_PageDown_wheel')
   await maybeScrollVisualScreenshot(page, log, 'after_scroll')
   return false
 }
