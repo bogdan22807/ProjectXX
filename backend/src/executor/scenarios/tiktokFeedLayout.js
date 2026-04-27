@@ -26,6 +26,30 @@ async function sleepMsHaltable(shouldHalt, ms) {
 }
 
 /**
+ * TikTok sometimes paints shell + auth but lazy-mounts feed — click main column to trigger hydration.
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+export async function wakeFypWithViewportClick(page, log, shouldHalt) {
+  if (page.isClosed()) return
+  const vp = page.viewportSize()
+  const w = vp && Number.isFinite(vp.width) ? vp.width : 1366
+  const h = vp && Number.isFinite(vp.height) ? vp.height : 768
+  const x = Math.floor(w * 0.52)
+  const y = Math.floor(h * 0.45)
+  try {
+    await page.mouse.move(x, y)
+    await page.mouse.click(x, y)
+    log('FEED_WAKE_CLICK', `viewport x=${x} y=${y}`)
+  } catch {
+    log('FEED_WAKE_CLICK', 'failed')
+  }
+  await sleepMsHaltable(shouldHalt, randomInt(700, 1400))
+  await tiktokScrollHaltIfNeeded(shouldHalt)
+}
+
+/**
  * @param {import('playwright').Page} page
  * @returns {Promise<null | { kind: 'e2e'; root: import('playwright').Locator } | { kind: 'article'; root: import('playwright').Locator }>}
  */
@@ -77,6 +101,30 @@ export async function resolvePrimaryFeedRoot(page) {
     return { kind: 'article', root: articles.nth(bestIdx) }
   }
 
+  /** No article with `<video>` yet — pick largest non-live article near center (feed column shell). */
+  let fbIdx = -1
+  let fbScore = -1
+  for (let i = 0; i < Math.min(n, 36); i += 1) {
+    const art = articles.nth(i)
+    const liveHref =
+      (await art.locator('a[href*="/live"]').first().getAttribute('href').catch(() => null)) ?? ''
+    if (String(liveHref).toLowerCase().includes('/live')) continue
+    const box = await art.boundingBox().catch(() => null)
+    if (!box || box.width < 200 || box.height < 220) continue
+    const mx = box.x + box.width / 2
+    const my = box.y + box.height / 2
+    const dist = Math.hypot(mx - cx, my - cy)
+    const area = box.width * box.height
+    const score = area / (100 + dist)
+    if (score > fbScore) {
+      fbScore = score
+      fbIdx = i
+    }
+  }
+  if (fbIdx >= 0) {
+    return { kind: 'article', root: articles.nth(fbIdx) }
+  }
+
   return null
 }
 
@@ -121,54 +169,69 @@ export async function focusPrimaryFeedVideo(page, log, shouldHalt, okAction = 'S
     return false
   }
 
-  const info = await resolvePrimaryFeedRoot(page)
-  if (info?.kind === 'e2e') {
-    try {
-      await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-      await tiktokScrollHaltIfNeeded(shouldHalt)
-      const inner = info.root.locator('video').first()
-      if ((await inner.count()) > 0 && (await inner.isVisible().catch(() => false))) {
-        await inner.click({ timeout: 8000 }).catch(() => {})
-        log(okAction, 'inner_video')
+  const tryFocusOnce = async () => {
+    const info = await resolvePrimaryFeedRoot(page)
+    if (info?.kind === 'e2e') {
+      try {
+        await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+        await tiktokScrollHaltIfNeeded(shouldHalt)
+        const inner = info.root.locator('video').first()
+        if ((await inner.count()) > 0 && (await inner.isVisible().catch(() => false))) {
+          await inner.click({ timeout: 8000 }).catch(() => {})
+          log(okAction, 'inner_video')
+          return true
+        }
+        await info.root.click({ position: { x: 50, y: 50 }, timeout: 8000 }).catch(() => {})
+        log(okAction, 'container_xy50')
         return true
+      } catch {
+        log('SCROLL_VIDEO_FOCUS_FAILED', 'primary_click_error')
       }
-      await info.root.click({ position: { x: 50, y: 50 }, timeout: 8000 }).catch(() => {})
-      log(okAction, 'container_xy50')
-      return true
-    } catch {
-      log('SCROLL_VIDEO_FOCUS_FAILED', 'primary_click_error')
     }
+
+    if (info?.kind === 'article') {
+      try {
+        const vid = info.root.locator('video').first()
+        if ((await vid.count().catch(() => 0)) > 0) {
+          await vid.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+          await sleepMsHaltable(shouldHalt, randomInt(200, 450))
+          await tiktokScrollHaltIfNeeded(shouldHalt)
+          if (await vid.isVisible().catch(() => false)) {
+            await vid.click({ position: { x: 48, y: 52 }, timeout: 8000 }).catch(() => {})
+            log(okAction, 'largest_article_video')
+            return true
+          }
+        }
+        await info.root.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+        await sleepMsHaltable(shouldHalt, randomInt(200, 400))
+        await tiktokScrollHaltIfNeeded(shouldHalt)
+        await info.root.click({ position: { x: 52, y: 120 }, timeout: 8000 }).catch(() => {})
+        log(okAction, 'article_shell_click')
+        return true
+      } catch {
+        /* fall through */
+      }
+    }
+
+    const v = page.locator('video').first()
+    if ((await v.count().catch(() => 0)) > 0) {
+      try {
+        await v.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
+        await sleepMsHaltable(shouldHalt, randomInt(200, 400))
+        await tiktokScrollHaltIfNeeded(shouldHalt)
+        await v.click({ position: { x: 48, y: 48 }, timeout: 8000 }).catch(() => {})
+        log(okAction, 'fallback_first_video')
+        return true
+      } catch {
+        /* ignore */
+      }
+    }
+    return false
   }
 
-  if (info?.kind === 'article') {
-    try {
-      const vid = info.root.locator('video').first()
-      await vid.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-      await sleepMsHaltable(shouldHalt, randomInt(200, 450))
-      await tiktokScrollHaltIfNeeded(shouldHalt)
-      if (await vid.isVisible().catch(() => false)) {
-        await vid.click({ position: { x: 48, y: 52 }, timeout: 8000 }).catch(() => {})
-        log(okAction, 'largest_article_video')
-        return true
-      }
-    } catch {
-      /* fall through */
-    }
-  }
-
-  const v = page.locator('video').first()
-  if ((await v.count().catch(() => 0)) > 0) {
-    try {
-      await v.scrollIntoViewIfNeeded({ timeout: 8000 }).catch(() => {})
-      await sleepMsHaltable(shouldHalt, randomInt(200, 400))
-      await tiktokScrollHaltIfNeeded(shouldHalt)
-      await v.click({ position: { x: 48, y: 48 }, timeout: 8000 }).catch(() => {})
-      log(okAction, 'fallback_first_video')
-      return true
-    } catch {
-      /* ignore */
-    }
-  }
+  if (await tryFocusOnce()) return true
+  await wakeFypWithViewportClick(page, log, shouldHalt)
+  if (await tryFocusOnce()) return true
   log('SCROLL_VIDEO_FOCUS_FAILED', 'no_feed_active_video')
   return false
 }
