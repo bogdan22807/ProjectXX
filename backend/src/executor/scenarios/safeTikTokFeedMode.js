@@ -84,27 +84,107 @@ function isTikTokLikeWriteUrl(rawUrl) {
 }
 
 /**
+ * @param {URL} url
+ */
+function summarizeLikeQuery(url) {
+  const keys = ['item_id', 'aweme_id', 'type', 'aid', 'app_name']
+  const parts = []
+  for (const key of keys) {
+    const value = url.searchParams.get(key)
+    if (value) parts.push(`${key}=${String(value).slice(0, 80)}`)
+  }
+  return parts.length > 0 ? parts.join(' ') : url.search ? 'query=1' : ''
+}
+
+/**
+ * @param {unknown} value
+ */
+function safeJsonScalar(value) {
+  if (value == null) return ''
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return String(value)
+  return ''
+}
+
+/**
+ * @param {unknown} json
+ */
+function summarizeLikeResponseJson(json) {
+  if (!json || typeof json !== 'object') return ''
+  const obj = /** @type {Record<string, unknown>} */ (json)
+  const keys = [
+    'status_code',
+    'status_msg',
+    'status',
+    'message',
+    'msg',
+    'is_digg',
+    'digg_status',
+    'error_code',
+    'error_msg',
+    'verify_type',
+    'captcha',
+  ]
+  const parts = []
+  for (const key of keys) {
+    const value = safeJsonScalar(obj[key])
+    if (value !== '') parts.push(`${key}=${value}`)
+  }
+  const logPb = obj.log_pb && typeof obj.log_pb === 'object' ? /** @type {Record<string, unknown>} */ (obj.log_pb) : null
+  const imprId = logPb ? safeJsonScalar(logPb.impr_id) : ''
+  if (imprId) parts.push(`impr_id=${imprId.slice(0, 80)}`)
+  return parts.join(' ')
+}
+
+/**
+ * @param {import('playwright').Response} response
+ */
+async function summarizeLikeResponseBody(response) {
+  const contentType = String((await response.headerValue('content-type').catch(() => '')) || '').toLowerCase()
+  if (!contentType.includes('json') && !contentType.includes('javascript') && response.status() >= 300) return ''
+  const raw = await response.text().catch(() => '')
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  try {
+    const parsed = JSON.parse(trimmed)
+    const summary = summarizeLikeResponseJson(parsed)
+    if (summary) return summary
+  } catch {
+    /* fall through to short raw body */
+  }
+  return `body=${trimmed.replace(/\s+/g, ' ').slice(0, 180)}`
+}
+
+/**
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  */
 function startLikeNetworkProbe(page, log) {
   const seen = new Set()
+  const pending = new Set()
   let matched = 0
 
   const responseHandler = (response) => {
-    try {
-      const rawUrl = response.url()
-      if (!isTikTokLikeWriteUrl(rawUrl)) return
-      const url = new URL(rawUrl)
-      const request = response.request()
-      const detail = `${request.method()} ${response.status()} ${url.pathname}${url.search ? ' query=1' : ''}`
-      if (seen.has(detail)) return
-      seen.add(detail)
-      matched += 1
-      log('LIKE_NETWORK_RESPONSE', detail.slice(0, 260))
-    } catch {
-      /* ignore network probe failures */
-    }
+    const task = (async () => {
+      try {
+        const rawUrl = response.url()
+        if (!isTikTokLikeWriteUrl(rawUrl)) return
+        const url = new URL(rawUrl)
+        const request = response.request()
+        const query = summarizeLikeQuery(url)
+        const bodySummary = await summarizeLikeResponseBody(response)
+        const detail = `${request.method()} ${response.status()} ${url.pathname}${query ? ` ${query}` : ''}${
+          bodySummary ? ` body=${bodySummary}` : ''
+        }`
+        if (seen.has(detail)) return
+        seen.add(detail)
+        matched += 1
+        log('LIKE_NETWORK_RESPONSE', detail.slice(0, 500))
+      } catch {
+        /* ignore network probe failures */
+      }
+    })()
+    pending.add(task)
+    task.finally(() => pending.delete(task)).catch(() => {})
   }
 
   const requestFailedHandler = (request) => {
@@ -126,9 +206,12 @@ function startLikeNetworkProbe(page, log) {
   page.on('response', responseHandler)
   page.on('requestfailed', requestFailedHandler)
 
-  return () => {
+  return async () => {
     page.off('response', responseHandler)
     page.off('requestfailed', requestFailedHandler)
+    if (pending.size > 0) {
+      await Promise.allSettled(Array.from(pending))
+    }
     if (matched === 0) log('LIKE_NETWORK_RESPONSE', 'none_matched')
   }
 }
@@ -477,7 +560,7 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
       log('LIKE_NOT_CONFIRMED', `reason=${confirmed.reason}`)
     }
   } finally {
-    stopNetworkProbe()
+    await stopNetworkProbe()
   }
 }
 
