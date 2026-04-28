@@ -120,6 +120,171 @@ async function viewCurrentVideo(page, log, shouldHalt) {
 
 /**
  * @param {import('playwright').Page} page
+ * @returns {Promise<number>}
+ */
+async function currentArticleIndex(page) {
+  return page
+    .evaluate(() => {
+      const articles = Array.from(document.querySelectorAll('article')).filter((article) =>
+        article.querySelector('video'),
+      )
+      if (articles.length === 0) return -1
+
+      const viewportCenterY = window.innerHeight / 2
+      let currentIndex = 0
+      let bestDistance = Number.POSITIVE_INFINITY
+      for (let i = 0; i < articles.length; i += 1) {
+        const rect = articles[i].getBoundingClientRect()
+        const articleCenterY = rect.top + rect.height / 2
+        const distance = Math.abs(articleCenterY - viewportCenterY)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          currentIndex = i
+        }
+      }
+      return currentIndex
+    })
+    .catch(() => -1)
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {number} index
+ */
+function articleByVideoIndex(page, index) {
+  return page.locator('article').filter({ has: page.locator('video') }).nth(index)
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {import('playwright').Locator | null} article
+ */
+async function isLiveActionGuardActive(page, article) {
+  if (pageInLiveSurfaceUrl(page)) return true
+  if (!article) return false
+  if ((await article.count().catch(() => 0)) === 0) return false
+
+  return article
+    .evaluate((el) => {
+      const text = String(el.innerText || el.textContent || '').toLowerCase()
+      if (/\blive\b/.test(text) || text.includes('stream') || text.includes('прямой эфир')) return true
+
+      const attrsToCheck = ['aria-label', 'class', 'data-test', 'data-testid', 'data-e2e', 'href', 'title']
+      const hasLiveAttribute = Array.from(el.querySelectorAll('*')).some((node) =>
+        attrsToCheck.some((name) => {
+          const value = String(node.getAttribute(name) || '').toLowerCase()
+          return value.includes('live') || value.includes('stream')
+        }),
+      )
+      if (hasLiveAttribute) return true
+
+      return Boolean(
+        el.querySelector(
+          '[aria-label*="live" i], [class*="live" i], [data-test*="live" i], [data-testid*="live" i], [data-e2e*="live" i], a[href*="/live" i]',
+        ),
+      )
+    })
+    .catch(() => false)
+}
+
+/**
+ * @param {import('playwright').Locator} article
+ */
+async function pickReactionButtonInArticle(article) {
+  const selectors = [
+    'button[data-test*="reaction" i]',
+    'button[data-testid*="reaction" i]',
+    'button[data-e2e*="reaction" i]',
+    'button[aria-label*="reaction" i]',
+    '[role="button"][data-test*="reaction" i]',
+    '[role="button"][data-testid*="reaction" i]',
+    '[role="button"][data-e2e*="reaction" i]',
+    '[role="button"][aria-label*="reaction" i]',
+    'button[data-test*="like" i]',
+    'button[data-testid*="like" i]',
+    'button[data-e2e*="like" i]',
+    'button[aria-label*="like" i]',
+    '[role="button"][data-test*="like" i]',
+    '[role="button"][data-testid*="like" i]',
+    '[role="button"][data-e2e*="like" i]',
+    '[role="button"][aria-label*="like" i]',
+  ]
+
+  for (const selector of selectors) {
+    const matches = article.locator(selector)
+    const count = await matches.count().catch(() => 0)
+    for (let i = 0; i < Math.min(count, 12); i += 1) {
+      const candidate = matches.nth(i)
+      if (await candidate.isVisible().catch(() => false)) return candidate
+    }
+  }
+  return null
+}
+
+/**
+ * @param {import('playwright').Locator} article
+ */
+async function articleActionAlreadyClicked(article) {
+  return article
+    .evaluate((el) => el.getAttribute('data-safe-action-clicked') === '1')
+    .catch(() => false)
+}
+
+/**
+ * @param {import('playwright').Locator} article
+ */
+async function markArticleActionClicked(article) {
+  await article.evaluate((el) => el.setAttribute('data-safe-action-clicked', '1')).catch(() => {})
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function maybeRunReactionAction(page, log, shouldHalt) {
+  const currentIndex = await currentArticleIndex(page)
+  const article = currentIndex >= 0 ? articleByVideoIndex(page, currentIndex) : null
+
+  if (await isLiveActionGuardActive(page, article)) {
+    log('ACTION_SKIPPED', 'reason=live_detected')
+    return
+  }
+
+  if (article && (await articleActionAlreadyClicked(article))) {
+    log('ACTION_SECOND_CLICK_BLOCKED', '')
+    return
+  }
+
+  const threshold = 7
+  const roll = Math.random() * 100
+  log('ACTION_ROLL', `r=${roll.toFixed(2)} threshold=${threshold}`)
+  if (roll >= threshold) return
+
+  log('ACTION_ATTEMPT', 'type=reaction')
+  if (!article || (await article.count().catch(() => 0)) === 0) {
+    log('ACTION_SKIPPED', 'reason=no_button_in_current_card')
+    return
+  }
+
+  const button = await pickReactionButtonInArticle(article)
+  if (!button) {
+    log('ACTION_SKIPPED', 'reason=no_button_in_current_card')
+    return
+  }
+
+  const ok = await button.click({ timeout: 5000 }).then(() => true, () => false)
+  if (!ok) {
+    log('ACTION_SKIPPED', 'reason=no_button_in_current_card')
+    return
+  }
+  await markArticleActionClicked(article)
+  log('ACTION_CLICKED', 'type=reaction')
+  await sleepMsHaltable(shouldHalt, randomInt(300, 700))
+}
+
+/**
+ * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
@@ -233,6 +398,9 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     log('SAFE_TIKTOK_FEED_MODE_SCROLL_ONLY', 'status=live_card_after_view_no_scroll')
     return
   }
+
+  await maybeRunReactionAction(page, log, shouldHalt)
+  await haltIfNeeded(shouldHalt)
 
   await simpleScroll(page, log, shouldHalt)
   log('ITERATION_FINAL', `iteration=${iteration} scroll=done mode=scroll_only`)
