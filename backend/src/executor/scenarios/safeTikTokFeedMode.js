@@ -8,6 +8,8 @@
 import { randomInt, sleep } from '../asyncUtils.js'
 import { ExecutorHaltError } from '../executorHalt.js'
 
+const LIKE_DIAGNOSTICS_VERSION = 'safe-like-server-verify-2026-04-28'
+
 /**
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
@@ -903,6 +905,10 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     _options && _options.iterationIndex != null && Number.isFinite(Number(_options.iterationIndex))
       ? Math.max(0, Math.floor(Number(_options.iterationIndex)))
       : '?'
+
+  if (iteration === 1) {
+    log('LIKE_DIAGNOSTICS_VERSION', LIKE_DIAGNOSTICS_VERSION)
+  }
 
   try {
     if (page.isClosed()) {
