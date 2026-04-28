@@ -1,8 +1,8 @@
 /**
  * SAFE_TIKTOK_FEED_MODE scroll-only baseline.
  *
- * One iteration watches the current FYP video, then performs one simple wheel
- * movement over the viewport center. No other feed actions are performed here.
+ * One iteration watches the current FYP video, optionally likes a non-LIVE
+ * current article, then performs the existing simple scroll.
  */
 
 import { randomInt, sleep } from '../asyncUtils.js'
@@ -120,6 +120,136 @@ async function viewCurrentVideo(page, log, shouldHalt) {
 
 /**
  * @param {import('playwright').Page} page
+ * @returns {Promise<number>}
+ */
+async function currentArticleIndex(page) {
+  return page
+    .evaluate(() => {
+      const articles = Array.from(document.querySelectorAll('article')).filter((article) =>
+        article.querySelector('video'),
+      )
+      if (articles.length === 0) return -1
+
+      const viewportCenterY = window.innerHeight / 2
+      let currentIndex = 0
+      let bestDistance = Number.POSITIVE_INFINITY
+      for (let i = 0; i < articles.length; i += 1) {
+        const rect = articles[i].getBoundingClientRect()
+        const articleCenterY = rect.top + rect.height / 2
+        const distance = Math.abs(articleCenterY - viewportCenterY)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          currentIndex = i
+        }
+      }
+      return currentIndex
+    })
+    .catch(() => -1)
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {number} index
+ */
+function articleByVideoIndex(page, index) {
+  return page.locator('article').filter({ has: page.locator('video') }).nth(index)
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {import('playwright').Locator | null} article
+ */
+async function isLiveLikeGuardActive(page, article) {
+  if (pageInLiveSurfaceUrl(page)) return true
+  if (!article) return false
+  if ((await article.count().catch(() => 0)) === 0) return false
+
+  return article
+    .evaluate((el) => {
+      const text = String(el.innerText || el.textContent || '').toLowerCase()
+      if (/\blive\b/.test(text) || text.includes('live now') || text.includes('прямой эфир')) return true
+
+      const liveAttr = Array.from(el.querySelectorAll('*')).some((node) => {
+        const attrs = ['data-e2e', 'class', 'aria-label', 'href', 'title']
+        return attrs.some((name) => String(node.getAttribute(name) || '').toLowerCase().includes('live'))
+      })
+      if (liveAttr) return true
+
+      return Boolean(
+        el.querySelector(
+          '[data-e2e*="live" i], [class*="live" i], [aria-label*="live" i], a[href*="/live" i]',
+        ),
+      )
+    })
+    .catch(() => false)
+}
+
+/**
+ * @param {import('playwright').Locator} article
+ */
+async function pickLikeButtonInArticle(article) {
+  const selectors = [
+    '[data-e2e="browse-like-icon"]',
+    '[data-e2e="like-icon"]',
+    '[data-e2e="video-player-like-icon"]',
+    'button[aria-label*="Like" i]',
+    '[aria-label*="Like" i]',
+  ]
+
+  for (const selector of selectors) {
+    const matches = article.locator(selector)
+    const count = await matches.count().catch(() => 0)
+    for (let i = 0; i < Math.min(count, 12); i += 1) {
+      const candidate = matches.nth(i)
+      if (await candidate.isVisible().catch(() => false)) return candidate
+    }
+  }
+  return null
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function maybeLikeCurrentVideo(page, log, shouldHalt) {
+  const index = await currentArticleIndex(page)
+  const article = index >= 0 ? articleByVideoIndex(page, index) : null
+  const liveGuardActive = await isLiveLikeGuardActive(page, article)
+  log('LIVE_LIKE_GUARD', `active=${liveGuardActive}`)
+  if (liveGuardActive) {
+    log('LIKE_SKIPPED', 'reason=live_detected')
+    return
+  }
+
+  const threshold = 7
+  const roll = Math.random() * 100
+  log('LIKE_ROLL', `r=${roll.toFixed(2)} threshold=${threshold}`)
+  if (roll >= threshold) return
+
+  log('LIKE_ATTEMPT', '')
+  if (!article || (await article.count().catch(() => 0)) === 0) {
+    log('LIKE_SKIPPED', 'reason=no_like_in_current_article')
+    return
+  }
+
+  const likeButton = await pickLikeButtonInArticle(article)
+  if (!likeButton) {
+    log('LIKE_SKIPPED', 'reason=no_like_in_current_article')
+    return
+  }
+
+  const clicked = await likeButton.click({ timeout: 5000 }).then(() => true).catch(() => false)
+  if (!clicked) {
+    log('LIKE_SKIPPED', 'reason=no_like_in_current_article')
+    return
+  }
+  log('LIKE_CLICKED', '')
+  await sleepMsHaltable(shouldHalt, randomInt(300, 700))
+}
+
+/**
+ * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
@@ -233,6 +363,9 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
     log('SAFE_TIKTOK_FEED_MODE_SCROLL_ONLY', 'status=live_card_after_view_no_scroll')
     return
   }
+
+  await maybeLikeCurrentVideo(page, log, shouldHalt)
+  await haltIfNeeded(shouldHalt)
 
   await simpleScroll(page, log, shouldHalt)
   log('ITERATION_FINAL', `iteration=${iteration} scroll=done mode=scroll_only`)
