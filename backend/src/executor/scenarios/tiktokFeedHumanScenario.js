@@ -326,7 +326,19 @@ async function readLikeControlState(locator) {
 
       const attrs = `${readAttrs(control)}|node=${readAttrs(node)}`
       const pressed = control?.getAttribute('aria-pressed') === 'true' || node?.getAttribute('aria-pressed') === 'true'
-      const likedAttr = /liked|active|selected|pressed/i.test(attrs)
+      const likedAttr =
+        /\b(?:is-)?liked\b/i.test(attrs) ||
+        /(?:data-state|aria-selected)=["']?(?:active|selected|true)/i.test(attrs)
+
+      const colorLooksLiked = (value) => {
+        const color = String(value || '').trim().toLowerCase()
+        if (!color || color === 'none' || color === 'transparent' || color === 'currentcolor') return false
+        if (color.includes('254, 44, 85') || color.includes('238, 29, 82') || color.includes('255, 59, 92')) {
+          return true
+        }
+        if (/^#(?:fe2c55|ee1d52|ff3b5c)$/i.test(color)) return true
+        return /\br(?:ed|ose)\b/i.test(color)
+      }
 
       let filledIcon = false
       const paths = Array.from((control || node).querySelectorAll('svg path[fill], svg [fill]')).slice(0, 12)
@@ -335,18 +347,10 @@ async function readLikeControlState(locator) {
         const computedFill = String(window.getComputedStyle(path).fill || '').trim().toLowerCase()
         const computedColor = String(window.getComputedStyle(path).color || '').trim().toLowerCase()
         const effectiveFill = fill === 'currentcolor' ? computedColor : fill || computedFill
-        if (!effectiveFill || effectiveFill === 'none' || effectiveFill === 'transparent') continue
-        if (effectiveFill === 'currentcolor') continue
-        if (
-          effectiveFill === '#fff' ||
-          effectiveFill === '#ffffff' ||
-          effectiveFill === 'white' ||
-          effectiveFill === 'rgb(255, 255, 255)'
-        ) {
-          continue
+        if (colorLooksLiked(effectiveFill)) {
+          filledIcon = true
+          break
         }
-        filledIcon = true
-        break
       }
 
       return {

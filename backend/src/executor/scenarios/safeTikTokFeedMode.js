@@ -249,11 +249,36 @@ async function readLikeStateInArticle(article, button) {
         const attrs = ['aria-pressed', 'aria-label', 'class', 'data-state', 'data-test', 'data-testid', 'data-e2e']
         return attrs.map((name) => `${name}=${String(el.getAttribute(name) || '')}`).join('|')
       }
+      const readAttrValues = (el) => {
+        if (!el) return ''
+        const attrs = ['aria-label', 'class', 'data-state', 'data-test', 'data-testid', 'data-e2e']
+        return attrs.map((name) => String(el.getAttribute(name) || '')).join('|')
+      }
+      const isActiveLikeColor = (value) => {
+        const color = String(value || '').trim().toLowerCase()
+        if (!color || color === 'none' || color === 'transparent' || color === 'currentcolor') return false
+        if (color === '#fe2c55' || color === '#ff0050') return true
+        const hex = /^#([0-9a-f]{6})$/i.exec(color)
+        if (hex) {
+          const n = Number.parseInt(hex[1], 16)
+          const r = (n >> 16) & 255
+          const g = (n >> 8) & 255
+          const b = n & 255
+          return r >= 200 && g <= 100 && b >= 70 && b <= 150
+        }
+        const rgb = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(color)
+        if (!rgb) return false
+        const r = Number(rgb[1])
+        const g = Number(rgb[2])
+        const b = Number(rgb[3])
+        return r >= 200 && g <= 100 && b >= 70 && b <= 150
+      }
 
       const buttonText = String(btn?.textContent || '').trim()
       const buttonAttrs = readAttrs(btn)
+      const buttonAttrValues = readAttrValues(btn)
       const pressed = btn?.getAttribute('aria-pressed') === 'true'
-      const likedAttr = /liked|active|selected|pressed/i.test(buttonAttrs)
+      const likedAttr = /liked|active|selected/i.test(buttonAttrValues)
 
       let filledIcon = false
       const paths = Array.from(btn.querySelectorAll('svg path[fill], svg [fill]')).slice(0, 12)
@@ -262,16 +287,7 @@ async function readLikeStateInArticle(article, button) {
         const computedFill = String(window.getComputedStyle(path).fill || '').trim().toLowerCase()
         const computedColor = String(window.getComputedStyle(path).color || '').trim().toLowerCase()
         const effectiveFill = fill === 'currentcolor' ? computedColor : fill || computedFill
-        if (!effectiveFill || effectiveFill === 'none' || effectiveFill === 'transparent') continue
-        if (effectiveFill === 'currentcolor') continue
-        if (
-          effectiveFill === '#fff' ||
-          effectiveFill === '#ffffff' ||
-          effectiveFill === 'white' ||
-          effectiveFill === 'rgb(255, 255, 255)'
-        ) {
-          continue
-        }
+        if (!isActiveLikeColor(effectiveFill)) continue
         filledIcon = true
         break
       }
