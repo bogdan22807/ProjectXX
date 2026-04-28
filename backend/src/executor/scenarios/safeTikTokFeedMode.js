@@ -238,6 +238,80 @@ async function markArticleActionClicked(article) {
 }
 
 /**
+ * @param {import('playwright').Locator} article
+ * @param {import('playwright').Locator} button
+ */
+async function readLikeStateInArticle(article, button) {
+  const buttonState = await button
+    .evaluate((btn) => {
+      const readAttrs = (el) => {
+        if (!el) return ''
+        const attrs = ['aria-pressed', 'aria-label', 'class', 'data-state', 'data-test', 'data-testid', 'data-e2e']
+        return attrs.map((name) => `${name}=${String(el.getAttribute(name) || '')}`).join('|')
+      }
+
+      const buttonText = String(btn?.textContent || '').trim()
+      const buttonAttrs = readAttrs(btn)
+      const pressed = btn?.getAttribute('aria-pressed') === 'true'
+      const likedAttr = /liked|active|selected|pressed/i.test(buttonAttrs)
+
+      let filledIcon = false
+      const paths = Array.from(btn.querySelectorAll('svg path[fill], svg [fill]')).slice(0, 12)
+      for (const path of paths) {
+        const fill = String(path.getAttribute('fill') || '').trim().toLowerCase()
+        if (!fill || fill === 'none' || fill === 'transparent' || fill === 'currentcolor') continue
+        if (fill === '#fff' || fill === '#ffffff' || fill === 'white') continue
+        filledIcon = true
+        break
+      }
+
+      return {
+        pressed,
+        likedAttr,
+        filledIcon,
+        signature: `${buttonText}|${buttonAttrs}`.slice(0, 260),
+      }
+    })
+    .catch(() => ({
+      pressed: false,
+      likedAttr: false,
+      filledIcon: false,
+      signature: '',
+    }))
+
+  const cardSignature = await article
+    .evaluate((card) => {
+      const activeBits = Array.from(
+        card.querySelectorAll(
+          '[aria-pressed="true"], [data-state*="active" i], [data-state*="selected" i], [class*="active" i], [class*="liked" i], [data-test*="liked" i], [data-testid*="liked" i], [data-e2e*="liked" i]',
+        ),
+      )
+        .slice(0, 8)
+        .map((el) => String(el.textContent || el.getAttribute('aria-label') || el.className || '').trim())
+        .join('|')
+      return activeBits.slice(0, 260)
+    })
+    .catch(() => '')
+
+  return {
+    ...buttonState,
+    signature: `${buttonState.signature}|card=${cardSignature}`.slice(0, 520),
+  }
+}
+
+/**
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} before
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} after
+ */
+function likeConfirmed(before, after) {
+  if (after.pressed || after.likedAttr || after.filledIcon) return { ok: true, reason: 'state_active' }
+  if (before.signature && after.signature && before.signature !== after.signature) {
+    return { ok: true, reason: 'state_changed' }
+  }
+  return { ok: false, reason: 'state_not_active' }
+}
+
+/**
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
@@ -247,40 +321,52 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
   const article = currentIndex >= 0 ? articleByVideoIndex(page, currentIndex) : null
 
   if (await isLiveActionGuardActive(page, article)) {
-    log('ACTION_SKIPPED', 'reason=live_detected')
+    log('LIKE_SKIPPED', 'reason=live_detected')
     return
   }
 
   if (article && (await articleActionAlreadyClicked(article))) {
-    log('ACTION_SECOND_CLICK_BLOCKED', '')
+    log('LIKE_SECOND_CLICK_BLOCKED', '')
     return
   }
 
   const threshold = 25
   const roll = Math.random() * 100
-  log('ACTION_ROLL', `r=${roll.toFixed(2)} threshold=${threshold}`)
+  log('LIKE_ROLL', `r=${roll.toFixed(2)} threshold=${threshold}`)
   if (roll >= threshold) return
 
-  log('ACTION_ATTEMPT', 'type=reaction')
+  log('LIKE_ATTEMPT', '')
   if (!article || (await article.count().catch(() => 0)) === 0) {
-    log('ACTION_SKIPPED', 'reason=no_button_in_current_card')
+    log('LIKE_SKIPPED', 'reason=no_like_in_current_article')
     return
   }
 
   const button = await pickReactionButtonInArticle(article)
   if (!button) {
-    log('ACTION_SKIPPED', 'reason=no_button_in_current_card')
+    log('LIKE_SKIPPED', 'reason=no_like_in_current_article')
     return
   }
 
+  const beforeState = await readLikeStateInArticle(article, button)
   const ok = await button.click({ timeout: 5000 }).then(() => true, () => false)
   if (!ok) {
-    log('ACTION_SKIPPED', 'reason=no_button_in_current_card')
+    log('LIKE_SKIPPED', 'reason=no_like_in_current_article')
     return
   }
   await markArticleActionClicked(article)
-  log('ACTION_CLICKED', 'type=reaction')
-  await sleepMsHaltable(shouldHalt, randomInt(300, 700))
+  log('LIKE_CLICKED', '')
+
+  const waitMs = randomInt(2000, 3000)
+  log('LIKE_WAIT_AFTER_CLICK', `ms=${waitMs}`)
+  await sleepMsHaltable(shouldHalt, waitMs)
+
+  const afterState = await readLikeStateInArticle(article, button)
+  const confirmed = likeConfirmed(beforeState, afterState)
+  if (confirmed.ok) {
+    log('LIKE_CONFIRMED', '')
+  } else {
+    log('LIKE_NOT_CONFIRMED', `reason=${confirmed.reason}`)
+  }
 }
 
 /**
