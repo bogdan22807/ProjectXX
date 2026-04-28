@@ -434,29 +434,26 @@ export async function runPlaywrightTestRun(accountId, options = {}) {
     const rawCookies = String(runConfig.cookies ?? '').trim()
     /** @type {{ cookies: import('playwright').Cookie[]; invalid?: string }} */
     let parsed = parseCookiesForUrlStrict(rawCookies, pageUrl)
-    /** For fox: do not pass invalid cookie string into addCookies — profile wins. */
+    /** For Fox/TikTok: persistent disk profile is the auth source. Do not overlay DB cookies. */
     let foxLaunchCookies = rawCookies || undefined
     let foxSkipCookies = false
-    if (parsed.invalid) {
-      if (foxProfileDiskAuth) {
+    if (foxProfileDiskAuth) {
+      if (rawCookies !== '') {
         logStep(
           accountId,
           'FOX_PROFILE_USED',
-          `cookie_string_invalid_ignored profile_priority err=${String(parsed.invalid).slice(0, 200)}`,
+          `cookie_string_ignored profile_priority len=${rawCookies.length}${parsed.invalid ? ` err=${String(parsed.invalid).slice(0, 200)}` : ''}`,
         )
-        parsed = { cookies: [] }
-        foxLaunchCookies = undefined
-        foxSkipCookies = true
-      } else {
+      }
+      parsed = { cookies: [] }
+      foxLaunchCookies = undefined
+      foxSkipCookies = true
+    } else if (parsed.invalid) {
         failRun(accountId, state, 'cookies invalid', parsed.invalid, {
           err: new Error(String(parsed.invalid)),
           runId,
         })
         return
-      }
-    } else if (foxProfileDiskAuth && rawCookies === '') {
-      foxLaunchCookies = undefined
-      foxSkipCookies = true
     }
 
     let browser
