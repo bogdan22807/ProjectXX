@@ -164,6 +164,7 @@ function startLikeNetworkProbe(page, log) {
   let matched = 0
   let invalidCsrf = false
   let acceptedLike = false
+  let lastBodySummary = ''
 
   const responseHandler = (response) => {
     const task = (async () => {
@@ -179,6 +180,9 @@ function startLikeNetworkProbe(page, log) {
         }
         if (/status_code=0\b/i.test(bodySummary) && /(?:is_digg|digg_status)=1\b/i.test(bodySummary)) {
           acceptedLike = true
+        }
+        if (bodySummary) {
+          lastBodySummary = bodySummary.slice(0, 240)
         }
         const detail = `${request.method()} ${response.status()} ${url.pathname}${query ? ` ${query}` : ''}${
           bodySummary ? ` body=${bodySummary}` : ''
@@ -221,7 +225,39 @@ function startLikeNetworkProbe(page, log) {
       await Promise.allSettled(Array.from(pending))
     }
     if (matched === 0) log('LIKE_NETWORK_RESPONSE', 'none_matched')
-    return { invalidCsrf, acceptedLike }
+    return { invalidCsrf, acceptedLike, matched, lastBodySummary }
+  }
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {string} phase
+ */
+async function logTikTokCsrfCookieState(page, log, phase) {
+  try {
+    log('TIKTOK_CSRF_COOKIE_STATE', `phase=${phase} ${await readTikTokCsrfCookieSummary(page)}`)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    log('TIKTOK_CSRF_COOKIE_STATE', `phase=${phase} read_failed ${msg.slice(0, 160)}`)
+  }
+}
+
+/**
+ * @param {import('playwright').Page} page
+ */
+async function readTikTokCsrfCookieSummary(page) {
+  try {
+    const cookies = await page.context().cookies(['https://www.tiktok.com', 'https://www.tiktok.com/foryou'])
+    const csrfCookies = cookies.filter((cookie) => /csrf/i.test(cookie.name))
+    if (csrfCookies.length === 0) return 'count=0'
+    return `count=${csrfCookies.length} ${csrfCookies
+      .map((cookie) => `${cookie.name}:len=${String(cookie.value || '').length}`)
+      .join(',')
+      .slice(0, 220)}`
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    return `read_failed ${msg.slice(0, 160)}`
   }
 }
 
@@ -233,6 +269,7 @@ function startLikeNetworkProbe(page, log) {
 async function refreshTikTokCsrfSession(page, log, shouldHalt) {
   log('TIKTOK_CSRF_REFRESH_START', 'clearing csrf cookies and reloading /foryou')
   try {
+    await logTikTokCsrfCookieState(page, log, 'before_refresh')
     const context = page.context()
     const cookies = await context.cookies(['https://www.tiktok.com', 'https://www.tiktok.com/foryou']).catch(() => [])
     const csrfNames = Array.from(new Set(cookies.map((cookie) => cookie.name).filter((name) => /csrf/i.test(name))))
@@ -248,6 +285,7 @@ async function refreshTikTokCsrfSession(page, log, shouldHalt) {
     await haltIfNeeded(shouldHalt)
     await page.goto('https://www.tiktok.com/foryou', { waitUntil: 'domcontentloaded', timeout: 30_000 })
     await sleepMsHaltable(shouldHalt, randomInt(2500, 4500))
+    await logTikTokCsrfCookieState(page, log, 'after_refresh')
     log('TIKTOK_CSRF_REFRESH_DONE', 'reloaded /foryou after csrf reset')
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -572,8 +610,10 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
     return
   }
 
+  const csrfBefore = await readTikTokCsrfCookieSummary(page)
+  log('LIKE_CSRF_STATE_BEFORE', csrfBefore)
   const stopNetworkProbe = startLikeNetworkProbe(page, log)
-  let probeResult = { invalidCsrf: false, acceptedLike: false }
+  let probeResult = { invalidCsrf: false, acceptedLike: false, matched: 0, lastBodySummary: '' }
   let confirmed = null
   try {
     const ok = await button.click({ timeout: 5000 }).then(() => true, () => false)
@@ -598,19 +638,35 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
   } finally {
     probeResult = await stopNetworkProbe()
   }
+  log(
+    'LIKE_NETWORK_SUMMARY',
+    `matched=${probeResult.matched} accepted=${probeResult.acceptedLike ? 1 : 0} invalidCsrf=${probeResult.invalidCsrf ? 1 : 0} last=${probeResult.lastBodySummary || 'none'}`.slice(
+      0,
+      500,
+    ),
+  )
   if (probeResult.invalidCsrf) {
     log('LIKE_NOT_CONFIRMED', 'reason=invalid_csrf_token')
+    log('LIKE_RESULT', 'outcome=invalid_csrf action=refresh_session')
     await refreshTikTokCsrfSession(page, log, shouldHalt)
     return
   }
   if (probeResult.acceptedLike) {
     log('LIKE_CONFIRMED', 'reason=network_accepted status_code=0 is_digg=1')
+    log('LIKE_RESULT', 'outcome=confirmed source=network status_code=0 is_digg=1')
     return
   }
   if (confirmed?.ok) {
     log('LIKE_CONFIRMED', `reason=${confirmed.reason}`)
+    log('LIKE_RESULT', `outcome=confirmed source=dom reason=${confirmed.reason}`.slice(0, 500))
   } else {
     log('LIKE_NOT_CONFIRMED', `reason=${confirmed?.reason || 'state_not_active'}`)
+    log(
+      'LIKE_RESULT',
+      `outcome=not_confirmed source=${probeResult.matched > 0 ? 'network_without_accept' : 'dom_no_network'} reason=${
+        confirmed?.reason || 'state_not_active'
+      }`.slice(0, 500),
+    )
   }
 }
 
