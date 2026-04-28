@@ -259,8 +259,19 @@ async function readLikeStateInArticle(article, button) {
       const paths = Array.from(btn.querySelectorAll('svg path[fill], svg [fill]')).slice(0, 12)
       for (const path of paths) {
         const fill = String(path.getAttribute('fill') || '').trim().toLowerCase()
-        if (!fill || fill === 'none' || fill === 'transparent' || fill === 'currentcolor') continue
-        if (fill === '#fff' || fill === '#ffffff' || fill === 'white') continue
+        const computedFill = String(window.getComputedStyle(path).fill || '').trim().toLowerCase()
+        const computedColor = String(window.getComputedStyle(path).color || '').trim().toLowerCase()
+        const effectiveFill = fill === 'currentcolor' ? computedColor : fill || computedFill
+        if (!effectiveFill || effectiveFill === 'none' || effectiveFill === 'transparent') continue
+        if (effectiveFill === 'currentcolor') continue
+        if (
+          effectiveFill === '#fff' ||
+          effectiveFill === '#ffffff' ||
+          effectiveFill === 'white' ||
+          effectiveFill === 'rgb(255, 255, 255)'
+        ) {
+          continue
+        }
         filledIcon = true
         break
       }
@@ -300,13 +311,22 @@ async function readLikeStateInArticle(article, button) {
 }
 
 /**
- * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} before
- * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} after
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} state
  */
-function likeConfirmed(before, after) {
-  if (after.pressed || after.likedAttr || after.filledIcon) return { ok: true, reason: 'state_active' }
-  if (before.signature && after.signature && before.signature !== after.signature) {
-    return { ok: true, reason: 'state_changed' }
+function likeStateActive(state) {
+  return Boolean(state?.pressed || state?.likedAttr || state?.filledIcon)
+}
+
+/**
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} before
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} early
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} final
+ */
+function likeConfirmed(before, early, final) {
+  if (likeStateActive(final)) return { ok: true, reason: 'state_active_after_verify' }
+  if (likeStateActive(early)) return { ok: false, reason: 'reverted_after_tiktok_verify' }
+  if (before.signature && final.signature && before.signature !== final.signature) {
+    return { ok: false, reason: 'changed_without_active_state' }
   }
   return { ok: false, reason: 'state_not_active' }
 }
@@ -348,6 +368,12 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
   }
 
   const beforeState = await readLikeStateInArticle(article, button)
+  if (likeStateActive(beforeState)) {
+    log('LIKE_SKIPPED', 'reason=already_liked')
+    await markArticleActionClicked(article)
+    return
+  }
+
   const ok = await button.click({ timeout: 5000 }).then(() => true, () => false)
   if (!ok) {
     log('LIKE_SKIPPED', 'reason=no_like_in_current_article')
@@ -356,14 +382,19 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
   await markArticleActionClicked(article)
   log('LIKE_CLICKED', '')
 
-  const waitMs = randomInt(2000, 3000)
-  log('LIKE_WAIT_AFTER_CLICK', `ms=${waitMs}`)
-  await sleepMsHaltable(shouldHalt, waitMs)
+  const earlyWaitMs = randomInt(900, 1400)
+  log('LIKE_WAIT_AFTER_CLICK', `ms=${earlyWaitMs}`)
+  await sleepMsHaltable(shouldHalt, earlyWaitMs)
+  const earlyState = await readLikeStateInArticle(article, button)
+
+  const verifyWaitMs = randomInt(4500, 6500)
+  log('LIKE_VERIFY_WAIT', `ms=${verifyWaitMs}`)
+  await sleepMsHaltable(shouldHalt, verifyWaitMs)
 
   const afterState = await readLikeStateInArticle(article, button)
-  const confirmed = likeConfirmed(beforeState, afterState)
+  const confirmed = likeConfirmed(beforeState, earlyState, afterState)
   if (confirmed.ok) {
-    log('LIKE_CONFIRMED', '')
+    log('LIKE_CONFIRMED', `reason=${confirmed.reason}`)
   } else {
     log('LIKE_NOT_CONFIRMED', `reason=${confirmed.reason}`)
   }
