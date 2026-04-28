@@ -312,6 +312,71 @@ async function sleepMsHaltable(shouldHalt, ms) {
 }
 
 /**
+ * @param {import('playwright').Locator} locator
+ */
+async function readLikeControlState(locator) {
+  return locator
+    .evaluate((node) => {
+      const control = node?.closest?.('button,[role="button"]') || node
+      const readAttrs = (el) => {
+        if (!el) return ''
+        const attrs = ['aria-pressed', 'aria-label', 'class', 'data-state', 'data-test', 'data-testid', 'data-e2e']
+        return attrs.map((name) => `${name}=${String(el.getAttribute(name) || '')}`).join('|')
+      }
+
+      const attrs = `${readAttrs(control)}|node=${readAttrs(node)}`
+      const pressed = control?.getAttribute('aria-pressed') === 'true' || node?.getAttribute('aria-pressed') === 'true'
+      const likedAttr = /liked|active|selected|pressed/i.test(attrs)
+
+      let filledIcon = false
+      const paths = Array.from((control || node).querySelectorAll('svg path[fill], svg [fill]')).slice(0, 12)
+      for (const path of paths) {
+        const fill = String(path.getAttribute('fill') || '').trim().toLowerCase()
+        const computedFill = String(window.getComputedStyle(path).fill || '').trim().toLowerCase()
+        const computedColor = String(window.getComputedStyle(path).color || '').trim().toLowerCase()
+        const effectiveFill = fill === 'currentcolor' ? computedColor : fill || computedFill
+        if (!effectiveFill || effectiveFill === 'none' || effectiveFill === 'transparent') continue
+        if (effectiveFill === 'currentcolor') continue
+        if (
+          effectiveFill === '#fff' ||
+          effectiveFill === '#ffffff' ||
+          effectiveFill === 'white' ||
+          effectiveFill === 'rgb(255, 255, 255)'
+        ) {
+          continue
+        }
+        filledIcon = true
+        break
+      }
+
+      return {
+        pressed,
+        likedAttr,
+        filledIcon,
+        signature: `${String(control?.textContent || node?.textContent || '').trim()}|${attrs}`.slice(0, 520),
+      }
+    })
+    .catch(() => ({ pressed: false, likedAttr: false, filledIcon: false, signature: '' }))
+}
+
+/**
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} state
+ */
+function likeControlActive(state) {
+  return Boolean(state?.pressed || state?.likedAttr || state?.filledIcon)
+}
+
+/**
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} early
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} final
+ */
+function persistedLikeResult(early, final) {
+  if (likeControlActive(final)) return { ok: true, reason: 'state_active_after_verify' }
+  if (likeControlActive(early)) return { ok: false, reason: 'reverted_after_tiktok_verify' }
+  return { ok: false, reason: 'state_not_active' }
+}
+
+/**
  * Random wait in [minMs, maxMs] that stops feed actions as soon as a captcha overlay is detected,
  * runs `waitIfChallengeOrLogin` (wait until solved, then 3–5s), then exits (remaining watch time skipped).
  * @param {import('playwright').Page} page
@@ -692,19 +757,42 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     ]
     try {
       let clicked = false
+      let clickedControl = null
       for (const sel of likeSelectors) {
         const loc = page.locator(sel).first()
         if ((await loc.count()) === 0) continue
         await loc.scrollIntoViewIfNeeded().catch(() => {})
         const vis = await loc.isVisible().catch(() => false)
         if (!vis) continue
+        const beforeState = await readLikeControlState(loc)
+        if (likeControlActive(beforeState)) {
+          log('LIKE_SKIPPED', `already liked ${sel}`)
+          clicked = true
+          clickedControl = null
+          break
+        }
         await loc.click({ timeout: 4500 })
         clicked = true
+        clickedControl = loc
         log('LIKE_VIDEO', `like ${sel}`)
         break
       }
       if (!clicked) {
         log('LIKE_SKIPPED', 'no visible like control')
+      } else if (clickedControl) {
+        const earlyWaitMs = randomInt(900, 1400)
+        await sleepMsHaltable(shouldHalt, earlyWaitMs)
+        const earlyState = await readLikeControlState(clickedControl)
+        const verifyWaitMs = randomInt(4500, 6500)
+        log('LIKE_VERIFY_WAIT', `ms=${verifyWaitMs}`)
+        await sleepMsHaltable(shouldHalt, verifyWaitMs)
+        const finalState = await readLikeControlState(clickedControl)
+        const result = persistedLikeResult(earlyState, finalState)
+        if (result.ok) {
+          log('LIKE_CONFIRMED', `reason=${result.reason}`)
+        } else {
+          log('LIKE_NOT_CONFIRMED', `reason=${result.reason}`)
+        }
       } else {
         await interruptibleRandomDelay(800, 2200, shouldHalt)
       }
