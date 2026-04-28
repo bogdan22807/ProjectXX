@@ -259,14 +259,6 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
     const serverPid = typeof camPid === 'number' && Number.isFinite(camPid) ? camPid : null
     wrapBrowserCloseForFoxServer(browser, serverPid)
 
-    for (const c of browser.contexts()) {
-      try {
-        await c.close()
-      } catch {
-        /* ignore */
-      }
-    }
-
     /** @type {import('playwright').BrowserContextOptions} */
     const foxContextOpts = {
       ignoreHTTPSErrors: process.env.PLAYWRIGHT_IGNORE_HTTPS_ERRORS === '1',
@@ -274,7 +266,14 @@ export async function launchFoxBrowserSession(config, ctx = {}) {
       deviceScaleFactor: 1,
       screen: { width: outerW, height: outerH },
     }
-    const context = await browser.newContext(foxContextOpts)
+    const existingContexts = browser.contexts()
+    const context = existingContexts[0] ?? (await browser.newContext(foxContextOpts))
+    phase(
+      'fox_context_mode',
+      existingContexts.length > 0
+        ? `using_existing_persistent_context count=${existingContexts.length}`
+        : 'created_new_context_no_existing_context',
+    )
 
     if (launchProxy) {
       phase('fox_proxy_connected', 'proxy active on Camoufox launch')
