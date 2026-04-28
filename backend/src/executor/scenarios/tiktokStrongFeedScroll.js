@@ -1,6 +1,6 @@
 /**
  * Legacy TikTok FYP scroll for **human feed** path only (`tiktokFeedHumanScenario.js`).
- * SAFE_TIKTOK_FEED_MODE must NOT import this file — use `safeTikTokOneVideoScroll.js` only.
+ * SAFE_TIKTOK_FEED_MODE must NOT import this file.
  */
 
 import { randomInt, sleep } from '../asyncUtils.js'
