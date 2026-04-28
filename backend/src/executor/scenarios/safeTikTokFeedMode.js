@@ -165,6 +165,7 @@ function startLikeNetworkProbe(page, log) {
   let invalidCsrf = false
   let acceptedLike = false
   let revertedLike = false
+  let acceptedAwemeId = ''
   let lastBodySummary = ''
 
   const responseHandler = (response) => {
@@ -181,6 +182,7 @@ function startLikeNetworkProbe(page, log) {
         }
         if (/status_code=0\b/i.test(bodySummary) && /(?:is_digg|digg_status)=1\b/i.test(bodySummary)) {
           acceptedLike = true
+          acceptedAwemeId = url.searchParams.get('aweme_id') || url.searchParams.get('item_id') || acceptedAwemeId
         }
         if (
           (url.searchParams.get('type') === '0' && response.status() < 400) ||
@@ -232,8 +234,96 @@ function startLikeNetworkProbe(page, log) {
       await Promise.allSettled(Array.from(pending))
     }
     if (matched === 0) log('LIKE_NETWORK_RESPONSE', 'none_matched')
-    return { invalidCsrf, acceptedLike, revertedLike, matched, lastBodySummary }
+    return { invalidCsrf, acceptedLike, revertedLike, acceptedAwemeId, matched, lastBodySummary }
   }
+}
+
+/**
+ * @param {unknown} json
+ */
+function summarizeItemDetailDiggState(json) {
+  if (!json || typeof json !== 'object') return 'invalid_json'
+  const root = /** @type {Record<string, unknown>} */ (json)
+  const itemInfo = root.itemInfo && typeof root.itemInfo === 'object' ? /** @type {Record<string, unknown>} */ (root.itemInfo) : null
+  const item =
+    itemInfo?.itemStruct && typeof itemInfo.itemStruct === 'object'
+      ? /** @type {Record<string, unknown>} */ (itemInfo.itemStruct)
+      : null
+  const authorStats = item?.stats && typeof item.stats === 'object' ? /** @type {Record<string, unknown>} */ (item.stats) : null
+  const candidates = [
+    ['statusCode', root.statusCode],
+    ['status_code', root.status_code],
+    ['statusMsg', root.statusMsg],
+    ['status_msg', root.status_msg],
+    ['item.digged', item?.digged],
+    ['item.is_digg', item?.is_digg],
+    ['item.digg_status', item?.digg_status],
+    ['item.diggStatus', item?.diggStatus],
+    ['item.liked', item?.liked],
+    ['item.isLiked', item?.isLiked],
+    ['stats.diggCount', authorStats?.diggCount],
+  ]
+  const parts = []
+  for (const [key, value] of candidates) {
+    const scalar = safeJsonScalar(value)
+    if (scalar !== '') parts.push(`${key}=${scalar}`)
+  }
+  return parts.length > 0 ? parts.join(' ') : 'no_digg_fields'
+}
+
+/**
+ * @param {string} summary
+ */
+function itemDetailShowsLiked(summary) {
+  return /(?:item\.(?:digged|is_digg|digg_status|diggStatus|liked|isLiked))=(?:1|true)\b/i.test(summary)
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {string} awemeId
+ * @param {(action: string, details?: string) => void} log
+ */
+async function verifyTikTokItemDetailLikeState(page, awemeId, log) {
+  const id = String(awemeId || '').trim()
+  if (!id) {
+    log('LIKE_SERVER_VERIFY_SKIPPED', 'missing_aweme_id')
+    return { checked: false, liked: false, summary: 'missing_aweme_id' }
+  }
+
+  const result = await page
+    .evaluate(async (itemId) => {
+      const url = new URL('/api/item/detail/', window.location.origin)
+      url.searchParams.set('itemId', itemId)
+      url.searchParams.set('aid', '1988')
+      url.searchParams.set('app_name', 'tiktok_web')
+      const response = await fetch(url.toString(), {
+        credentials: 'include',
+        headers: {
+          accept: 'application/json, text/plain, */*',
+        },
+      })
+      const text = await response.text()
+      return {
+        ok: response.ok,
+        status: response.status,
+        body: text.slice(0, 12000),
+      }
+    }, id)
+    .catch((err) => ({
+      ok: false,
+      status: 0,
+      body: `fetch_failed ${err instanceof Error ? err.message : String(err)}`,
+    }))
+
+  let summary = ''
+  try {
+    summary = summarizeItemDetailDiggState(JSON.parse(result.body))
+  } catch {
+    summary = `body=${String(result.body || '').replace(/\s+/g, ' ').slice(0, 220)}`
+  }
+  const liked = result.ok && itemDetailShowsLiked(summary)
+  log('LIKE_SERVER_VERIFY', `aweme_id=${id} http=${result.status} liked=${liked ? 1 : 0} ${summary}`.slice(0, 500))
+  return { checked: true, liked, summary }
 }
 
 /**
@@ -718,8 +808,17 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
   }
   if (probeResult.acceptedLike) {
     await observeAcceptedLikePersistence(page, article, button, log, shouldHalt)
-    log('LIKE_CONFIRMED', 'reason=network_accepted status_code=0 is_digg=1')
-    log('LIKE_RESULT', 'outcome=confirmed source=network status_code=0 is_digg=1')
+    const serverVerify = await verifyTikTokItemDetailLikeState(page, probeResult.acceptedAwemeId, log)
+    if (serverVerify.checked && serverVerify.liked) {
+      log('LIKE_CONFIRMED', 'reason=server_item_detail_liked')
+      log('LIKE_RESULT', 'outcome=confirmed source=server_item_detail')
+    } else if (serverVerify.checked) {
+      log('LIKE_NOT_CONFIRMED', 'reason=server_item_detail_not_liked')
+      log('LIKE_RESULT', `outcome=not_confirmed source=server_item_detail summary=${serverVerify.summary}`.slice(0, 500))
+    } else {
+      log('LIKE_CONFIRMED', 'reason=network_accepted status_code=0 is_digg=1 server_verify_unavailable')
+      log('LIKE_RESULT', 'outcome=confirmed source=network_commit_only server_verify=unavailable')
+    }
     return
   }
   if (confirmed?.ok) {
