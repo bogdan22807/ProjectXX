@@ -907,11 +907,11 @@ export async function runSafeTikTokFeedIteration(page, log, shouldHalt, _options
   try {
     if (page.isClosed()) {
       log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
-      return
+      throw new ExecutorHaltError('stop')
     }
   } catch {
     log('PAGE_CLOSED_DURING_STOP', 'iteration_start')
-    return
+    throw new ExecutorHaltError('stop')
   }
 
   if (await detectChallengeBlocking(page)) {
