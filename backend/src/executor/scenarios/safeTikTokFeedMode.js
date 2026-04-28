@@ -124,31 +124,50 @@ async function viewCurrentVideo(page, log, shouldHalt) {
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
 async function simpleScroll(page, log, shouldHalt) {
-  log('SIMPLE_SCROLL_START', '')
-  try {
-    await page.bringToFront()
-  } catch {
-    /* ignore */
+  const result = await page
+    .evaluate(() => {
+      const articles = Array.from(document.querySelectorAll('article')).filter((article) =>
+        article.querySelector('video'),
+      )
+      if (articles.length === 0) return { currentIndex: -1, nextIndex: -1, scrolled: false }
+
+      const viewportCenterY = window.innerHeight / 2
+      let currentIndex = 0
+      let bestDistance = Number.POSITIVE_INFINITY
+      for (let i = 0; i < articles.length; i += 1) {
+        const rect = articles[i].getBoundingClientRect()
+        const articleCenterY = rect.top + rect.height / 2
+        const distance = Math.abs(articleCenterY - viewportCenterY)
+        if (distance < bestDistance) {
+          bestDistance = distance
+          currentIndex = i
+        }
+      }
+
+      const nextIndex = currentIndex + 1
+      const nextArticle = articles[nextIndex]
+      if (!nextArticle) return { currentIndex, nextIndex: -1, scrolled: false }
+
+      nextArticle.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      return { currentIndex, nextIndex, scrolled: true }
+    })
+    .catch(() => ({ currentIndex: -1, nextIndex: -1, scrolled: false }))
+
+  log('SIMPLE_SCROLL_CURRENT_ARTICLE', `index=${result.currentIndex}`)
+  log('SIMPLE_SCROLL_NEXT_ARTICLE', `index=${result.nextIndex}`)
+
+  if (result.scrolled) {
+    log('SIMPLE_SCROLL_SCROLL_INTO_VIEW', '')
+    await sleepMsHaltable(shouldHalt, randomInt(2000, 3000))
+  } else {
+    const viewport = page.viewportSize()
+    const width = viewport && Number.isFinite(viewport.width) ? viewport.width : 1280
+    const height = viewport && Number.isFinite(viewport.height) ? viewport.height : 720
+    await page.mouse.move(Math.floor(width / 2), Math.floor(height / 2))
+    log('SIMPLE_SCROLL_FALLBACK_WHEEL', 'dy=1800')
+    await page.mouse.wheel(0, 1800)
+    await sleepMsHaltable(shouldHalt, 2000)
   }
-
-  const viewport = page.viewportSize()
-  const width = viewport && Number.isFinite(viewport.width) ? viewport.width : 1280
-  const height = viewport && Number.isFinite(viewport.height) ? viewport.height : 720
-  const x = Math.floor(width / 2)
-  const y = Math.floor(height / 2)
-
-  await page.mouse.move(x, y)
-  await page.mouse.click(x, y)
-  log('SIMPLE_SCROLL_CLICK_CENTER', `x=${x} y=${y}`)
-  await sleepMsHaltable(shouldHalt, randomInt(300, 500))
-
-  const dy = randomInt(2800, 3200)
-  log('SIMPLE_SCROLL_WHEEL', `dy=${dy}`)
-  await page.mouse.wheel(0, dy)
-
-  const settleMs = randomInt(3500, 4500)
-  log('SIMPLE_SCROLL_SETTLE_WAIT', `ms=${settleMs}`)
-  await sleepMsHaltable(shouldHalt, settleMs)
 
   log('SIMPLE_SCROLL_DONE', '')
 }
