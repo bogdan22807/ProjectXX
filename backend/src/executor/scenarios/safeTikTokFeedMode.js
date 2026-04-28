@@ -163,6 +163,7 @@ function startLikeNetworkProbe(page, log) {
   const pending = new Set()
   let matched = 0
   let invalidCsrf = false
+  let acceptedLike = false
 
   const responseHandler = (response) => {
     const task = (async () => {
@@ -175,6 +176,9 @@ function startLikeNetworkProbe(page, log) {
         const bodySummary = await summarizeLikeResponseBody(response)
         if (/status_code=10402|invalid csrf token/i.test(bodySummary)) {
           invalidCsrf = true
+        }
+        if (/status_code=0\b/i.test(bodySummary) && /(?:is_digg|digg_status)=1\b/i.test(bodySummary)) {
+          acceptedLike = true
         }
         const detail = `${request.method()} ${response.status()} ${url.pathname}${query ? ` ${query}` : ''}${
           bodySummary ? ` body=${bodySummary}` : ''
@@ -217,7 +221,7 @@ function startLikeNetworkProbe(page, log) {
       await Promise.allSettled(Array.from(pending))
     }
     if (matched === 0) log('LIKE_NETWORK_RESPONSE', 'none_matched')
-    return { invalidCsrf }
+    return { invalidCsrf, acceptedLike }
   }
 }
 
@@ -569,7 +573,8 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
   }
 
   const stopNetworkProbe = startLikeNetworkProbe(page, log)
-  let probeResult = { invalidCsrf: false }
+  let probeResult = { invalidCsrf: false, acceptedLike: false }
+  let confirmed = null
   try {
     const ok = await button.click({ timeout: 5000 }).then(() => true, () => false)
     if (!ok) {
@@ -589,18 +594,23 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
     await sleepMsHaltable(shouldHalt, verifyWaitMs)
 
     const afterState = await readLikeStateInArticle(article, button)
-    const confirmed = likeConfirmed(beforeState, earlyState, afterState)
-    if (confirmed.ok) {
-      log('LIKE_CONFIRMED', `reason=${confirmed.reason}`)
-    } else {
-      log('LIKE_NOT_CONFIRMED', `reason=${confirmed.reason}`)
-    }
-  }
-  finally {
+    confirmed = likeConfirmed(beforeState, earlyState, afterState)
+  } finally {
     probeResult = await stopNetworkProbe()
   }
   if (probeResult.invalidCsrf) {
+    log('LIKE_NOT_CONFIRMED', 'reason=invalid_csrf_token')
     await refreshTikTokCsrfSession(page, log, shouldHalt)
+    return
+  }
+  if (probeResult.acceptedLike) {
+    log('LIKE_CONFIRMED', 'reason=network_accepted status_code=0 is_digg=1')
+    return
+  }
+  if (confirmed?.ok) {
+    log('LIKE_CONFIRMED', `reason=${confirmed.reason}`)
+  } else {
+    log('LIKE_NOT_CONFIRMED', `reason=${confirmed?.reason || 'state_not_active'}`)
   }
 }
 
