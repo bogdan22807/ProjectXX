@@ -162,6 +162,7 @@ function startLikeNetworkProbe(page, log) {
   const seen = new Set()
   const pending = new Set()
   let matched = 0
+  let invalidCsrf = false
 
   const responseHandler = (response) => {
     const task = (async () => {
@@ -172,6 +173,9 @@ function startLikeNetworkProbe(page, log) {
         const request = response.request()
         const query = summarizeLikeQuery(url)
         const bodySummary = await summarizeLikeResponseBody(response)
+        if (/status_code=10402|invalid csrf token/i.test(bodySummary)) {
+          invalidCsrf = true
+        }
         const detail = `${request.method()} ${response.status()} ${url.pathname}${query ? ` ${query}` : ''}${
           bodySummary ? ` body=${bodySummary}` : ''
         }`
@@ -213,6 +217,37 @@ function startLikeNetworkProbe(page, log) {
       await Promise.allSettled(Array.from(pending))
     }
     if (matched === 0) log('LIKE_NETWORK_RESPONSE', 'none_matched')
+    return { invalidCsrf }
+  }
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function refreshTikTokCsrfSession(page, log, shouldHalt) {
+  log('TIKTOK_CSRF_REFRESH_START', 'clearing csrf cookies and reloading /foryou')
+  try {
+    const context = page.context()
+    const cookies = await context.cookies(['https://www.tiktok.com', 'https://www.tiktok.com/foryou']).catch(() => [])
+    const csrfNames = Array.from(new Set(cookies.map((cookie) => cookie.name).filter((name) => /csrf/i.test(name))))
+    if (csrfNames.length > 0) {
+      for (const name of csrfNames) {
+        await context.clearCookies({ name }).catch(() => {})
+      }
+      log('TIKTOK_CSRF_COOKIES_CLEARED', csrfNames.join(',').slice(0, 220))
+    } else {
+      await context.clearCookies({ name: /csrf/i }).catch(() => {})
+      log('TIKTOK_CSRF_COOKIES_CLEARED', 'no named csrf cookies found')
+    }
+    await haltIfNeeded(shouldHalt)
+    await page.goto('https://www.tiktok.com/foryou', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+    await sleepMsHaltable(shouldHalt, randomInt(2500, 4500))
+    log('TIKTOK_CSRF_REFRESH_DONE', 'reloaded /foryou after csrf reset')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    log('TIKTOK_CSRF_REFRESH_FAILED', msg.slice(0, 240))
   }
 }
 
@@ -534,6 +569,7 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
   }
 
   const stopNetworkProbe = startLikeNetworkProbe(page, log)
+  let probeResult = { invalidCsrf: false }
   try {
     const ok = await button.click({ timeout: 5000 }).then(() => true, () => false)
     if (!ok) {
@@ -559,8 +595,12 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
     } else {
       log('LIKE_NOT_CONFIRMED', `reason=${confirmed.reason}`)
     }
-  } finally {
-    await stopNetworkProbe()
+  }
+  finally {
+    probeResult = await stopNetworkProbe()
+  }
+  if (probeResult.invalidCsrf) {
+    await refreshTikTokCsrfSession(page, log, shouldHalt)
   }
 }
 
