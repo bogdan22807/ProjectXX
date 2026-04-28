@@ -212,7 +212,7 @@ export function BrowserProfilesPage() {
               value={form.proxyId}
               onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
             >
-              <option value="">— None —</option>
+              <option value="">Без прокси</option>
               {proxies.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.provider} · {p.host}

@@ -30,7 +30,7 @@ export const tableHeadRowClass =
 
 /** Compact actions inside table rows (Dashboard accounts) */
 export const tableActionButtonClass =
-  'h-8 min-w-[7.25rem] justify-center !px-2.5 !py-0 text-xs'
+  'h-8 min-w-[9.25rem] shrink-0 justify-center whitespace-nowrap !px-2.5 !py-0 text-xs'
 
 /** Body — row dividers */
 export const tableBodyClass = 'divide-y divide-zinc-800/80'

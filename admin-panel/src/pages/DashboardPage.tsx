@@ -48,7 +48,7 @@ const emptyForm = (): FormState => ({
   cookies: '',
   proxyId: '',
   profileId: '',
-  browserEngine: 'chromium',
+  browserEngine: 'fox',
   status: 'New',
 })
 
@@ -114,7 +114,7 @@ function AccountFields({
           value={form.proxyId}
           onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
         >
-          <option value="">— None —</option>
+          <option value="">Без прокси</option>
           {proxies.map((p) => (
             <option key={p.id} value={p.id}>
               {p.provider} · {p.host}
@@ -130,7 +130,7 @@ function AccountFields({
           value={form.profileId}
           onChange={(e) => setForm((f) => ({ ...f, profileId: e.target.value }))}
         >
-          <option value="">— None —</option>
+          <option value="">Без профиля браузера</option>
           {profiles.map((bp) => (
             <option key={bp.id} value={bp.id}>
               {bp.name}
@@ -147,8 +147,8 @@ function AccountFields({
             setForm((f) => ({ ...f, browserEngine: e.target.value as BrowserEngine }))
           }
         >
-          <option value="chromium">Chromium (Playwright)</option>
-          <option value="fox">Fox / Camoufox (скоро)</option>
+          <option value="fox">Лиса (Firefox / Camoufox)</option>
+          <option value="chromium">Обычный Chromium (Playwright)</option>
         </select>
       </label>
       <label className="block text-xs font-medium text-zinc-400">
