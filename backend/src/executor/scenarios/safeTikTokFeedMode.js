@@ -192,14 +192,9 @@ async function isLiveActionGuardActive(page, article) {
  */
 async function pickReactionButtonInArticle(article) {
   const selectors = [
-    'button[data-test*="reaction" i]',
-    'button[data-testid*="reaction" i]',
-    'button[data-e2e*="reaction" i]',
-    'button[aria-label*="reaction" i]',
-    '[role="button"][data-test*="reaction" i]',
-    '[role="button"][data-testid*="reaction" i]',
-    '[role="button"][data-e2e*="reaction" i]',
-    '[role="button"][aria-label*="reaction" i]',
+    '[data-e2e="browse-like-icon"]',
+    '[data-e2e="like-icon"]',
+    '[data-e2e="video-player-like-icon"]',
     'button[data-test*="like" i]',
     'button[data-testid*="like" i]',
     'button[data-e2e*="like" i]',
@@ -215,7 +210,10 @@ async function pickReactionButtonInArticle(article) {
     const count = await matches.count().catch(() => 0)
     for (let i = 0; i < Math.min(count, 12); i += 1) {
       const candidate = matches.nth(i)
-      if (await candidate.isVisible().catch(() => false)) return candidate
+      if (!(await candidate.isVisible().catch(() => false))) continue
+      const clickable = candidate.locator('xpath=ancestor-or-self::*[self::button or @role="button"][1]').first()
+      if (await clickable.isVisible().catch(() => false)) return clickable
+      return candidate
     }
   }
   return null
@@ -249,11 +247,32 @@ async function readLikeStateInArticle(article, button) {
         const attrs = ['aria-pressed', 'aria-label', 'class', 'data-state', 'data-test', 'data-testid', 'data-e2e']
         return attrs.map((name) => `${name}=${String(el.getAttribute(name) || '')}`).join('|')
       }
+      const isActiveLikeColor = (value) => {
+        const color = String(value || '').trim().toLowerCase()
+        if (!color || color === 'none' || color === 'transparent' || color === 'currentcolor') return false
+        if (color === '#fe2c55' || color === '#ee1d52' || color === '#ff0050' || color === '#ff3b5c') return true
+        const hex = /^#([0-9a-f]{6})$/i.exec(color)
+        if (hex) {
+          const n = Number.parseInt(hex[1], 16)
+          const r = (n >> 16) & 255
+          const g = (n >> 8) & 255
+          const b = n & 255
+          return r >= 200 && g <= 100 && b >= 60 && b <= 160
+        }
+        const rgb = /rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)/i.exec(color)
+        if (!rgb) return false
+        const r = Number(rgb[1])
+        const g = Number(rgb[2])
+        const b = Number(rgb[3])
+        return r >= 200 && g <= 100 && b >= 60 && b <= 160
+      }
 
       const buttonText = String(btn?.textContent || '').trim()
       const buttonAttrs = readAttrs(btn)
       const pressed = btn?.getAttribute('aria-pressed') === 'true'
-      const likedAttr = /liked|active|selected|pressed/i.test(buttonAttrs)
+      const likedAttr =
+        /\b(?:is-)?liked\b/i.test(buttonAttrs) ||
+        /(?:data-state|aria-selected)=["']?(?:selected|true)/i.test(buttonAttrs)
 
       let filledIcon = false
       const paths = Array.from(btn.querySelectorAll('svg path[fill], svg [fill]')).slice(0, 12)
@@ -262,24 +281,21 @@ async function readLikeStateInArticle(article, button) {
         const computedFill = String(window.getComputedStyle(path).fill || '').trim().toLowerCase()
         const computedColor = String(window.getComputedStyle(path).color || '').trim().toLowerCase()
         const effectiveFill = fill === 'currentcolor' ? computedColor : fill || computedFill
-        if (!effectiveFill || effectiveFill === 'none' || effectiveFill === 'transparent') continue
-        if (effectiveFill === 'currentcolor') continue
-        if (
-          effectiveFill === '#fff' ||
-          effectiveFill === '#ffffff' ||
-          effectiveFill === 'white' ||
-          effectiveFill === 'rgb(255, 255, 255)'
-        ) {
-          continue
-        }
+        if (!isActiveLikeColor(effectiveFill)) continue
         filledIcon = true
         break
       }
+
+      const reasons = []
+      if (pressed) reasons.push('pressed')
+      if (likedAttr) reasons.push('liked_attr')
+      if (filledIcon) reasons.push('liked_color')
 
       return {
         pressed,
         likedAttr,
         filledIcon,
+        detail: reasons.join(',') || 'inactive',
         signature: `${buttonText}|${buttonAttrs}`.slice(0, 260),
       }
     })
@@ -287,6 +303,7 @@ async function readLikeStateInArticle(article, button) {
       pressed: false,
       likedAttr: false,
       filledIcon: false,
+      detail: 'read_failed',
       signature: '',
     }))
 
@@ -311,20 +328,20 @@ async function readLikeStateInArticle(article, button) {
 }
 
 /**
- * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} state
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string; detail?: string }} state
  */
 function likeStateActive(state) {
   return Boolean(state?.pressed || state?.likedAttr || state?.filledIcon)
 }
 
 /**
- * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} before
- * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} early
- * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string }} final
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string; detail?: string }} before
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string; detail?: string }} early
+ * @param {{ pressed: boolean; likedAttr: boolean; filledIcon: boolean; signature: string; detail?: string }} final
  */
 function likeConfirmed(before, early, final) {
-  if (likeStateActive(final)) return { ok: true, reason: 'state_active_after_verify' }
-  if (likeStateActive(early)) return { ok: false, reason: 'reverted_after_tiktok_verify' }
+  if (likeStateActive(final)) return { ok: true, reason: `state_active_after_verify detail=${final.detail || 'active'}` }
+  if (likeStateActive(early)) return { ok: false, reason: `reverted_after_tiktok_verify early=${early.detail || 'active'}` }
   if (before.signature && final.signature && before.signature !== final.signature) {
     return { ok: false, reason: 'changed_without_active_state' }
   }
@@ -369,7 +386,7 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
 
   const beforeState = await readLikeStateInArticle(article, button)
   if (likeStateActive(beforeState)) {
-    log('LIKE_SKIPPED', 'reason=already_liked')
+    log('LIKE_SKIPPED', `reason=already_liked detail=${beforeState.detail || 'active'}`)
     await markArticleActionClicked(article)
     return
   }
