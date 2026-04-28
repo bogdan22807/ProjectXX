@@ -256,7 +256,7 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
     return
   }
 
-  const threshold = 7
+  const threshold = 25
   const roll = Math.random() * 100
   log('ACTION_ROLL', `r=${roll.toFixed(2)} threshold=${threshold}`)
   if (roll >= threshold) return
