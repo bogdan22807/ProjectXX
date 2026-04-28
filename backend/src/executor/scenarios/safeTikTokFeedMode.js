@@ -164,6 +164,7 @@ function startLikeNetworkProbe(page, log) {
   let matched = 0
   let invalidCsrf = false
   let acceptedLike = false
+  let revertedLike = false
   let lastBodySummary = ''
 
   const responseHandler = (response) => {
@@ -180,6 +181,12 @@ function startLikeNetworkProbe(page, log) {
         }
         if (/status_code=0\b/i.test(bodySummary) && /(?:is_digg|digg_status)=1\b/i.test(bodySummary)) {
           acceptedLike = true
+        }
+        if (
+          (url.searchParams.get('type') === '0' && response.status() < 400) ||
+          (/status_code=0\b/i.test(bodySummary) && /(?:is_digg|digg_status)=0\b/i.test(bodySummary))
+        ) {
+          revertedLike = true
         }
         if (bodySummary) {
           lastBodySummary = bodySummary.slice(0, 240)
@@ -225,7 +232,7 @@ function startLikeNetworkProbe(page, log) {
       await Promise.allSettled(Array.from(pending))
     }
     if (matched === 0) log('LIKE_NETWORK_RESPONSE', 'none_matched')
-    return { invalidCsrf, acceptedLike, matched, lastBodySummary }
+    return { invalidCsrf, acceptedLike, revertedLike, matched, lastBodySummary }
   }
 }
 
@@ -568,6 +575,62 @@ function likeConfirmed(before, early, final) {
 }
 
 /**
+ * @param {import('playwright').Locator} article
+ * @param {import('playwright').Locator} button
+ * @param {(action: string, details?: string) => void} log
+ * @param {string} phase
+ */
+async function logLikeDomCheckpoint(article, button, log, phase) {
+  const state = await readLikeStateInArticle(article, button)
+  log(
+    'LIKE_DOM_CHECKPOINT',
+    `phase=${phase} active=${likeStateActive(state) ? 1 : 0} detail=${state.detail || 'unknown'}`.slice(0, 260),
+  )
+  return state
+}
+
+/**
+ * After TikTok API accepts a like, keep the card in place long enough to tell
+ * whether a visible rollback is a later network action or only DOM resync.
+ * @param {import('playwright').Page} page
+ * @param {import('playwright').Locator} article
+ * @param {import('playwright').Locator} button
+ * @param {(action: string, details?: string) => void} log
+ * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
+ */
+async function observeAcceptedLikePersistence(page, article, button, log, shouldHalt) {
+  const stopPostAcceptProbe = startLikeNetworkProbe(page, log)
+  let finalState = null
+  try {
+    finalState = await logLikeDomCheckpoint(article, button, log, 'accepted_0s')
+    const checkpoints = [
+      ['accepted_2s', 2000],
+      ['accepted_5s', 3000],
+      ['accepted_10s', 5000],
+    ]
+    for (const [phase, delayMs] of checkpoints) {
+      await sleepMsHaltable(shouldHalt, delayMs)
+      finalState = await logLikeDomCheckpoint(article, button, log, phase)
+    }
+  } finally {
+    const postProbe = await stopPostAcceptProbe()
+    log(
+      'LIKE_POST_ACCEPT_NETWORK_SUMMARY',
+      `matched=${postProbe.matched} accepted=${postProbe.acceptedLike ? 1 : 0} reverted=${postProbe.revertedLike ? 1 : 0} invalidCsrf=${
+        postProbe.invalidCsrf ? 1 : 0
+      } last=${postProbe.lastBodySummary || 'none'}`.slice(0, 500),
+    )
+    if (postProbe.revertedLike) {
+      log('LIKE_PERSISTENCE_WARNING', 'network_reverted_after_accept')
+    } else if (finalState && !likeStateActive(finalState)) {
+      log('LIKE_PERSISTENCE_WARNING', `dom_inactive_after_network_accept detail=${finalState.detail || 'inactive'}`)
+    } else if (finalState) {
+      log('LIKE_PERSISTENCE_OK', `dom_active_after_network_accept detail=${finalState.detail || 'active'}`)
+    }
+  }
+}
+
+/**
  * @param {import('playwright').Page} page
  * @param {(action: string, details?: string) => void} log
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
@@ -640,7 +703,9 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
   }
   log(
     'LIKE_NETWORK_SUMMARY',
-    `matched=${probeResult.matched} accepted=${probeResult.acceptedLike ? 1 : 0} invalidCsrf=${probeResult.invalidCsrf ? 1 : 0} last=${probeResult.lastBodySummary || 'none'}`.slice(
+    `matched=${probeResult.matched} accepted=${probeResult.acceptedLike ? 1 : 0} reverted=${probeResult.revertedLike ? 1 : 0} invalidCsrf=${
+      probeResult.invalidCsrf ? 1 : 0
+    } last=${probeResult.lastBodySummary || 'none'}`.slice(
       0,
       500,
     ),
@@ -652,6 +717,7 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
     return
   }
   if (probeResult.acceptedLike) {
+    await observeAcceptedLikePersistence(page, article, button, log, shouldHalt)
     log('LIKE_CONFIRMED', 'reason=network_accepted status_code=0 is_digg=1')
     log('LIKE_RESULT', 'outcome=confirmed source=network status_code=0 is_digg=1')
     return
