@@ -75,6 +75,65 @@ async function detectChallengeBlocking(page) {
 }
 
 /**
+ * @param {string} rawUrl
+ */
+function isTikTokLikeWriteUrl(rawUrl) {
+  const url = String(rawUrl || '').toLowerCase()
+  if (!url.includes('tiktok.com')) return false
+  return /(?:digg|favorite|like|commit|aweme)/i.test(url)
+}
+
+/**
+ * @param {import('playwright').Page} page
+ * @param {(action: string, details?: string) => void} log
+ */
+function startLikeNetworkProbe(page, log) {
+  const seen = new Set()
+  let matched = 0
+
+  const responseHandler = (response) => {
+    try {
+      const rawUrl = response.url()
+      if (!isTikTokLikeWriteUrl(rawUrl)) return
+      const url = new URL(rawUrl)
+      const request = response.request()
+      const detail = `${request.method()} ${response.status()} ${url.pathname}${url.search ? ' query=1' : ''}`
+      if (seen.has(detail)) return
+      seen.add(detail)
+      matched += 1
+      log('LIKE_NETWORK_RESPONSE', detail.slice(0, 260))
+    } catch {
+      /* ignore network probe failures */
+    }
+  }
+
+  const requestFailedHandler = (request) => {
+    try {
+      const rawUrl = request.url()
+      if (!isTikTokLikeWriteUrl(rawUrl)) return
+      const url = new URL(rawUrl)
+      const failure = request.failure()?.errorText || 'request_failed'
+      const detail = `${request.method()} FAILED ${url.pathname} error=${failure}`
+      if (seen.has(detail)) return
+      seen.add(detail)
+      matched += 1
+      log('LIKE_NETWORK_FAILED', detail.slice(0, 260))
+    } catch {
+      /* ignore network probe failures */
+    }
+  }
+
+  page.on('response', responseHandler)
+  page.on('requestfailed', requestFailedHandler)
+
+  return () => {
+    page.off('response', responseHandler)
+    page.off('requestfailed', requestFailedHandler)
+    if (matched === 0) log('LIKE_NETWORK_RESPONSE', 'none_matched')
+  }
+}
+
+/**
  * LIVE card in FYP, not a /live URL.
  * @param {import('playwright').Page} page
  */
@@ -391,29 +450,34 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
     return
   }
 
-  const ok = await button.click({ timeout: 5000 }).then(() => true, () => false)
-  if (!ok) {
-    log('LIKE_SKIPPED', 'reason=no_like_in_current_article')
-    return
-  }
-  await markArticleActionClicked(article)
-  log('LIKE_CLICKED', '')
+  const stopNetworkProbe = startLikeNetworkProbe(page, log)
+  try {
+    const ok = await button.click({ timeout: 5000 }).then(() => true, () => false)
+    if (!ok) {
+      log('LIKE_SKIPPED', 'reason=no_like_in_current_article')
+      return
+    }
+    await markArticleActionClicked(article)
+    log('LIKE_CLICKED', '')
 
-  const earlyWaitMs = randomInt(900, 1400)
-  log('LIKE_WAIT_AFTER_CLICK', `ms=${earlyWaitMs}`)
-  await sleepMsHaltable(shouldHalt, earlyWaitMs)
-  const earlyState = await readLikeStateInArticle(article, button)
+    const earlyWaitMs = randomInt(900, 1400)
+    log('LIKE_WAIT_AFTER_CLICK', `ms=${earlyWaitMs}`)
+    await sleepMsHaltable(shouldHalt, earlyWaitMs)
+    const earlyState = await readLikeStateInArticle(article, button)
 
-  const verifyWaitMs = randomInt(4500, 6500)
-  log('LIKE_VERIFY_WAIT', `ms=${verifyWaitMs}`)
-  await sleepMsHaltable(shouldHalt, verifyWaitMs)
+    const verifyWaitMs = randomInt(4500, 6500)
+    log('LIKE_VERIFY_WAIT', `ms=${verifyWaitMs}`)
+    await sleepMsHaltable(shouldHalt, verifyWaitMs)
 
-  const afterState = await readLikeStateInArticle(article, button)
-  const confirmed = likeConfirmed(beforeState, earlyState, afterState)
-  if (confirmed.ok) {
-    log('LIKE_CONFIRMED', `reason=${confirmed.reason}`)
-  } else {
-    log('LIKE_NOT_CONFIRMED', `reason=${confirmed.reason}`)
+    const afterState = await readLikeStateInArticle(article, button)
+    const confirmed = likeConfirmed(beforeState, earlyState, afterState)
+    if (confirmed.ok) {
+      log('LIKE_CONFIRMED', `reason=${confirmed.reason}`)
+    } else {
+      log('LIKE_NOT_CONFIRMED', `reason=${confirmed.reason}`)
+    }
+  } finally {
+    stopNetworkProbe()
   }
 }
 
