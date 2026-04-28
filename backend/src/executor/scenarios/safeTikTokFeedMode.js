@@ -143,10 +143,10 @@ async function simpleScroll(page, log, shouldHalt) {
   log('SIMPLE_SCROLL_CLICK_CENTER', `x=${x} y=${y}`)
   await sleepMsHaltable(shouldHalt, 300)
 
-  const dy = randomInt(650, 900)
+  const dy = randomInt(950, 1150)
   log('SIMPLE_SCROLL_WHEEL', `dy=${dy}`)
   await page.mouse.wheel(0, dy)
-  await sleepMsHaltable(shouldHalt, randomInt(1800, 2200))
+  await sleepMsHaltable(shouldHalt, 2000)
 
   log('SIMPLE_SCROLL_DONE', '')
 }
