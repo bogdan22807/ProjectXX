@@ -40,3 +40,11 @@ export {
   abortPlaywrightTestRun,
   isPlaywrightTestRunActive,
 } from './playwrightTestRun.js'
+
+export {
+  resolveMobileDevice,
+  mobileCheckDevice,
+  mobileOpenApp,
+  mobileStop,
+  runMobileExecutorCommand,
+} from './mobile/index.js'
