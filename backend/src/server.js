@@ -9,6 +9,7 @@ import profilesRouter from './routes/profiles.js'
 import logsRouter from './routes/logs.js'
 import warmupRouter from './routes/warmup.js'
 import warmupTestRunRouter from './routes/warmupTestRun.js'
+import mobileRouter from './routes/mobile.js'
 import { sendJsonData, sendJsonError, sendJsonSuccess } from './sendJson.js'
 
 const app = express()
@@ -36,6 +37,7 @@ mountApi('/profiles', profilesRouter)
 mountApi('/logs', logsRouter)
 mountApi('/warmup', warmupRouter)
 mountApi('/warmup/test-run', warmupTestRunRouter)
+mountApi('/mobile', mobileRouter)
 
 app.get('/health', (_req, res) => {
   return sendJsonData(res, 200, { ok: true })

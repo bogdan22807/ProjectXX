@@ -183,7 +183,10 @@ export function DashboardPage() {
     stopAccount,
     warmupPending,
     testRunPending,
+    mobileQaPending,
     startPlaywrightTestRun,
+    runMobileQaOpen,
+    stopMobileSession,
   } = useAppState()
 
   const recentLogs = logs.slice(0, 8)
@@ -330,7 +333,7 @@ export function DashboardPage() {
         <div className={cardSectionHeaderClass}>
           <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Аккаунты</h2>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-            POST /accounts, PATCH /accounts/:id · POST /warmup/start|stop · POST /warmup/test-run
+            POST /accounts, PATCH /accounts/:id · POST /warmup/start|stop · POST /warmup/test-run · POST /mobile/qa-open|stop
           </p>
         </div>
         <div className={tableScrollClass}>
@@ -463,6 +466,7 @@ export function DashboardPage() {
                         variant="secondary"
                         disabled={
                           testRunPending[a.id] === true ||
+                          mobileQaPending[a.id] === true ||
                           a.status === 'Running' ||
                           a.status === 'Starting'
                         }
@@ -476,6 +480,23 @@ export function DashboardPage() {
                         onClick={() => void startPlaywrightTestRun(a.id, { headless: false })}
                       >
                         {testRunPending[a.id] ? 'Открытие…' : 'Открыть браузер'}
+                      </Button>
+                      <Button
+                        className={tableActionButtonClass}
+                        variant="secondary"
+                        disabled={mobileQaPending[a.id] === true}
+                        title="ADB: проверить устройство и открыть MOBILE_APP_PACKAGE (MuMu). Env на сервере."
+                        onClick={() => void runMobileQaOpen(a.id)}
+                      >
+                        {mobileQaPending[a.id] ? 'ADB…' : 'Приложение (ADB)'}
+                      </Button>
+                      <Button
+                        className={tableActionButtonClass}
+                        variant="ghost"
+                        title="Остановить mobile-сессию (force-stop по MOBILE_APP_PACKAGE)"
+                        onClick={() => void stopMobileSession(a.id)}
+                      >
+                        Стоп ADB
                       </Button>
                       <Button
                         className={tableActionButtonClass}

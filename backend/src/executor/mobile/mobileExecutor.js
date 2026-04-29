@@ -12,26 +12,37 @@ const execFileAsync = promisify(execFile)
 
 /** @typedef {'check_device' | 'open_app' | 'stop'} MobileExecutorCommand */
 
+/** @typedef {Object} MobileExecutorOpts
+ * @property {import('node:process').ProcessEnv} [env]
+ * @property {(action: string, details?: string) => void} [emit]
+ * @property {string} [adbPath]
+ * @property {number} [timeoutMs]
+ * @property {boolean} [forceStopApp]
+ */
+
 let sessionStarted = false
 
 /**
+ * @param {MobileExecutorOpts | undefined} opts
  * @param {string} action
  * @param {string} [details]
  */
-function mobileLog(action, details = '') {
+function mobileLog(opts, action, details = '') {
   const d = String(details ?? '').trim()
   if (d) console.log(action, d)
   else console.log(action)
+  opts?.emit?.(action, d)
 }
 
 /**
+ * @param {MobileExecutorOpts | undefined} opts
  * @param {unknown} err
  * @param {string} [context]
  */
-function mobileError(err, context = '') {
+function mobileError(opts, err, context = '') {
   const msg = err instanceof Error ? err.message : String(err)
   const suffix = context ? `${context}: ${msg}` : msg
-  mobileLog('MOBILE_ERROR', suffix)
+  mobileLog(opts, 'MOBILE_ERROR', suffix)
 }
 
 /**
@@ -111,37 +122,44 @@ export async function resolveMobileDevice(opts = {}) {
   return { deviceId: online[0].id, rows }
 }
 
-function ensureSessionStarted() {
+/**
+ * @param {MobileExecutorOpts | undefined} opts
+ */
+function ensureSessionStarted(opts) {
   if (sessionStarted) return
-  mobileLog('MOBILE_EXECUTOR_STARTED')
+  mobileLog(opts, 'MOBILE_EXECUTOR_STARTED')
   sessionStarted = true
 }
 
 /**
- * @param {{ env?: NodeJS.ProcessEnv; adbPath?: string; timeoutMs?: number }} [opts]
+ * @param {MobileExecutorOpts} [opts]
  */
 export async function mobileCheckDevice(opts = {}) {
-  ensureSessionStarted()
+  ensureSessionStarted(opts)
   try {
     const { deviceId, rows } = await resolveMobileDevice(opts)
-    mobileLog('MOBILE_DEVICE_FOUND', `id=${deviceId} online=${filterOnlineDevices(rows).length}`)
+    mobileLog(
+      opts,
+      'MOBILE_DEVICE_FOUND',
+      `id=${deviceId} online=${filterOnlineDevices(rows).length}`,
+    )
     return { ok: true, deviceId, deviceCount: rows.length, onlineCount: filterOnlineDevices(rows).length }
   } catch (err) {
-    mobileError(err, 'check_device')
+    mobileError(opts, err, 'check_device')
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
 /**
- * @param {{ env?: NodeJS.ProcessEnv; adbPath?: string; timeoutMs?: number }} [opts]
+ * @param {MobileExecutorOpts} [opts]
  */
 export async function mobileOpenApp(opts = {}) {
-  ensureSessionStarted()
+  ensureSessionStarted(opts)
   const env = opts.env ?? process.env
   const pkg = String(env.MOBILE_APP_PACKAGE ?? '').trim()
   if (!pkg) {
     const msg = 'MOBILE_APP_PACKAGE is not set'
-    mobileError(msg, 'open_app')
+    mobileError(opts, msg, 'open_app')
     return { ok: false, error: msg }
   }
   try {
@@ -152,17 +170,17 @@ export async function mobileOpenApp(opts = {}) {
       opts,
     )
     assertAdbOk(result)
-    mobileLog('MOBILE_APP_OPENED', `package=${pkg} device=${deviceId}`)
+    mobileLog(opts, 'MOBILE_APP_OPENED', `package=${pkg} device=${deviceId}`)
     return { ok: true, deviceId, package: pkg }
   } catch (err) {
-    mobileError(err, 'open_app')
+    mobileError(opts, err, 'open_app')
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 }
 
 /**
  * Ends mobile executor session; optionally force-stops MOBILE_APP_PACKAGE when set.
- * @param {{ env?: NodeJS.ProcessEnv; adbPath?: string; timeoutMs?: number; forceStopApp?: boolean }} [opts]
+ * @param {MobileExecutorOpts} [opts]
  */
 export async function mobileStop(opts = {}) {
   const env = opts.env ?? process.env
@@ -177,10 +195,10 @@ export async function mobileStop(opts = {}) {
       assertAdbOk(result)
     }
   } catch (err) {
-    mobileError(err, 'stop_force_stop')
+    mobileError(opts, err, 'stop_force_stop')
   } finally {
     if (hadSession) {
-      mobileLog('MOBILE_EXECUTOR_STOPPED')
+      mobileLog(opts, 'MOBILE_EXECUTOR_STOPPED')
     }
     sessionStarted = false
   }
@@ -189,7 +207,7 @@ export async function mobileStop(opts = {}) {
 
 /**
  * @param {MobileExecutorCommand} command
- * @param {{ env?: NodeJS.ProcessEnv; adbPath?: string; timeoutMs?: number }} [opts]
+ * @param {MobileExecutorOpts} [opts]
  */
 export async function runMobileExecutorCommand(command, opts = {}) {
   switch (command) {
@@ -200,7 +218,7 @@ export async function runMobileExecutorCommand(command, opts = {}) {
     case 'stop':
       return mobileStop(opts)
     default:
-      mobileError(`unknown command: ${command}`, 'runMobileExecutorCommand')
+      mobileError(opts, `unknown command: ${command}`, 'runMobileExecutorCommand')
       return { ok: false, error: `unknown command: ${command}` }
   }
 }
