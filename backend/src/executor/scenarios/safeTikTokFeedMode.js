@@ -427,7 +427,7 @@ async function detectLiveFeedCard(page) {
  * @param {() => Promise<false | 'stop' | 'max_duration'>} shouldHalt
  */
 async function viewCurrentVideo(page, log, shouldHalt) {
-  const durationMs = randomInt(5000, 12000)
+  const durationMs = randomInt(12_000, 35_000)
   log('VIEW_VIDEO', `durationMs=${durationMs}`)
   await sleepMsHaltable(shouldHalt, durationMs)
   if (await detectChallengeBlocking(page)) {
@@ -741,7 +741,7 @@ async function maybeRunReactionAction(page, log, shouldHalt) {
     return
   }
 
-  const threshold = 25
+  const threshold = randomInt(7, 10) // P(like) = threshold% on this beat
   const roll = Math.random() * 100
   log('LIKE_ROLL', `r=${roll.toFixed(2)} threshold=${threshold}`)
   if (roll >= threshold) return

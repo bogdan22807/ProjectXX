@@ -67,15 +67,17 @@ function profilePeekPercent() {
   return Math.min(100, n)
 }
 
-/** Like attempt probability per iteration (0–10, float ok). Default ~1.5% (between 1 and 2). Env: TIKTOK_LIKE_PERCENT */
+/** Like attempt probability per iteration (0–10, float ok). Default 7–10% (random in range). Env: TIKTOK_LIKE_PERCENT */
 function shouldTryLike() {
   const raw = process.env.TIKTOK_LIKE_PERCENT
-  let pct = 1.5
   if (raw != null && String(raw).trim() !== '') {
     const n = Number(raw)
-    if (Number.isFinite(n) && n > 0) pct = Math.min(n, 10)
+    if (Number.isFinite(n) && n > 0) {
+      const pct = Math.min(n, 10)
+      return Math.random() * 100 < pct
+    }
   }
-  return Math.random() * 100 < pct
+  return Math.random() * 100 < randomInt(7, 10)
 }
 
 /**
@@ -727,8 +729,8 @@ export async function runTikTokHumanFeedIteration(page, log, shouldHalt, options
     return
   }
 
-  log('VIEW_VIDEO', 'watching 5–15s')
-  await delayWithCaptchaInterruption(page, log, shouldHalt, 5000, 15000)
+  log('VIEW_VIDEO', 'watching 12–35s')
+  await delayWithCaptchaInterruption(page, log, shouldHalt, 12_000, 35_000)
   await haltIfNeeded(shouldHalt)
 
   if (consecutiveLingerStreak >= 2) {
