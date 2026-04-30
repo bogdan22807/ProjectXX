@@ -22,7 +22,7 @@ import { useAppState } from '../context/AppState'
 import { formatTime } from '../utils/format'
 import type { Account, AccountStatus, BrowserEngine } from '../types/domain'
 
-const accountStatuses: AccountStatus[] = [
+const browserAccountStatuses: AccountStatus[] = [
   'New',
   'Starting',
   'Ready',
@@ -31,6 +31,8 @@ const accountStatuses: AccountStatus[] = [
   'challenge_detected',
   'auth_required',
 ]
+
+const mobileAccountStatuses: AccountStatus[] = ['setup_required', 'ready', 'running', 'error']
 
 type FormState = {
   name: string
@@ -69,12 +71,15 @@ function AccountFields({
   setForm,
   proxies,
   profiles,
+  accountType = 'browser',
 }: {
   form: FormState
   setForm: Dispatch<SetStateAction<FormState>>
   proxies: { id: string; provider: string; host: string; port: string }[]
   profiles: { id: string; name: string }[]
+  accountType?: Account['accountType']
 }) {
+  const statuses = accountType === 'mobile' ? mobileAccountStatuses : browserAccountStatuses
   return (
     <div className="space-y-3">
       <label className="block text-xs font-medium text-zinc-400">
@@ -113,6 +118,7 @@ function AccountFields({
           className={fieldClass}
           value={form.proxyId}
           onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
+          disabled={accountType === 'mobile'}
         >
           <option value="">Без прокси</option>
           {proxies.map((p) => (
@@ -129,6 +135,7 @@ function AccountFields({
           className={fieldClass}
           value={form.profileId}
           onChange={(e) => setForm((f) => ({ ...f, profileId: e.target.value }))}
+          disabled={accountType === 'mobile'}
         >
           <option value="">Без профиля браузера</option>
           {profiles.map((bp) => (
@@ -146,6 +153,7 @@ function AccountFields({
           onChange={(e) =>
             setForm((f) => ({ ...f, browserEngine: e.target.value as BrowserEngine }))
           }
+          disabled={accountType === 'mobile'}
         >
           <option value="fox">Лиса (Firefox / Camoufox)</option>
           <option value="chromium">Обычный Chromium (Playwright)</option>
@@ -158,7 +166,7 @@ function AccountFields({
           value={form.status}
           onChange={(e) => setForm((f) => ({ ...f, status: e.target.value as AccountStatus }))}
         >
-          {accountStatuses.map((s) => (
+          {statuses.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
@@ -186,6 +194,9 @@ export function DashboardPage() {
     mobileQaPending,
     startPlaywrightTestRun,
     runMobileQaOpen,
+    addMuMuAccount,
+    openMobileEmulator,
+    markMobileReady,
     stopMobileSession,
   } = useAppState()
 
@@ -213,13 +224,14 @@ export function DashboardPage() {
 
   function saveEdit() {
     if (!editId) return
+    const account = accounts.find((item) => item.id === editId)
     updateAccount(editId, {
       name: editForm.name.trim() || 'Unnamed',
       login: editForm.login.trim(),
       cookies: editForm.cookies,
       platform: 'TikTok',
-      proxyId: editForm.proxyId || null,
-      profileId: editForm.profileId || null,
+      proxyId: account?.accountType === 'mobile' ? null : editForm.proxyId || null,
+      profileId: account?.accountType === 'mobile' ? null : editForm.profileId || null,
       browserEngine: editForm.browserEngine,
       status: editForm.status,
     })
@@ -261,6 +273,42 @@ export function DashboardPage() {
     if (!id) return '—'
     const bp = profiles.find((x) => x.id === id)
     return bp?.name ?? '—'
+  }
+
+  function accountTypeLabel(a: Account) {
+    return a.accountType === 'mobile' ? 'TikTok / MuMu' : a.platform
+  }
+
+  function engineLabel(a: Account) {
+    return a.accountType === 'mobile' ? 'adb' : a.browserEngine
+  }
+
+  function mobileBindingLabel(a: Account) {
+    if (a.accountType !== 'mobile') return '—'
+    const parts = [a.emulatorName, a.deviceId].filter(Boolean)
+    return parts.length > 0 ? parts.join(' · ') : '—'
+  }
+
+  function isBrowserStartable(a: Account) {
+    return (
+      a.accountType === 'browser' &&
+      (a.status === 'New' ||
+        a.status === 'Ready' ||
+        a.status === 'challenge_detected' ||
+        a.status === 'auth_required')
+    )
+  }
+
+  function isBrowserStoppable(a: Account) {
+    return a.accountType === 'browser' && (a.status === 'Running' || a.status === 'Starting')
+  }
+
+  function isMobileStartable(a: Account) {
+    return a.accountType === 'mobile' && a.status === 'ready'
+  }
+
+  function isMobileStoppable(a: Account) {
+    return a.accountType === 'mobile' && a.status === 'running'
   }
 
   const statCards: {
@@ -327,13 +375,17 @@ export function DashboardPage() {
         <Button variant="primary" onClick={() => setAddOpen(true)}>
           Добавить аккаунт
         </Button>
+        <Button variant="secondary" onClick={() => void addMuMuAccount()}>
+          + MuMu аккаунт
+        </Button>
       </div>
 
       <Card className="overflow-hidden p-0">
         <div className={cardSectionHeaderClass}>
           <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Аккаунты</h2>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-            POST /accounts, PATCH /accounts/:id · POST /warmup/start|stop · POST /warmup/test-run · POST /mobile/qa-open|stop
+            POST /accounts, POST /accounts/mumu, PATCH /accounts/:id · POST /warmup/start|stop ·
+            POST /warmup/test-run · POST /mobile/open-emulator|mark-ready|scenario|stop|qa-open
           </p>
         </div>
         <div className={tableScrollClass}>
@@ -342,9 +394,14 @@ export function DashboardPage() {
               title="Нет аккаунтов"
               description="Добавьте первый аккаунт. Данные сохраняются на сервере (SQLite) и подтягиваются после перезагрузки."
               action={
-                <Button variant="primary" onClick={() => setAddOpen(true)}>
-                  Добавить аккаунт
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  <Button variant="primary" onClick={() => setAddOpen(true)}>
+                    Добавить аккаунт
+                  </Button>
+                  <Button variant="secondary" onClick={() => void addMuMuAccount()}>
+                    + MuMu аккаунт
+                  </Button>
+                </div>
               }
             />
           ) : (
@@ -389,25 +446,25 @@ export function DashboardPage() {
                     </div>
                   </td>
                   <td className={`${tableCellClass} text-zinc-400`}>
-                    <span className="block truncate" title={a.platform}>
-                      {a.platform}
+                    <span className="block truncate" title={accountTypeLabel(a)}>
+                      {accountTypeLabel(a)}
                     </span>
                   </td>
                   <td className={`${tableCellClass} text-zinc-400`}>
                     <span
                       className="block truncate font-mono text-[12px] uppercase"
-                      title={a.browserEngine}
+                      title={engineLabel(a)}
                     >
-                      {a.browserEngine}
+                      {engineLabel(a)}
                     </span>
                   </td>
                   <td className={`${tableCellClass} text-zinc-400`}>
                     <div className="min-w-0">
                       <span
                         className="block truncate text-[13px] leading-snug text-zinc-400"
-                        title={proxyLabel(a.proxyId)}
+                        title={a.accountType === 'mobile' ? mobileBindingLabel(a) : proxyLabel(a.proxyId)}
                       >
-                        {proxyLabel(a.proxyId)}
+                        {a.accountType === 'mobile' ? mobileBindingLabel(a) : proxyLabel(a.proxyId)}
                       </span>
                     </div>
                   </td>
@@ -415,9 +472,9 @@ export function DashboardPage() {
                     <div className="min-w-0">
                       <span
                         className="block truncate text-[13px] leading-snug"
-                        title={profileLabel(a.profileId)}
+                        title={a.accountType === 'mobile' ? a.deviceId ?? '—' : profileLabel(a.profileId)}
                       >
-                        {profileLabel(a.profileId)}
+                        {a.accountType === 'mobile' ? a.deviceId ?? '—' : profileLabel(a.profileId)}
                       </span>
                     </div>
                   </td>
@@ -428,27 +485,28 @@ export function DashboardPage() {
                       {a.status === 'Ready' && 'Готово'}
                       {a.status === 'Running' && 'Работает'}
                       {a.status === 'Error' && 'Ошибка'}
+                      {a.status === 'setup_required' && 'Нужна настройка'}
+                      {a.status === 'ready' && 'Готово (MuMu)'}
+                      {a.status === 'running' && 'Работает (MuMu)'}
+                      {a.status === 'error' && 'Ошибка (MuMu)'}
                       {a.status === 'challenge_detected' && 'Капча'}
                       {a.status === 'auth_required' && 'Нужен вход'}
                     </StatusBadge>
                   </td>
                   <td className={`${tableCellClass} text-right`}>
                     <div className="flex flex-wrap items-center justify-end gap-1.5">
-                      {a.status === 'New' ||
-                      a.status === 'Ready' ||
-                      a.status === 'challenge_detected' ||
-                      a.status === 'auth_required' ? (
+                      {isBrowserStartable(a) || isMobileStartable(a) ? (
                         <Button
                           className={tableActionButtonClass}
                           variant="primary"
                           disabled={warmupPending[a.id] === 'start'}
                           onClick={() => startAccount(a.id)}
-                          title="Фоновый запуск (headless)"
+                          title={a.accountType === 'mobile' ? 'Запустить mobile scenario через ADB' : 'Фоновый запуск (headless)'}
                         >
                           {warmupPending[a.id] === 'start' ? 'Запуск…' : 'Запуск'}
                         </Button>
                       ) : null}
-                      {a.status === 'Running' || a.status === 'Starting' ? (
+                      {isBrowserStoppable(a) || isMobileStoppable(a) ? (
                         <Button
                           className={tableActionButtonClass}
                           disabled={warmupPending[a.id] === 'stop'}
@@ -457,47 +515,73 @@ export function DashboardPage() {
                           {warmupPending[a.id] === 'stop' ? 'Стоп…' : 'Стоп'}
                         </Button>
                       ) : null}
-                      <Button
-                        className={`${tableActionButtonClass} ${
-                          a.status === 'challenge_detected'
-                            ? 'border-amber-500/80 bg-amber-950/90 text-amber-100 shadow-[0_0_0_1px_rgba(245,158,11,0.35)] hover:bg-amber-900/90 hover:border-amber-400/80'
-                            : ''
-                        }`}
-                        variant="secondary"
-                        disabled={
-                          testRunPending[a.id] === true ||
-                          mobileQaPending[a.id] === true ||
-                          a.status === 'Running' ||
-                          a.status === 'Starting'
-                        }
-                        title={
-                          a.status === 'challenge_detected'
-                            ? 'Капча — откройте окно и пройдите проверку'
-                            : a.status === 'Running' || a.status === 'Starting'
-                              ? 'Сначала нажмите «Стоп»'
-                              : 'Окно браузера (headed)'
-                        }
-                        onClick={() => void startPlaywrightTestRun(a.id, { headless: false })}
-                      >
-                        {testRunPending[a.id] ? 'Открытие…' : 'Открыть браузер'}
-                      </Button>
-                      <Button
-                        className={tableActionButtonClass}
-                        variant="secondary"
-                        disabled={mobileQaPending[a.id] === true}
-                        title="ADB: проверить устройство и открыть MOBILE_APP_PACKAGE (MuMu). Env на сервере."
-                        onClick={() => void runMobileQaOpen(a.id)}
-                      >
-                        {mobileQaPending[a.id] ? 'ADB…' : 'Приложение (ADB)'}
-                      </Button>
-                      <Button
-                        className={tableActionButtonClass}
-                        variant="ghost"
-                        title="Остановить mobile-сессию (force-stop по MOBILE_APP_PACKAGE)"
-                        onClick={() => void stopMobileSession(a.id)}
-                      >
-                        Стоп ADB
-                      </Button>
+                      {a.accountType === 'mobile' ? (
+                        <>
+                          <Button
+                            className={tableActionButtonClass}
+                            variant="secondary"
+                            disabled={mobileQaPending[a.id] === true}
+                            title="Открыть/показать привязанный MuMu emulator"
+                            onClick={() => void openMobileEmulator(a.id)}
+                          >
+                            {mobileQaPending[a.id] ? 'MuMu…' : 'Открыть эмулятор'}
+                          </Button>
+                          {a.status === 'setup_required' ? (
+                            <Button
+                              className={tableActionButtonClass}
+                              variant="secondary"
+                              onClick={() => void markMobileReady(a.id)}
+                              title="Пометить MuMu аккаунт как готовый после ручной установки TikTok и входа"
+                            >
+                              Сохранить как готовый
+                            </Button>
+                          ) : null}
+                        </>
+                      ) : (
+                        <>
+                          <Button
+                            className={`${tableActionButtonClass} ${
+                              a.status === 'challenge_detected'
+                                ? 'border-amber-500/80 bg-amber-950/90 text-amber-100 shadow-[0_0_0_1px_rgba(245,158,11,0.35)] hover:bg-amber-900/90 hover:border-amber-400/80'
+                                : ''
+                            }`}
+                            variant="secondary"
+                            disabled={
+                              testRunPending[a.id] === true ||
+                              mobileQaPending[a.id] === true ||
+                              a.status === 'Running' ||
+                              a.status === 'Starting'
+                            }
+                            title={
+                              a.status === 'challenge_detected'
+                                ? 'Капча — откройте окно и пройдите проверку'
+                                : a.status === 'Running' || a.status === 'Starting'
+                                  ? 'Сначала нажмите «Стоп»'
+                                  : 'Окно браузера (headed)'
+                            }
+                            onClick={() => void startPlaywrightTestRun(a.id, { headless: false })}
+                          >
+                            {testRunPending[a.id] ? 'Открытие…' : 'Открыть браузер'}
+                          </Button>
+                          <Button
+                            className={tableActionButtonClass}
+                            variant="secondary"
+                            disabled={mobileQaPending[a.id] === true}
+                            title="ADB: проверить устройство и открыть MOBILE_APP_PACKAGE (MuMu). Env на сервере."
+                            onClick={() => void runMobileQaOpen(a.id)}
+                          >
+                            {mobileQaPending[a.id] ? 'ADB…' : 'Приложение (ADB)'}
+                          </Button>
+                          <Button
+                            className={tableActionButtonClass}
+                            variant="ghost"
+                            title="Остановить mobile-сессию (force-stop по MOBILE_APP_PACKAGE)"
+                            onClick={() => void stopMobileSession(a.id)}
+                          >
+                            Стоп ADB
+                          </Button>
+                        </>
+                      )}
                       <Button
                         className={tableActionButtonClass}
                         onClick={() => openEdit(a)}
@@ -596,7 +680,13 @@ export function DashboardPage() {
           </div>
         }
       >
-        <AccountFields form={addForm} setForm={setAddForm} proxies={proxies} profiles={profiles} />
+        <AccountFields
+          form={addForm}
+          setForm={setAddForm}
+          proxies={proxies}
+          profiles={profiles}
+          accountType="browser"
+        />
       </Modal>
 
       <Modal
@@ -646,7 +736,13 @@ export function DashboardPage() {
           </div>
         }
       >
-        <AccountFields form={editForm} setForm={setEditForm} proxies={proxies} profiles={profiles} />
+        <AccountFields
+          form={editForm}
+          setForm={setEditForm}
+          proxies={proxies}
+          profiles={profiles}
+          accountType={accounts.find((a) => a.id === editId)?.accountType ?? 'browser'}
+        />
       </Modal>
     </div>
   )

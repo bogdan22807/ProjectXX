@@ -26,6 +26,7 @@ import {
 } from '../api/mappers'
 import type {
   Account,
+  AccountType,
   AccountStatus,
   BrowserEngine,
   BrowserProfile,
@@ -51,11 +52,16 @@ interface AppStateValue {
     login: string
     cookies: string
     platform: Platform
+    accountType?: AccountType
     proxyId: string | null
     profileId: string | null
     browserEngine: BrowserEngine
     status: AccountStatus
+    deviceId?: string | null
+    emulatorName?: string | null
+    emulatorIndex?: string | null
   }) => Promise<boolean>
+  addMuMuAccount: () => Promise<void>
   updateAccount: (id: string, patch: Partial<Omit<Account, 'id'>>) => Promise<void>
   deleteAccountById: (id: string) => Promise<void>
   startAccount: (id: string) => Promise<void>
@@ -76,6 +82,8 @@ interface AppStateValue {
     },
   ) => Promise<void>
   runMobileQaOpen: (accountId: string) => Promise<void>
+  openMobileEmulator: (accountId: string) => Promise<void>
+  markMobileReady: (accountId: string) => Promise<void>
   stopMobileSession: (accountId: string) => Promise<void>
   addProxy: (input: {
     provider: string
@@ -195,10 +203,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       login: string
       cookies: string
       platform: Platform
+      accountType?: AccountType
       proxyId: string | null
       profileId: string | null
       browserEngine: BrowserEngine
       status: AccountStatus
+      deviceId?: string | null
+      emulatorName?: string | null
+      emulatorIndex?: string | null
     }) => {
       try {
         const row = await apiPost<ApiAccount>(
@@ -208,10 +220,14 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             login: input.login,
             cookies: input.cookies,
             platform: input.platform,
+            accountType: input.accountType,
             proxyId: input.proxyId,
             profileId: input.profileId,
             browserEngine: input.browserEngine,
             status: input.status,
+            deviceId: input.deviceId,
+            emulatorName: input.emulatorName,
+            emulatorIndex: input.emulatorIndex,
           }),
         )
         setAccounts((prev) => [mapAccount(row), ...prev])
@@ -228,6 +244,21 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     },
     [appendLog],
   )
+
+  const addMuMuAccount = useCallback(async () => {
+    try {
+      const row = await apiPost<ApiAccount>('/accounts/mumu', {})
+      setAccounts((prev) => [mapAccount(row), ...prev])
+      await appendLog(
+        'Add MuMu account',
+        `Created "${row.name}" as ${row.status} device=${row.device_id ?? '—'}`,
+      )
+      await refreshAccountsLogsProxies()
+    } catch (e) {
+      console.error('addMuMuAccount failed', e)
+      setLastError(formatApiFailure(e))
+    }
+  }, [appendLog, refreshAccountsLogsProxies])
 
   const deleteAccountById = useCallback(
     async (id: string) => {
@@ -271,18 +302,39 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const startAccount = useCallback(
     async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
-      if (!acc || acc.status === 'Running' || acc.status === 'Starting') return
+      if (!acc) return
       if (
-        acc.status !== 'New' &&
-        acc.status !== 'Ready' &&
-        acc.status !== 'challenge_detected' &&
-        acc.status !== 'auth_required'
+        (!acc.accountType || acc.accountType === 'browser') &&
+        (acc.status === 'Running' || acc.status === 'Starting')
+      )
+        return
+      const isMobile = acc.accountType === 'mobile'
+      if (
+        (!isMobile &&
+          acc.status !== 'New' &&
+          acc.status !== 'Ready' &&
+          acc.status !== 'challenge_detected' &&
+          acc.status !== 'auth_required') ||
+        (isMobile && acc.status !== 'ready')
       )
         return
       if (warmupPending[id]) return
       setWarmupPending((p) => ({ ...p, [id]: 'start' }))
       try {
-        await apiPost<{ ok?: boolean }>('/warmup/start', { accountId: id })
+        if (isMobile) {
+          const data = await apiPost<{ ok?: boolean; error?: string; step?: string }>('/mobile/scenario', {
+            accountId: id,
+          })
+          if (data.ok === false) {
+            setLastError(
+              data.error?.trim()
+                ? `Mobile scenario (${data.step ?? '?'}): ${data.error.trim()}`
+                : 'Mobile scenario failed',
+            )
+          }
+        } else {
+          await apiPost<{ ok?: boolean }>('/warmup/start', { accountId: id })
+        }
         await refreshAll()
       } catch (e) {
         console.error('Warmup start failed', e)
@@ -302,11 +354,20 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const stopAccount = useCallback(
     async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
-      if (!acc || (acc.status !== 'Running' && acc.status !== 'Starting')) return
+      if (!acc) return
+      if (acc.accountType === 'mobile') {
+        if (acc.status !== 'running') return
+      } else if (acc.status !== 'Running' && acc.status !== 'Starting') {
+        return
+      }
       if (warmupPending[id]) return
       setWarmupPending((p) => ({ ...p, [id]: 'stop' }))
       try {
-        await apiPost<{ ok?: boolean }>('/warmup/stop', { accountId: id })
+        if (acc.accountType === 'mobile') {
+          await apiPost<{ ok?: boolean }>('/mobile/stop', { accountId: id })
+        } else {
+          await apiPost<{ ok?: boolean }>('/warmup/stop', { accountId: id })
+        }
         await refreshAll()
       } catch (e) {
         console.error('Warmup stop failed', e)
@@ -518,6 +579,40 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [mobileQaPending, refreshAccountsLogsProxies],
   )
 
+  const openMobileEmulator = useCallback(
+    async (accountId: string) => {
+      if (mobileQaPending[accountId]) return
+      setMobileQaPending((p) => ({ ...p, [accountId]: true }))
+      try {
+        await apiPost('/mobile/open-emulator', { accountId })
+        void refreshAccountsLogsProxies()
+      } catch (e) {
+        console.error('openMobileEmulator failed', e)
+        setLastError(formatApiFailure(e))
+      } finally {
+        setMobileQaPending((p) => {
+          const next = { ...p }
+          delete next[accountId]
+          return next
+        })
+      }
+    },
+    [mobileQaPending, refreshAccountsLogsProxies],
+  )
+
+  const markMobileReady = useCallback(
+    async (accountId: string) => {
+      try {
+        await apiPost('/mobile/mark-ready', { accountId })
+        void refreshAccountsLogsProxies()
+      } catch (e) {
+        console.error('markMobileReady failed', e)
+        setLastError(formatApiFailure(e))
+      }
+    },
+    [refreshAccountsLogsProxies],
+  )
+
   const stopMobileSession = useCallback(
     async (accountId: string) => {
       try {
@@ -545,12 +640,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const stats = useMemo(() => {
     const totalAccounts = accounts.length
     const activeAccounts = accounts.filter(
-      (a) => a.status === 'Ready' || a.status === 'Running' || a.status === 'Starting',
+      (a) =>
+        a.status === 'Ready' ||
+        a.status === 'Running' ||
+        a.status === 'Starting' ||
+        a.status === 'ready' ||
+        a.status === 'running',
     ).length
     const runningAccounts = accounts.filter(
-      (a) => a.status === 'Running' || a.status === 'Starting',
+      (a) => a.status === 'Running' || a.status === 'Starting' || a.status === 'running',
     ).length
-    const errorAccounts = accounts.filter((a) => a.status === 'Error').length
+    const errorAccounts = accounts.filter((a) => a.status === 'Error' || a.status === 'error').length
     const totalProxies = proxies.length
     return {
       totalAccounts,
@@ -574,6 +674,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       selectedProfileIds,
       setSelectedProfileIds,
       addAccount,
+      addMuMuAccount,
       updateAccount,
       deleteAccountById,
       startAccount,
@@ -584,6 +685,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteSelectedAccounts,
       startPlaywrightTestRun,
       runMobileQaOpen,
+      openMobileEmulator,
+      markMobileReady,
       stopMobileSession,
       addProxy,
       deleteSelectedProxies,
@@ -605,6 +708,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       selectedProxyIds,
       selectedProfileIds,
       addAccount,
+      addMuMuAccount,
       updateAccount,
       deleteAccountById,
       startAccount,
@@ -615,6 +719,8 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       deleteSelectedAccounts,
       startPlaywrightTestRun,
       runMobileQaOpen,
+      openMobileEmulator,
+      markMobileReady,
       stopMobileSession,
       addProxy,
       deleteSelectedProxies,

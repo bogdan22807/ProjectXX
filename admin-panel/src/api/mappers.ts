@@ -1,4 +1,12 @@
-import type { Account, BrowserEngine, BrowserProfile, LogEntry, Platform, Proxy } from '../types/domain'
+import type {
+  Account,
+  AccountType,
+  BrowserEngine,
+  BrowserProfile,
+  LogEntry,
+  Platform,
+  Proxy,
+} from '../types/domain'
 
 export type ApiAccount = {
   id: string
@@ -6,9 +14,13 @@ export type ApiAccount = {
   login: string
   cookies: string
   platform: string
+  account_type?: string
   proxy_id: string | null
   browser_profile_id: string | null
   browser_engine?: string
+  device_id?: string | null
+  emulator_name?: string | null
+  emulator_index?: string | null
   status: Account['status']
   created_at?: string
 }
@@ -54,6 +66,11 @@ function asBrowserEngine(raw: string | undefined): BrowserEngine {
   return s === 'fox' ? 'fox' : 'chromium'
 }
 
+function asAccountType(raw: string | undefined): AccountType {
+  const s = String(raw ?? '').trim().toLowerCase()
+  return s === 'mobile' ? 'mobile' : 'browser'
+}
+
 export function mapAccount(row: ApiAccount): Account {
   return {
     id: row.id,
@@ -61,9 +78,13 @@ export function mapAccount(row: ApiAccount): Account {
     login: row.login ?? '',
     cookies: row.cookies ?? '',
     platform: asPlatform(row.platform),
+    accountType: asAccountType(row.account_type),
     proxyId: row.proxy_id ?? null,
     profileId: row.browser_profile_id ?? null,
     browserEngine: asBrowserEngine(row.browser_engine),
+    deviceId: row.device_id ?? null,
+    emulatorName: row.emulator_name ?? null,
+    emulatorIndex: row.emulator_index ?? null,
     status: row.status,
   }
 }
@@ -123,9 +144,13 @@ export function accountToApiBody(input: {
   login: string
   cookies: string
   platform: Platform
+  accountType?: AccountType
   proxyId: string | null
   profileId: string | null
   browserEngine: BrowserEngine
+  deviceId?: string | null
+  emulatorName?: string | null
+  emulatorIndex?: string | null
   status: Account['status']
 }) {
   return {
@@ -133,9 +158,13 @@ export function accountToApiBody(input: {
     login: input.login,
     cookies: input.cookies,
     platform: input.platform,
+    account_type: input.accountType ?? 'browser',
     proxy_id: input.proxyId,
     browser_profile_id: input.profileId,
     browser_engine: input.browserEngine,
+    device_id: input.deviceId ?? null,
+    emulator_name: input.emulatorName ?? null,
+    emulator_index: input.emulatorIndex ?? null,
     status: input.status,
   }
 }
@@ -146,9 +175,13 @@ export function accountPatchToApi(patch: Partial<Omit<Account, 'id'>>) {
   if (patch.login !== undefined) body.login = patch.login
   if (patch.cookies !== undefined) body.cookies = patch.cookies
   if (patch.platform !== undefined) body.platform = patch.platform
+  if (patch.accountType !== undefined) body.account_type = patch.accountType
   if (patch.proxyId !== undefined) body.proxy_id = patch.proxyId
   if (patch.profileId !== undefined) body.browser_profile_id = patch.profileId
   if (patch.browserEngine !== undefined) body.browser_engine = patch.browserEngine
+  if (patch.deviceId !== undefined) body.device_id = patch.deviceId
+  if (patch.emulatorName !== undefined) body.emulator_name = patch.emulatorName
+  if (patch.emulatorIndex !== undefined) body.emulator_index = patch.emulatorIndex
   if (patch.status !== undefined) body.status = patch.status
   return body
 }
