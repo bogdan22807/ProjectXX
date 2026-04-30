@@ -3,6 +3,7 @@ export {
   resolveMobileDevice,
   mobileCheckDevice,
   mobileOpenApp,
+  mobileRunScenario,
   mobileStop,
   runMobileExecutorCommand,
   _resetMobileExecutorSessionForTests,

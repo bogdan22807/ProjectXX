@@ -10,7 +10,7 @@ import { filterOnlineDevices, parseAdbDevicesList } from './adbDevices.js'
 
 const execFileAsync = promisify(execFile)
 
-/** @typedef {'check_device' | 'open_app' | 'stop'} MobileExecutorCommand */
+/** @typedef {'check_device' | 'open_app' | 'scenario' | 'stop'} MobileExecutorCommand */
 
 /** @typedef {Object} MobileExecutorOpts
  * @property {import('node:process').ProcessEnv} [env]
@@ -18,6 +18,8 @@ const execFileAsync = promisify(execFile)
  * @property {string} [adbPath]
  * @property {number} [timeoutMs]
  * @property {boolean} [forceStopApp]
+ * @property {() => number} [random]
+ * @property {(ms: number) => Promise<void>} [sleep]
  */
 
 let sessionStarted = false
@@ -43,6 +45,66 @@ function mobileError(opts, err, context = '') {
   const msg = err instanceof Error ? err.message : String(err)
   const suffix = context ? `${context}: ${msg}` : msg
   mobileLog(opts, 'MOBILE_ERROR', suffix)
+}
+
+const MOBILE_SWIPE_ARGS = ['shell', 'input', 'swipe', '720', '1900', '720', '600', '500']
+const MOBILE_LIKE_ARGS = ['shell', 'input', 'tap', '1360', '1750']
+
+/**
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
+function sleepMs(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string} name
+ * @param {number} defaultValue
+ * @param {{ min?: number, max?: number }} [bounds]
+ */
+function readMobileEnvInt(env, name, defaultValue, bounds = {}) {
+  const raw = String(env[name] ?? '').trim()
+  if (!raw) return defaultValue
+  if (!/^-?\d+$/.test(raw)) {
+    throw new Error(`${name} must be an integer`)
+  }
+  const value = Number.parseInt(raw, 10)
+  if (bounds.min != null && value < bounds.min) {
+    throw new Error(`${name} must be >= ${bounds.min}`)
+  }
+  if (bounds.max != null && value > bounds.max) {
+    throw new Error(`${name} must be <= ${bounds.max}`)
+  }
+  return value
+}
+
+/**
+ * @param {number} minMs
+ * @param {number} maxMs
+ * @param {() => number} random
+ */
+function randomBetween(minMs, maxMs, random) {
+  if (maxMs <= minMs) return minMs
+  const ratio = Math.min(1, Math.max(0, Number.isFinite(random()) ? random() : 0))
+  return Math.floor(minMs + ratio * (maxMs - minMs))
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} env
+ */
+function getMobileScenarioConfig(env) {
+  const swipesCount = readMobileEnvInt(env, 'MOBILE_SWIPES_COUNT', 20, { min: 1 })
+  const viewMinMs = readMobileEnvInt(env, 'MOBILE_VIEW_MIN_MS', 5000, { min: 0 })
+  const viewMaxMs = readMobileEnvInt(env, 'MOBILE_VIEW_MAX_MS', 10000, { min: 0 })
+  const likeChance = readMobileEnvInt(env, 'MOBILE_LIKE_CHANCE', 10, { min: 0, max: 100 })
+  if (viewMaxMs < viewMinMs) {
+    throw new Error('MOBILE_VIEW_MAX_MS must be >= MOBILE_VIEW_MIN_MS')
+  }
+  return { swipesCount, viewMinMs, viewMaxMs, likeChance }
 }
 
 /**
@@ -197,6 +259,64 @@ export async function mobileOpenApp(opts = {}) {
 }
 
 /**
+ * Backend-only ADB scenario:
+ * open app -> wait -> swipe -> wait -> optional like -> repeat.
+ *
+ * @param {MobileExecutorOpts} [opts]
+ */
+export async function mobileRunScenario(opts = {}) {
+  ensureSessionStarted(opts)
+  const env = opts.env ?? process.env
+  const random = opts.random ?? Math.random
+  const sleep = opts.sleep ?? sleepMs
+  try {
+    const config = getMobileScenarioConfig(env)
+    const open = await mobileOpenApp(opts)
+    if (!open.ok) {
+      return { ok: false, step: 'open_app', error: open.error ?? 'open_app failed' }
+    }
+
+    let likes = 0
+    for (let iteration = 1; iteration <= config.swipesCount; iteration += 1) {
+      const beforeSwipeWaitMs = randomBetween(config.viewMinMs, config.viewMaxMs, random)
+      mobileLog(opts, 'MOBILE_VIEW', `iteration=${iteration} stage=before_swipe waitMs=${beforeSwipeWaitMs}`)
+      await sleep(beforeSwipeWaitMs)
+
+      const swipeResult = await runAdb(open.deviceId, MOBILE_SWIPE_ARGS, opts)
+      assertAdbOk(swipeResult)
+      mobileLog(opts, 'MOBILE_SWIPE', `iteration=${iteration} x1=720 y1=1900 x2=720 y2=600 durationMs=500`)
+
+      const afterSwipeWaitMs = randomBetween(config.viewMinMs, config.viewMaxMs, random)
+      mobileLog(opts, 'MOBILE_VIEW', `iteration=${iteration} stage=after_swipe waitMs=${afterSwipeWaitMs}`)
+      await sleep(afterSwipeWaitMs)
+
+      if (random() * 100 < config.likeChance) {
+        const likeResult = await runAdb(open.deviceId, MOBILE_LIKE_ARGS, opts)
+        assertAdbOk(likeResult)
+        likes += 1
+        mobileLog(opts, 'MOBILE_LIKE', `iteration=${iteration} x=1360 y=1750`)
+      }
+    }
+
+    mobileLog(
+      opts,
+      'MOBILE_DONE',
+      `device=${open.deviceId} package=${open.package} swipes=${config.swipesCount} likes=${likes}`,
+    )
+    return {
+      ok: true,
+      deviceId: open.deviceId,
+      package: open.package,
+      swipes: config.swipesCount,
+      likes,
+    }
+  } catch (err) {
+    mobileError(opts, err, 'scenario')
+    return { ok: false, error: err instanceof Error ? err.message : String(err) }
+  }
+}
+
+/**
  * Ends mobile executor session; optionally force-stops MOBILE_APP_PACKAGE when set.
  * @param {MobileExecutorOpts} [opts]
  */
@@ -233,6 +353,8 @@ export async function runMobileExecutorCommand(command, opts = {}) {
       return mobileCheckDevice(opts)
     case 'open_app':
       return mobileOpenApp(opts)
+    case 'scenario':
+      return mobileRunScenario(opts)
     case 'stop':
       return mobileStop(opts)
     default:
