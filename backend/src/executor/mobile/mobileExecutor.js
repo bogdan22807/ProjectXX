@@ -92,6 +92,24 @@ function assertAdbOk(result) {
 }
 
 /**
+ * `adb shell monkey` can fail without a non-zero exit code, for example:
+ *   "** No activities found to run, monkey aborted."
+ * Treat these stdout/stderr markers as hard failures so the API does not
+ * report MOBILE_APP_OPENED when the app never launched.
+ *
+ * @param {{ stdout?: string; stderr?: string }} result
+ */
+function assertMonkeyLaunchOk(result) {
+  assertAdbOk(result)
+  const combined = [String(result.stdout ?? '').trim(), String(result.stderr ?? '').trim()]
+    .filter(Boolean)
+    .join('\n')
+  if (/no activities found to run/i.test(combined) || /monkey aborted/i.test(combined)) {
+    throw new Error(combined || 'adb monkey aborted')
+  }
+}
+
+/**
  * @param {{ env?: NodeJS.ProcessEnv; adbPath?: string; timeoutMs?: number }} [opts]
  * @returns {Promise<{ deviceId: string, rows: import('./adbDevices.js').AdbDeviceRow[] }>}
  */
@@ -169,7 +187,7 @@ export async function mobileOpenApp(opts = {}) {
       ['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'],
       opts,
     )
-    assertAdbOk(result)
+    assertMonkeyLaunchOk(result)
     mobileLog(opts, 'MOBILE_APP_OPENED', `package=${pkg} device=${deviceId}`)
     return { ok: true, deviceId, package: pkg }
   } catch (err) {
