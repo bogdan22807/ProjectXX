@@ -4,6 +4,10 @@ export type AccountStatus =
   | 'Ready'
   | 'Running'
   | 'Error'
+  | 'setup_required'
+  | 'ready'
+  | 'running'
+  | 'error'
   /** TikTok captcha / verify — run stopped; open visible test browser to solve manually */
   | 'challenge_detected'
   /** Fox: no valid disk/cookie session for TikTok */
@@ -23,6 +27,8 @@ export type ProfileStatus = 'Ready' | 'In Use' | 'Error'
 
 export type Platform = 'TikTok'
 
+export type AccountType = 'browser' | 'mobile'
+
 /** Backend automation engine: Playwright Chromium vs future Camoufox ("fox") */
 export type BrowserEngine = 'chromium' | 'fox'
 
@@ -32,9 +38,13 @@ export interface Account {
   login: string
   cookies: string
   platform: Platform
+  accountType: AccountType
   proxyId: string | null
   profileId: string | null
   browserEngine: BrowserEngine
+  deviceId: string | null
+  emulatorName: string | null
+  emulatorIndex: string | null
   status: AccountStatus
 }
 

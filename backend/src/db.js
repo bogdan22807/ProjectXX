@@ -54,6 +54,10 @@ db.exec(`
     platform TEXT NOT NULL,
     proxy_id TEXT,
     browser_profile_id TEXT,
+    account_type TEXT NOT NULL DEFAULT 'browser',
+    mobile_device_id TEXT NOT NULL DEFAULT '',
+    mobile_emulator_name TEXT NOT NULL DEFAULT '',
+    mobile_vm_index TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'New',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (proxy_id) REFERENCES proxies(id) ON DELETE SET NULL,
@@ -103,6 +107,10 @@ ensureColumn('accounts', 'cookies', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'platform', "TEXT NOT NULL DEFAULT 'Other'")
 ensureColumn('accounts', 'proxy_id', 'TEXT')
 ensureColumn('accounts', 'browser_profile_id', 'TEXT')
+ensureColumn('accounts', 'account_type', "TEXT NOT NULL DEFAULT 'browser'")
+ensureColumn('accounts', 'mobile_device_id', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('accounts', 'mobile_emulator_name', "TEXT NOT NULL DEFAULT ''")
+ensureColumn('accounts', 'mobile_vm_index', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'status', "TEXT NOT NULL DEFAULT 'New'")
 ensureColumn('accounts', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))")
 ensureColumn('accounts', 'browser_engine', "TEXT NOT NULL DEFAULT 'chromium'")

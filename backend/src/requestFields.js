@@ -15,12 +15,23 @@ export function accountFieldsFromBody(body) {
   if (has(b, 'login')) out.login = b.login
   if (has(b, 'cookies')) out.cookies = b.cookies
   if (has(b, 'platform')) out.platform = b.platform
+  if (has(b, 'account_type')) out.account_type = trimStr(b.account_type)
+  else if (has(b, 'accountType')) out.account_type = trimStr(b.accountType)
   if (has(b, 'proxy_id')) out.proxy_id = b.proxy_id
   else if (has(b, 'proxyId')) out.proxy_id = b.proxyId
   if (has(b, 'browser_profile_id')) out.browser_profile_id = b.browser_profile_id
   else if (has(b, 'browserProfileId')) out.browser_profile_id = b.browserProfileId
   if (has(b, 'browser_engine')) out.browser_engine = b.browser_engine
   else if (has(b, 'browserEngine')) out.browser_engine = b.browserEngine
+  if (has(b, 'mobile_device_id')) out.mobile_device_id = trimStr(b.mobile_device_id)
+  else if (has(b, 'device_id')) out.mobile_device_id = trimStr(b.device_id)
+  else if (has(b, 'deviceId')) out.mobile_device_id = trimStr(b.deviceId)
+  if (has(b, 'mobile_emulator_name')) out.mobile_emulator_name = trimStr(b.mobile_emulator_name)
+  else if (has(b, 'emulator_name')) out.mobile_emulator_name = trimStr(b.emulator_name)
+  else if (has(b, 'emulatorName')) out.mobile_emulator_name = trimStr(b.emulatorName)
+  if (has(b, 'mobile_vm_index')) out.mobile_vm_index = trimStr(b.mobile_vm_index)
+  else if (has(b, 'emulator_index')) out.mobile_vm_index = trimStr(b.emulator_index)
+  else if (has(b, 'emulatorIndex')) out.mobile_vm_index = trimStr(b.emulatorIndex)
   if (has(b, 'status')) out.status = b.status
   return out
 }
@@ -33,9 +44,13 @@ export function accountCreatePayload(body) {
     login: '',
     cookies: '',
     platform: 'TikTok',
+    account_type: 'browser',
     proxy_id: null,
     browser_profile_id: null,
     browser_engine: 'chromium',
+    mobile_device_id: null,
+    mobile_emulator_name: null,
+    mobile_vm_index: null,
     status: 'New',
   }
   const merged = { ...defaults, ...raw }
