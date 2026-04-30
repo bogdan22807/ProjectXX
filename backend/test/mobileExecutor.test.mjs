@@ -209,3 +209,52 @@ test('mobileRunScenario skips like when random chance does not hit', async () =>
     fs.rmSync(commandLogFile, { force: true })
   }
 })
+
+test('mobileRunScenario stops early when abort signal is triggered during wait', async () => {
+  const commandLogFile = path.join(os.tmpdir(), `mobile-scenario-abort-${process.pid}-${Date.now()}.txt`)
+  const { adbPath, tempDir } = makeFakeAdb({
+    monkeyStdout: 'Events injected: 1',
+    commandLogFile,
+  })
+  const emitted = []
+  const controller = new AbortController()
+  const sleepCalls = []
+
+  try {
+    const resultPromise = mobileRunScenario({
+      adbPath,
+      env: {
+        MOBILE_APP_PACKAGE: 'com.example.app',
+        MOBILE_SWIPES_COUNT: '3',
+        MOBILE_VIEW_MIN_MS: '1000',
+        MOBILE_VIEW_MAX_MS: '1000',
+        MOBILE_LIKE_CHANCE: '100',
+      },
+      emit: (action, details = '') => emitted.push({ action, details }),
+      random: () => 0,
+      signal: controller.signal,
+      sleep: async (ms) => {
+        sleepCalls.push(ms)
+        controller.abort()
+      },
+    })
+
+    const result = await resultPromise
+    assert.equal(result.ok, true)
+    assert.equal(result.stopped, true)
+
+    const commandLog = fs.readFileSync(commandLogFile, 'utf8')
+    assert.match(commandLog, /shell monkey -p com\.example\.app/)
+    assert.equal((commandLog.match(/shell input swipe 720 1900 720 600 500/g) ?? []).length, 0)
+    assert.equal((commandLog.match(/shell input tap 1360 1750/g) ?? []).length, 0)
+    assert.deepEqual(sleepCalls, [1000])
+    assert.deepEqual(
+      emitted.map((entry) => entry.action),
+      ['MOBILE_EXECUTOR_STARTED', 'MOBILE_APP_OPENED', 'MOBILE_VIEW'],
+    )
+  } finally {
+    _resetMobileExecutorSessionForTests()
+    fs.rmSync(tempDir, { recursive: true, force: true })
+    fs.rmSync(commandLogFile, { force: true })
+  }
+})
