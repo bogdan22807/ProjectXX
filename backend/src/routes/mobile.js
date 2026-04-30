@@ -1,6 +1,11 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
-import { mobileCheckDevice, mobileOpenApp, mobileStop } from '../executor/mobile/mobileExecutor.js'
+import {
+  mobileCheckDevice,
+  mobileOpenApp,
+  mobileRunScenario,
+  mobileStop,
+} from '../executor/mobile/mobileExecutor.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
@@ -63,6 +68,50 @@ router.post('/qa-open', async (req, res) => {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     emit('MOBILE_ERROR', `qa-open: ${msg}`)
+    return sendJsonError(res, 500, msg)
+  }
+})
+
+/**
+ * POST body: { accountId: string }
+ * Runs mobile ADB scenario: open app -> random wait -> swipe -> random wait -> optional like.
+ */
+router.post('/scenario', async (req, res) => {
+  const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
+  if (!accountId) {
+    return sendJsonError(res, 400, 'accountId is required')
+  }
+  const row = db.prepare('SELECT id FROM accounts WHERE id = ?').get(accountId)
+  if (!row) {
+    return sendJsonError(res, 404, 'Account not found')
+  }
+
+  const emit = (action, details) => {
+    insertLog(accountId, action, details)
+  }
+  const opts = { emit }
+
+  try {
+    const result = await mobileRunScenario(opts)
+    if (!result.ok) {
+      await mobileStop(opts)
+      return sendJsonData(res, 200, {
+        ok: false,
+        step: result.step ?? 'scenario',
+        deviceId: result.deviceId,
+        error: result.error ?? 'scenario failed',
+      })
+    }
+    return sendJsonData(res, 200, {
+      ok: true,
+      deviceId: result.deviceId,
+      package: result.package,
+      swipes: result.swipes,
+      likes: result.likes,
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    emit('MOBILE_ERROR', `scenario: ${msg}`)
     return sendJsonError(res, 500, msg)
   }
 })

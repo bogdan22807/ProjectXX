@@ -45,6 +45,7 @@ export {
   resolveMobileDevice,
   mobileCheckDevice,
   mobileOpenApp,
+  mobileRunScenario,
   mobileStop,
   runMobileExecutorCommand,
 } from './mobile/index.js'
