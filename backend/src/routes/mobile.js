@@ -10,6 +10,8 @@ import { ensureMuMuAccountPrepared, launchMuMuAccountEmulator } from '../executo
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
+/** @type {Map<string, { deviceId: string, controller: AbortController, finished: Promise<void> }>} */
+const activeMobileRuns = new Map()
 
 function insertLog(accountId, action, details = '') {
   const id = newId('log')
@@ -167,6 +169,9 @@ router.post('/scenario', async (req, res) => {
   const emit = (action, details) => {
     insertLog(accountId, action, details)
   }
+  if (activeMobileRuns.has(accountId)) {
+    return sendJsonError(res, 409, 'Mobile scenario already active for this account')
+  }
   const isMobileAccount = String(row.account_type ?? 'browser').trim().toLowerCase() === 'mobile'
   let accountRow = row
   if (isMobileAccount) {
@@ -188,12 +193,28 @@ router.post('/scenario', async (req, res) => {
     }
   }
   const opts = { emit, env: mobileEnvForAccount(accountRow) }
+  const deviceIdForRun = String(accountRow.mobile_device_id ?? '').trim() || String(opts.env?.MOBILE_DEVICE_ID ?? '').trim()
+  const controller = new AbortController()
+  let finishRun = () => {}
+  const finished = new Promise((resolve) => {
+    finishRun = resolve
+  })
+  activeMobileRuns.set(accountId, { deviceId: deviceIdForRun, controller, finished })
 
   try {
     if (isMobileAccount) {
       db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('running', accountId)
     }
-    const result = await mobileRunScenario(opts)
+    const result = await mobileRunScenario({ ...opts, signal: controller.signal })
+    if (result.stopped) {
+      if (isMobileAccount) {
+        db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('ready', accountId)
+      }
+      return sendJsonData(res, 200, {
+        ok: true,
+        stopped: true,
+      })
+    }
     if (!result.ok) {
       await mobileStop(opts)
       if (isMobileAccount) {
@@ -220,6 +241,9 @@ router.post('/scenario', async (req, res) => {
     const msg = err instanceof Error ? err.message : String(err)
     emit('MOBILE_ERROR', `scenario: ${msg}`)
     return sendJsonError(res, 500, msg)
+  } finally {
+    activeMobileRuns.delete(accountId)
+    finishRun()
   }
 })
 
@@ -240,9 +264,19 @@ router.post('/stop', async (req, res) => {
   const emit = (action, details) => {
     insertLog(accountId, action, details)
   }
+  const active = activeMobileRuns.get(accountId)
 
   try {
+    if (active) {
+      active.controller.abort()
+    }
     await mobileStop({ emit, env: mobileEnvForAccount(row) })
+    if (active) {
+      await Promise.race([
+        active.finished,
+        new Promise((resolve) => setTimeout(resolve, 2_000)),
+      ])
+    }
     if (String(row.account_type ?? 'browser').trim().toLowerCase() === 'mobile') {
       db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('ready', accountId)
     }

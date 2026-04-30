@@ -20,9 +20,18 @@ const execFileAsync = promisify(execFile)
  * @property {boolean} [forceStopApp]
  * @property {() => number} [random]
  * @property {(ms: number) => Promise<void>} [sleep]
+ * @property {AbortSignal} [signal]
  */
 
 let sessionStarted = false
+const MOBILE_STOP_CHECK_INTERVAL_MS = 400
+
+class MobileScenarioStoppedError extends Error {
+  constructor(message = 'stop requested') {
+    super(message)
+    this.name = 'MobileScenarioStoppedError'
+  }
+}
 
 /**
  * @param {MobileExecutorOpts | undefined} opts
@@ -47,6 +56,24 @@ function mobileError(opts, err, context = '') {
   mobileLog(opts, 'MOBILE_ERROR', suffix)
 }
 
+/**
+ * @param {MobileExecutorOpts | undefined} opts
+ * @returns {boolean}
+ */
+function isMobileStopRequested(opts) {
+  return opts?.signal?.aborted === true
+}
+
+/**
+ * @param {MobileExecutorOpts | undefined} opts
+ * @param {string} [stage]
+ */
+function throwIfMobileStopRequested(opts, stage = '') {
+  if (!isMobileStopRequested(opts)) return
+  const suffix = stage ? ` (${stage})` : ''
+  throw new MobileScenarioStoppedError(`stop requested${suffix}`)
+}
+
 const MOBILE_SWIPE_ARGS = ['shell', 'input', 'swipe', '720', '1900', '720', '600', '500']
 const MOBILE_LIKE_ARGS = ['shell', 'input', 'tap', '1360', '1750']
 
@@ -58,6 +85,26 @@ function sleepMs(ms) {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
+}
+
+/**
+ * Sleep in short chunks so /mobile/stop can abort a running scenario promptly.
+ *
+ * @param {number} totalMs
+ * @param {MobileExecutorOpts | undefined} opts
+ * @returns {Promise<void>}
+ */
+async function sleepWithStopChecks(totalMs, opts) {
+  const sleep = opts?.sleep ?? sleepMs
+  let remaining = Math.max(0, totalMs)
+  throwIfMobileStopRequested(opts, 'before_sleep')
+  while (remaining > 0) {
+    const chunkMs = Math.min(remaining, MOBILE_STOP_CHECK_INTERVAL_MS)
+    await sleep(chunkMs)
+    remaining -= chunkMs
+    throwIfMobileStopRequested(opts, 'during_sleep')
+  }
+  throwIfMobileStopRequested(opts, 'after_sleep')
 }
 
 /**
@@ -268,7 +315,6 @@ export async function mobileRunScenario(opts = {}) {
   ensureSessionStarted(opts)
   const env = opts.env ?? process.env
   const random = opts.random ?? Math.random
-  const sleep = opts.sleep ?? sleepMs
   try {
     const config = getMobileScenarioConfig(env)
     const open = await mobileOpenApp(opts)
@@ -278,19 +324,22 @@ export async function mobileRunScenario(opts = {}) {
 
     let likes = 0
     for (let iteration = 1; iteration <= config.swipesCount; iteration += 1) {
+      throwIfMobileStopRequested(opts, `loop_start iteration=${iteration}`)
       const beforeSwipeWaitMs = randomBetween(config.viewMinMs, config.viewMaxMs, random)
       mobileLog(opts, 'MOBILE_VIEW', `iteration=${iteration} stage=before_swipe waitMs=${beforeSwipeWaitMs}`)
-      await sleep(beforeSwipeWaitMs)
+      await sleepWithStopChecks(beforeSwipeWaitMs, opts)
 
+      throwIfMobileStopRequested(opts, `before_swipe iteration=${iteration}`)
       const swipeResult = await runAdb(open.deviceId, MOBILE_SWIPE_ARGS, opts)
       assertAdbOk(swipeResult)
       mobileLog(opts, 'MOBILE_SWIPE', `iteration=${iteration} x1=720 y1=1900 x2=720 y2=600 durationMs=500`)
 
       const afterSwipeWaitMs = randomBetween(config.viewMinMs, config.viewMaxMs, random)
       mobileLog(opts, 'MOBILE_VIEW', `iteration=${iteration} stage=after_swipe waitMs=${afterSwipeWaitMs}`)
-      await sleep(afterSwipeWaitMs)
+      await sleepWithStopChecks(afterSwipeWaitMs, opts)
 
       if (random() * 100 < config.likeChance) {
+        throwIfMobileStopRequested(opts, `before_like iteration=${iteration}`)
         const likeResult = await runAdb(open.deviceId, MOBILE_LIKE_ARGS, opts)
         assertAdbOk(likeResult)
         likes += 1
@@ -311,6 +360,13 @@ export async function mobileRunScenario(opts = {}) {
       likes,
     }
   } catch (err) {
+    if (err instanceof MobileScenarioStoppedError) {
+      return {
+        ok: false,
+        stopped: true,
+        error: 'stopped',
+      }
+    }
     mobileError(opts, err, 'scenario')
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
