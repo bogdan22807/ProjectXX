@@ -63,6 +63,7 @@ interface AppStateValue {
   /** Per-account warmup request: which action is in flight */
   warmupPending: Partial<Record<string, 'start' | 'stop'>>
   testRunPending: Partial<Record<string, boolean>>
+  mobileQaPending: Partial<Record<string, boolean>>
   deleteSelectedAccounts: () => Promise<void>
   startPlaywrightTestRun: (
     accountId: string,
@@ -74,6 +75,8 @@ interface AppStateValue {
       headless?: boolean
     },
   ) => Promise<void>
+  runMobileQaOpen: (accountId: string) => Promise<void>
+  stopMobileSession: (accountId: string) => Promise<void>
   addProxy: (input: {
     provider: string
     host: string
@@ -124,6 +127,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(new Set())
   const [warmupPending, setWarmupPending] = useState<Partial<Record<string, 'start' | 'stop'>>>({})
   const [testRunPending, setTestRunPending] = useState<Partial<Record<string, boolean>>>({})
+  const [mobileQaPending, setMobileQaPending] = useState<Partial<Record<string, boolean>>>({})
   const [lastError, setLastError] = useState<string | null>(null)
 
   const dismissLastError = useCallback(() => setLastError(null), [])
@@ -480,6 +484,53 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [testRunPending, appendLog, refreshAccountsLogsProxies],
   )
 
+  const runMobileQaOpen = useCallback(
+    async (accountId: string) => {
+      if (mobileQaPending[accountId]) return
+      setMobileQaPending((p) => ({ ...p, [accountId]: true }))
+      try {
+        const data = await apiPost<{
+          ok: boolean
+          step?: string
+          deviceId?: string
+          package?: string
+          error?: string
+        }>('/mobile/qa-open', { accountId })
+        if (!data.ok) {
+          setLastError(
+            data.error?.trim()
+              ? `Mobile QA (${data.step ?? '?'}): ${data.error.trim()}`
+              : 'Mobile QA failed',
+          )
+        }
+        void refreshAccountsLogsProxies()
+      } catch (e) {
+        console.error('runMobileQaOpen failed', e)
+        setLastError(formatApiFailure(e))
+      } finally {
+        setMobileQaPending((p) => {
+          const next = { ...p }
+          delete next[accountId]
+          return next
+        })
+      }
+    },
+    [mobileQaPending, refreshAccountsLogsProxies],
+  )
+
+  const stopMobileSession = useCallback(
+    async (accountId: string) => {
+      try {
+        await apiPost<{ ok?: boolean }>('/mobile/stop', { accountId })
+        void refreshAccountsLogsProxies()
+      } catch (e) {
+        console.error('stopMobileSession failed', e)
+        setLastError(formatApiFailure(e))
+      }
+    },
+    [refreshAccountsLogsProxies],
+  )
+
   const startWarmupSelected = useCallback(async () => {
     const targets = accounts.filter((a) => selectedAccountIds.has(a.id) && a.status === 'New')
     if (targets.length === 0) {
@@ -529,8 +580,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       stopAccount,
       warmupPending,
       testRunPending,
+      mobileQaPending,
       deleteSelectedAccounts,
       startPlaywrightTestRun,
+      runMobileQaOpen,
+      stopMobileSession,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,
@@ -557,8 +611,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       stopAccount,
       warmupPending,
       testRunPending,
+      mobileQaPending,
       deleteSelectedAccounts,
       startPlaywrightTestRun,
+      runMobileQaOpen,
+      stopMobileSession,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,
