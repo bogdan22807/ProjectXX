@@ -55,6 +55,7 @@ db.exec(`
     proxy_id TEXT,
     browser_profile_id TEXT,
     account_type TEXT NOT NULL DEFAULT 'browser',
+    mobile_mode TEXT NOT NULL DEFAULT 'mumu',
     mobile_device_id TEXT NOT NULL DEFAULT '',
     mobile_emulator_name TEXT NOT NULL DEFAULT '',
     mobile_vm_index TEXT NOT NULL DEFAULT '',
@@ -108,6 +109,7 @@ ensureColumn('accounts', 'platform', "TEXT NOT NULL DEFAULT 'Other'")
 ensureColumn('accounts', 'proxy_id', 'TEXT')
 ensureColumn('accounts', 'browser_profile_id', 'TEXT')
 ensureColumn('accounts', 'account_type', "TEXT NOT NULL DEFAULT 'browser'")
+ensureColumn('accounts', 'mobile_mode', "TEXT NOT NULL DEFAULT 'mumu'")
 ensureColumn('accounts', 'mobile_device_id', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'mobile_emulator_name', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'mobile_vm_index', "TEXT NOT NULL DEFAULT ''")

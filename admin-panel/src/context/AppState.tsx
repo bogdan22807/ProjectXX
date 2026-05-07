@@ -53,6 +53,7 @@ interface AppStateValue {
     cookies: string
     platform: Platform
     accountType?: AccountType
+    mode?: Account['mode']
     proxyId: string | null
     profileId: string | null
     browserEngine: BrowserEngine
@@ -204,6 +205,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       cookies: string
       platform: Platform
       accountType?: AccountType
+      mode?: Account['mode']
       proxyId: string | null
       profileId: string | null
       browserEngine: BrowserEngine
@@ -221,6 +223,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             cookies: input.cookies,
             platform: input.platform,
             accountType: input.accountType,
+            mode: input.mode,
             proxyId: input.proxyId,
             profileId: input.profileId,
             browserEngine: input.browserEngine,
@@ -249,9 +252,12 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     try {
       const row = await apiPost<ApiAccount>('/accounts/mumu', {})
       setAccounts((prev) => [mapAccount(row), ...prev])
+      const mode = String(row.mobile_mode ?? row.mode ?? '').trim().toLowerCase()
       await appendLog(
-        'Add MuMu account',
-        `Created "${row.name}" as ${row.status} device=${row.device_id ?? '—'}`,
+        mode === 'manual' ? 'Add manual mobile account' : 'Add MuMu account',
+        mode === 'manual'
+          ? `MuMuManager unavailable. Using manual mobile mode. Created "${row.name}" as ${row.status}`
+          : `Created "${row.name}" as ${row.status} device=${row.device_id ?? '—'}`,
       )
       await refreshAccountsLogsProxies()
     } catch (e) {

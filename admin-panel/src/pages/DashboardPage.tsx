@@ -41,6 +41,9 @@ type FormState = {
   proxyId: string
   profileId: string
   browserEngine: BrowserEngine
+  deviceId: string
+  emulatorName: string
+  mode: Account['mode']
   status: AccountStatus
 }
 
@@ -51,6 +54,9 @@ const emptyForm = (): FormState => ({
   proxyId: '',
   profileId: '',
   browserEngine: 'fox',
+  deviceId: '',
+  emulatorName: '',
+  mode: 'mumu',
   status: 'New',
 })
 
@@ -62,6 +68,9 @@ function formFromAccount(a: Account): FormState {
     proxyId: a.proxyId ?? '',
     profileId: a.profileId ?? '',
     browserEngine: a.browserEngine,
+    deviceId: a.deviceId ?? '',
+    emulatorName: a.emulatorName ?? '',
+    mode: a.mode,
     status: a.status,
   }
 }
@@ -72,12 +81,14 @@ function AccountFields({
   proxies,
   profiles,
   accountType = 'browser',
+  accountMode = 'mumu',
 }: {
   form: FormState
   setForm: Dispatch<SetStateAction<FormState>>
   proxies: { id: string; provider: string; host: string; port: string }[]
   profiles: { id: string; name: string }[]
   accountType?: Account['accountType']
+  accountMode?: Account['mode']
 }) {
   const statuses = accountType === 'mobile' ? mobileAccountStatuses : browserAccountStatuses
   return (
@@ -118,7 +129,6 @@ function AccountFields({
           className={fieldClass}
           value={form.proxyId}
           onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
-          disabled={accountType === 'mobile'}
         >
           <option value="">Без прокси</option>
           {proxies.map((p) => (
@@ -129,36 +139,62 @@ function AccountFields({
           ))}
         </select>
       </label>
-      <label className="block text-xs font-medium text-zinc-400">
-        Профиль браузера (browser_profile_id)
-        <select
-          className={fieldClass}
-          value={form.profileId}
-          onChange={(e) => setForm((f) => ({ ...f, profileId: e.target.value }))}
-          disabled={accountType === 'mobile'}
-        >
-          <option value="">Без профиля браузера</option>
-          {profiles.map((bp) => (
-            <option key={bp.id} value={bp.id}>
-              {bp.name}
-            </option>
-          ))}
-        </select>
-      </label>
-      <label className="block text-xs font-medium text-zinc-400">
-        Движок браузера (browser_engine)
-        <select
-          className={fieldClass}
-          value={form.browserEngine}
-          onChange={(e) =>
-            setForm((f) => ({ ...f, browserEngine: e.target.value as BrowserEngine }))
-          }
-          disabled={accountType === 'mobile'}
-        >
-          <option value="fox">Лиса (Firefox / Camoufox)</option>
-          <option value="chromium">Обычный Chromium (Playwright)</option>
-        </select>
-      </label>
+      {accountType === 'mobile' ? (
+        <>
+          <label className="block text-xs font-medium text-zinc-400">
+            ADB Device ID
+            <input
+              className={fieldClassMono}
+              value={form.deviceId}
+              onChange={(e) => setForm((f) => ({ ...f, deviceId: e.target.value }))}
+              placeholder="emulator-5554"
+            />
+          </label>
+          <label className="block text-xs font-medium text-zinc-400">
+            Имя эмулятора
+            <input
+              className={fieldClass}
+              value={form.emulatorName}
+              onChange={(e) => setForm((f) => ({ ...f, emulatorName: e.target.value }))}
+              placeholder={accountMode === 'manual' ? 'Manual Android' : 'MuMu 1'}
+            />
+          </label>
+          <p className="text-xs text-zinc-500">
+            Mobile mode: <span className="font-mono text-zinc-400">{accountMode}</span>
+          </p>
+        </>
+      ) : (
+        <>
+          <label className="block text-xs font-medium text-zinc-400">
+            Профиль браузера (browser_profile_id)
+            <select
+              className={fieldClass}
+              value={form.profileId}
+              onChange={(e) => setForm((f) => ({ ...f, profileId: e.target.value }))}
+            >
+              <option value="">Без профиля браузера</option>
+              {profiles.map((bp) => (
+                <option key={bp.id} value={bp.id}>
+                  {bp.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs font-medium text-zinc-400">
+            Движок браузера (browser_engine)
+            <select
+              className={fieldClass}
+              value={form.browserEngine}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, browserEngine: e.target.value as BrowserEngine }))
+              }
+            >
+              <option value="fox">Лиса (Firefox / Camoufox)</option>
+              <option value="chromium">Обычный Chromium (Playwright)</option>
+            </select>
+          </label>
+        </>
+      )}
       <label className="block text-xs font-medium text-zinc-400">
         Статус
         <select
@@ -230,9 +266,11 @@ export function DashboardPage() {
       login: editForm.login.trim(),
       cookies: editForm.cookies,
       platform: 'TikTok',
-      proxyId: account?.accountType === 'mobile' ? null : editForm.proxyId || null,
+      proxyId: editForm.proxyId || null,
       profileId: account?.accountType === 'mobile' ? null : editForm.profileId || null,
       browserEngine: editForm.browserEngine,
+      deviceId: account?.accountType === 'mobile' ? editForm.deviceId.trim() || null : undefined,
+      emulatorName: account?.accountType === 'mobile' ? editForm.emulatorName.trim() || null : undefined,
       status: editForm.status,
     })
     closeEdit()
@@ -276,7 +314,8 @@ export function DashboardPage() {
   }
 
   function accountTypeLabel(a: Account) {
-    return a.accountType === 'mobile' ? 'TikTok / MuMu' : a.platform
+    if (a.accountType !== 'mobile') return a.platform
+    return a.mode === 'manual' ? 'TikTok / Manual' : 'TikTok / MuMu'
   }
 
   function engineLabel(a: Account) {
@@ -462,9 +501,9 @@ export function DashboardPage() {
                     <div className="min-w-0">
                       <span
                         className="block truncate text-[13px] leading-snug text-zinc-400"
-                        title={a.accountType === 'mobile' ? mobileBindingLabel(a) : proxyLabel(a.proxyId)}
+                        title={proxyLabel(a.proxyId)}
                       >
-                        {a.accountType === 'mobile' ? mobileBindingLabel(a) : proxyLabel(a.proxyId)}
+                        {proxyLabel(a.proxyId)}
                       </span>
                     </div>
                   </td>
@@ -472,9 +511,9 @@ export function DashboardPage() {
                     <div className="min-w-0">
                       <span
                         className="block truncate text-[13px] leading-snug"
-                        title={a.accountType === 'mobile' ? a.deviceId ?? '—' : profileLabel(a.profileId)}
+                        title={a.accountType === 'mobile' ? mobileBindingLabel(a) : profileLabel(a.profileId)}
                       >
-                        {a.accountType === 'mobile' ? a.deviceId ?? '—' : profileLabel(a.profileId)}
+                        {a.accountType === 'mobile' ? mobileBindingLabel(a) : profileLabel(a.profileId)}
                       </span>
                     </div>
                   </td>
@@ -486,9 +525,24 @@ export function DashboardPage() {
                       {a.status === 'Running' && 'Работает'}
                       {a.status === 'Error' && 'Ошибка'}
                       {a.status === 'setup_required' && 'Нужна настройка'}
-                      {a.status === 'ready' && 'Готово (MuMu)'}
-                      {a.status === 'running' && 'Работает (MuMu)'}
-                      {a.status === 'error' && 'Ошибка (MuMu)'}
+                      {a.status === 'ready' &&
+                        (a.accountType === 'mobile'
+                          ? a.mode === 'manual'
+                            ? 'Готово (Manual)'
+                            : 'Готово (MuMu)'
+                          : null)}
+                      {a.status === 'running' &&
+                        (a.accountType === 'mobile'
+                          ? a.mode === 'manual'
+                            ? 'Работает (Manual)'
+                            : 'Работает (MuMu)'
+                          : null)}
+                      {a.status === 'error' &&
+                        (a.accountType === 'mobile'
+                          ? a.mode === 'manual'
+                            ? 'Ошибка (Manual)'
+                            : 'Ошибка (MuMu)'
+                          : null)}
                       {a.status === 'challenge_detected' && 'Капча'}
                       {a.status === 'auth_required' && 'Нужен вход'}
                     </StatusBadge>
@@ -521,10 +575,14 @@ export function DashboardPage() {
                             className={tableActionButtonClass}
                             variant="secondary"
                             disabled={mobileQaPending[a.id] === true}
-                            title="Открыть/показать привязанный MuMu emulator"
+                            title={
+                              a.mode === 'manual'
+                                ? 'Manual mobile mode does not launch MuMu automatically'
+                                : 'Открыть/показать привязанный MuMu emulator'
+                            }
                             onClick={() => void openMobileEmulator(a.id)}
                           >
-                            {mobileQaPending[a.id] ? 'MuMu…' : 'Открыть эмулятор'}
+                            {mobileQaPending[a.id] ? 'MuMu…' : a.mode === 'manual' ? 'Manual mode' : 'Открыть эмулятор'}
                           </Button>
                           {a.status === 'setup_required' ? (
                             <Button
@@ -686,6 +744,7 @@ export function DashboardPage() {
           proxies={proxies}
           profiles={profiles}
           accountType="browser"
+          accountMode="mumu"
         />
       </Modal>
 
@@ -742,6 +801,7 @@ export function DashboardPage() {
           proxies={proxies}
           profiles={profiles}
           accountType={accounts.find((a) => a.id === editId)?.accountType ?? 'browser'}
+          accountMode={accounts.find((a) => a.id === editId)?.mode ?? 'mumu'}
         />
       </Modal>
     </div>
