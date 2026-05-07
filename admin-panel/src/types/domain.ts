@@ -28,6 +28,7 @@ export type ProfileStatus = 'Ready' | 'In Use' | 'Error'
 export type Platform = 'TikTok'
 
 export type AccountType = 'browser' | 'mobile'
+export type MobileAccountMode = 'mumu' | 'manual'
 
 /** Backend automation engine: Playwright Chromium vs future Camoufox ("fox") */
 export type BrowserEngine = 'chromium' | 'fox'
@@ -39,6 +40,7 @@ export interface Account {
   cookies: string
   platform: Platform
   accountType: AccountType
+  mode: MobileAccountMode
   proxyId: string | null
   profileId: string | null
   browserEngine: BrowserEngine

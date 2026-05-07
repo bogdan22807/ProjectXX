@@ -9,6 +9,7 @@ const router = Router()
 function normalizeAccountRow(row) {
   if (!row || typeof row !== 'object') return row
   const acc = { ...row }
+  if (acc.mode == null) acc.mode = acc.mobile_mode ?? 'mumu'
   if (acc.device_id == null) acc.device_id = acc.mobile_device_id ?? ''
   if (acc.emulator_name == null) acc.emulator_name = acc.mobile_emulator_name ?? ''
   if (acc.emulator_index == null) acc.emulator_index = acc.mobile_vm_index ?? ''
@@ -31,18 +32,19 @@ router.post('/', (req, res) => {
     browser_engine,
     status,
     account_type,
-    device_id,
-    emulator_name,
-    emulator_index,
+    mobile_mode,
+    mobile_device_id,
+    mobile_emulator_name,
+    mobile_vm_index,
   } = accountCreatePayload(req.body)
   const id = newId('acc')
   try {
     db.prepare(
       `INSERT INTO accounts (
         id, name, login, cookies, platform, proxy_id, browser_profile_id, browser_engine, status,
-        account_type, mobile_device_id, mobile_emulator_name, mobile_vm_index
+        account_type, mobile_mode, mobile_device_id, mobile_emulator_name, mobile_vm_index
       )
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       id,
       name,
@@ -54,9 +56,10 @@ router.post('/', (req, res) => {
       browser_engine,
       status,
       account_type,
-      device_id,
-      emulator_name,
-      emulator_index,
+      mobile_mode,
+      mobile_device_id,
+      mobile_emulator_name,
+      mobile_vm_index,
     )
   } catch (e) {
     const code = e && typeof e === 'object' && 'code' in e ? String(/** @type {{ code?: string }} */ (e).code) : ''
@@ -77,15 +80,34 @@ router.post('/', (req, res) => {
 
 router.post('/mumu', async (_req, res) => {
   const id = newId('acc')
+  if (process.platform === 'darwin') {
+    try {
+      const name = `Manual Android ${id.slice(-4)}`
+      const defaultDeviceId = String(process.env.MOBILE_DEVICE_ID ?? '').trim()
+      db.prepare(
+        `INSERT INTO accounts (
+          id, name, login, cookies, platform, proxy_id, browser_profile_id, browser_engine, status,
+          account_type, mobile_mode, mobile_device_id, mobile_emulator_name, mobile_vm_index
+        )
+         VALUES (?, ?, '', '', 'TikTok', NULL, NULL, 'chromium', 'ready', 'mobile', 'manual', ?, ?, '')`,
+      ).run(id, name, defaultDeviceId, 'Manual Android')
+
+      const row = normalizeAccountRow(db.prepare('SELECT * FROM accounts WHERE id = ?').get(id))
+      return sendJsonRow(res, 201, row, 'Manual mobile account missing after create')
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      return sendJsonError(res, 500, msg)
+    }
+  }
   try {
     const created = await createMuMuProfile({ nameHint: `MuMu ${id.slice(-4)}` })
     const name = created.emulatorName || `MuMu ${created.emulatorIndex}`
     db.prepare(
       `INSERT INTO accounts (
         id, name, login, cookies, platform, proxy_id, browser_profile_id, browser_engine, status,
-        account_type, mobile_device_id, mobile_emulator_name, mobile_vm_index
+        account_type, mobile_mode, mobile_device_id, mobile_emulator_name, mobile_vm_index
       )
-       VALUES (?, ?, '', '', 'TikTok', NULL, NULL, 'chromium', 'setup_required', 'mobile', ?, ?, ?)`,
+       VALUES (?, ?, '', '', 'TikTok', NULL, NULL, 'chromium', 'setup_required', 'mobile', 'mumu', ?, ?, ?)`,
     ).run(id, name, created.deviceId, created.emulatorName, created.emulatorIndex)
 
     const launched = await launchMuMuProfile({ emulatorIndex: created.emulatorIndex })
@@ -118,6 +140,7 @@ router.patch('/:id', (req, res) => {
     'browser_engine',
     'status',
     'account_type',
+    'mobile_mode',
     'mobile_device_id',
     'mobile_emulator_name',
     'mobile_vm_index',

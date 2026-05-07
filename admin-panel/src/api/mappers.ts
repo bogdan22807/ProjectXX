@@ -4,6 +4,7 @@ import type {
   BrowserEngine,
   BrowserProfile,
   LogEntry,
+  MobileAccountMode,
   Platform,
   Proxy,
 } from '../types/domain'
@@ -18,6 +19,8 @@ export type ApiAccount = {
   proxy_id: string | null
   browser_profile_id: string | null
   browser_engine?: string
+  mobile_mode?: string
+  mode?: string
   device_id?: string | null
   emulator_name?: string | null
   emulator_index?: string | null
@@ -71,6 +74,11 @@ function asAccountType(raw: string | undefined): AccountType {
   return s === 'mobile' ? 'mobile' : 'browser'
 }
 
+function asMobileMode(raw: string | undefined): MobileAccountMode {
+  const s = String(raw ?? '').trim().toLowerCase()
+  return s === 'manual' ? 'manual' : 'mumu'
+}
+
 export function mapAccount(row: ApiAccount): Account {
   return {
     id: row.id,
@@ -79,6 +87,7 @@ export function mapAccount(row: ApiAccount): Account {
     cookies: row.cookies ?? '',
     platform: asPlatform(row.platform),
     accountType: asAccountType(row.account_type),
+    mode: asMobileMode(row.mobile_mode ?? row.mode),
     proxyId: row.proxy_id ?? null,
     profileId: row.browser_profile_id ?? null,
     browserEngine: asBrowserEngine(row.browser_engine),
@@ -145,6 +154,7 @@ export function accountToApiBody(input: {
   cookies: string
   platform: Platform
   accountType?: AccountType
+  mode?: MobileAccountMode
   proxyId: string | null
   profileId: string | null
   browserEngine: BrowserEngine
@@ -159,6 +169,7 @@ export function accountToApiBody(input: {
     cookies: input.cookies,
     platform: input.platform,
     account_type: input.accountType ?? 'browser',
+    mobile_mode: input.mode ?? 'mumu',
     proxy_id: input.proxyId,
     browser_profile_id: input.profileId,
     browser_engine: input.browserEngine,
@@ -176,6 +187,7 @@ export function accountPatchToApi(patch: Partial<Omit<Account, 'id'>>) {
   if (patch.cookies !== undefined) body.cookies = patch.cookies
   if (patch.platform !== undefined) body.platform = patch.platform
   if (patch.accountType !== undefined) body.account_type = patch.accountType
+  if (patch.mode !== undefined) body.mobile_mode = patch.mode
   if (patch.proxyId !== undefined) body.proxy_id = patch.proxyId
   if (patch.profileId !== undefined) body.browser_profile_id = patch.profileId
   if (patch.browserEngine !== undefined) body.browser_engine = patch.browserEngine

@@ -40,6 +40,14 @@ function getMobileAccountOrError(accountId, res) {
   return account
 }
 
+function getMobileAccountMode(account) {
+  return String(account?.mobile_mode ?? 'mumu')
+    .trim()
+    .toLowerCase() === 'manual'
+    ? 'manual'
+    : 'mumu'
+}
+
 function mobileEnvForAccount(account) {
   const env = { ...process.env }
   const deviceId = String(account.mobile_device_id ?? '').trim()
@@ -114,6 +122,18 @@ router.post('/open-emulator', async (req, res) => {
   const emit = (action, details) => {
     insertLog(accountId, action, details)
   }
+  const mode = getMobileAccountMode(account)
+
+  if (mode === 'manual') {
+    const message = 'MuMuManager unavailable. Using manual mobile mode.'
+    insertLog(accountId, 'MOBILE_INFO', message)
+    return sendJsonData(res, 200, {
+      ok: true,
+      manual: true,
+      message,
+      deviceId: String(account.mobile_device_id ?? '').trim(),
+    })
+  }
 
   try {
     const prepared = await ensureMuMuAccountPrepared(account, { emit })
@@ -143,15 +163,20 @@ router.post('/mark-ready', (req, res) => {
   const account = getMobileAccountOrError(accountId, res)
   if (!account) return
 
+  const mode = getMobileAccountMode(account)
   const deviceId = String(account.mobile_device_id ?? '').trim()
   const emulatorName = String(account.mobile_emulator_name ?? '').trim()
-  if (!deviceId || !emulatorName) {
+  if (!deviceId || (mode !== 'manual' && !emulatorName)) {
     return sendJsonError(res, 400, 'Mobile account is missing deviceId/emulatorName')
   }
 
   db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('ready', accountId)
-  insertLog(accountId, 'MOBILE_READY', `device=${deviceId} emulator=${emulatorName}`)
-  return sendJsonData(res, 200, { ok: true, status: 'ready', deviceId, emulatorName })
+  insertLog(
+    accountId,
+    'MOBILE_READY',
+    mode === 'manual' ? `device=${deviceId} mode=manual` : `device=${deviceId} emulator=${emulatorName}`,
+  )
+  return sendJsonData(res, 200, { ok: true, status: 'ready', deviceId, emulatorName, mode })
 })
 
 /**
@@ -175,21 +200,28 @@ router.post('/scenario', async (req, res) => {
   const isMobileAccount = String(row.account_type ?? 'browser').trim().toLowerCase() === 'mobile'
   let accountRow = row
   if (isMobileAccount) {
+    const mode = getMobileAccountMode(accountRow)
     if (String(accountRow.status ?? '').trim().toLowerCase() === 'setup_required') {
       return sendJsonError(res, 400, 'Mobile account must be saved as ready first')
     }
-    try {
-      const prepared = await ensureMuMuAccountPrepared(accountRow, { emit })
-      const opened = await launchMuMuAccountEmulator(prepared.account, { emit })
-      accountRow = opened.account
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      emit('MOBILE_ERROR', `scenario_prepare: ${msg}`)
-      return sendJsonError(res, 500, msg)
+    if (mode !== 'manual') {
+      try {
+        const prepared = await ensureMuMuAccountPrepared(accountRow, { emit })
+        const opened = await launchMuMuAccountEmulator(prepared.account, { emit })
+        accountRow = opened.account
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        emit('MOBILE_ERROR', `scenario_prepare: ${msg}`)
+        return sendJsonError(res, 500, msg)
+      }
     }
     const deviceId = String(accountRow.mobile_device_id ?? '').trim()
     if (!deviceId) {
-      return sendJsonError(res, 400, 'Mobile account is missing deviceId')
+      return sendJsonError(
+        res,
+        400,
+        mode === 'manual' ? 'Manual mobile account is missing adbDeviceId' : 'Mobile account is missing deviceId',
+      )
     }
   }
   const opts = { emit, env: mobileEnvForAccount(accountRow) }
