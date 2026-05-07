@@ -47,6 +47,13 @@ type FormState = {
   status: AccountStatus
 }
 
+type ManualMobileFormState = {
+  name: string
+  login: string
+  proxyId: string
+  deviceId: string
+}
+
 const emptyForm = (): FormState => ({
   name: '',
   login: '',
@@ -59,6 +66,20 @@ const emptyForm = (): FormState => ({
   mode: 'mumu',
   status: 'New',
 })
+
+const emptyManualMobileForm = (): ManualMobileFormState => ({
+  name: '',
+  login: '',
+  proxyId: '',
+  deviceId: '',
+})
+
+function isMacOsClient() {
+  if (typeof window === 'undefined') return false
+  const platform = String(window.navigator.platform ?? '')
+  const userAgent = String(window.navigator.userAgent ?? '')
+  return /mac|iphone|ipad|ipod/i.test(`${platform} ${userAgent}`)
+}
 
 function formFromAccount(a: Account): FormState {
   return {
@@ -240,12 +261,17 @@ export function DashboardPage() {
 
   const [addOpen, setAddOpen] = useState(false)
   const [addForm, setAddForm] = useState<FormState>(emptyForm)
+  const [manualMobileOpen, setManualMobileOpen] = useState(false)
+  const [manualMobileForm, setManualMobileForm] = useState<ManualMobileFormState>(emptyManualMobileForm)
+  const [manualMobileSubmitting, setManualMobileSubmitting] = useState(false)
+  const [manualMobileError, setManualMobileError] = useState<string | null>(null)
 
   const [editOpen, setEditOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<FormState>(emptyForm)
 
   const [deleteConfirm, setDeleteConfirm] = useState<Account | null>(null)
+  const macOsClient = isMacOsClient()
 
   function openEdit(a: Account) {
     setEditId(a.id)
@@ -301,16 +327,63 @@ export function DashboardPage() {
     }
   }
 
+  function openManualMobileModal() {
+    setManualMobileError(null)
+    setManualMobileForm(emptyManualMobileForm())
+    setManualMobileOpen(true)
+  }
+
+  function closeManualMobileModal() {
+    setManualMobileOpen(false)
+    setManualMobileError(null)
+    setManualMobileForm(emptyManualMobileForm())
+  }
+
+  async function submitManualMobileAccount() {
+    if (manualMobileSubmitting) return
+    const deviceId = manualMobileForm.deviceId.trim()
+    if (!deviceId) {
+      setManualMobileError('ADB Device ID is required.')
+      return
+    }
+    setManualMobileSubmitting(true)
+    setManualMobileError(null)
+    try {
+      const ok = await addAccount({
+        name: manualMobileForm.name.trim() || `Manual Android ${deviceId}`,
+        login: manualMobileForm.login.trim(),
+        cookies: '',
+        platform: 'TikTok',
+        accountType: 'mobile',
+        mode: 'manual',
+        proxyId: manualMobileForm.proxyId || null,
+        profileId: null,
+        browserEngine: 'chromium',
+        deviceId,
+        emulatorName: null,
+        emulatorIndex: null,
+        status: 'ready',
+      })
+      if (ok) {
+        closeManualMobileModal()
+      }
+    } finally {
+      setManualMobileSubmitting(false)
+    }
+  }
+
+  function handleAddMuMuClick() {
+    if (macOsClient) {
+      openManualMobileModal()
+      return
+    }
+    void addMuMuAccount()
+  }
+
   function proxyLabel(id: string | null) {
     if (!id) return '—'
     const p = proxies.find((x) => x.id === id)
     return p ? `${p.provider} · ${p.host}${p.port ? `:${p.port}` : ''}` : '—'
-  }
-
-  function profileLabel(id: string | null) {
-    if (!id) return '—'
-    const bp = profiles.find((x) => x.id === id)
-    return bp?.name ?? '—'
   }
 
   function accountTypeLabel(a: Account) {
@@ -318,14 +391,14 @@ export function DashboardPage() {
     return a.mode === 'manual' ? 'TikTok / Manual' : 'TikTok / MuMu'
   }
 
-  function engineLabel(a: Account) {
-    return a.accountType === 'mobile' ? 'adb' : a.browserEngine
+  function accountModeLabel(a: Account) {
+    if (a.accountType !== 'mobile') return '—'
+    return a.mode === 'manual' ? 'Manual' : 'MuMu'
   }
 
-  function mobileBindingLabel(a: Account) {
+  function accountAdbLabel(a: Account) {
     if (a.accountType !== 'mobile') return '—'
-    const parts = [a.emulatorName, a.deviceId].filter(Boolean)
-    return parts.length > 0 ? parts.join(' · ') : '—'
+    return a.deviceId?.trim() ? a.deviceId : '—'
   }
 
   function isBrowserStartable(a: Account) {
@@ -414,7 +487,7 @@ export function DashboardPage() {
         <Button variant="primary" onClick={() => setAddOpen(true)}>
           Добавить аккаунт
         </Button>
-        <Button variant="secondary" onClick={() => void addMuMuAccount()}>
+        <Button variant="secondary" onClick={handleAddMuMuClick}>
           + MuMu аккаунт
         </Button>
       </div>
@@ -437,32 +510,32 @@ export function DashboardPage() {
                   <Button variant="primary" onClick={() => setAddOpen(true)}>
                     Добавить аккаунт
                   </Button>
-                  <Button variant="secondary" onClick={() => void addMuMuAccount()}>
+                  <Button variant="secondary" onClick={handleAddMuMuClick}>
                     + MuMu аккаунт
                   </Button>
                 </div>
               }
             />
           ) : (
-          <table className={`${tableClass} min-w-[1180px] table-fixed border-collapse`}>
+          <table className={`${tableClass} min-w-[1160px] table-fixed border-collapse`}>
             <colgroup>
-              <col className="w-[14%]" />
-              <col className="w-[15%]" />
-              <col className="w-[9%]" />
-              <col className="w-[9%]" />
               <col className="w-[18%]" />
+              <col className="w-[16%]" />
               <col className="w-[13%]" />
-              <col className="w-[9%]" />
-              <col className="w-[13%]" />
+              <col className="w-[10%]" />
+              <col className="w-[17%]" />
+              <col className="w-[12%]" />
+              <col className="w-[8%]" />
+              <col className="w-[16%]" />
             </colgroup>
             <thead>
               <tr className={tableHeadRowClass}>
                 <th className={tableCellHeaderClass}>Аккаунт</th>
                 <th className={tableCellHeaderClass}>Логин</th>
-                <th className={tableCellHeaderClass}>Платф.</th>
-                <th className={tableCellHeaderClass}>Движок</th>
+                <th className={tableCellHeaderClass}>Тип</th>
+                <th className={tableCellHeaderClass}>Mode</th>
                 <th className={tableCellHeaderClass}>Прокси</th>
-                <th className={tableCellHeaderClass}>Профиль</th>
+                <th className={tableCellHeaderClass}>ADB Device ID</th>
                 <th className={tableCellHeaderClass}>Статус</th>
                 <th className={`${tableCellHeaderClass} text-right`}>Действия</th>
               </tr>
@@ -492,9 +565,9 @@ export function DashboardPage() {
                   <td className={`${tableCellClass} text-zinc-400`}>
                     <span
                       className="block truncate font-mono text-[12px] uppercase"
-                      title={engineLabel(a)}
+                      title={accountModeLabel(a)}
                     >
-                      {engineLabel(a)}
+                      {accountModeLabel(a)}
                     </span>
                   </td>
                   <td className={`${tableCellClass} text-zinc-400`}>
@@ -510,10 +583,10 @@ export function DashboardPage() {
                   <td className={`${tableCellClass} text-zinc-400`}>
                     <div className="min-w-0">
                       <span
-                        className="block truncate text-[13px] leading-snug"
-                        title={a.accountType === 'mobile' ? mobileBindingLabel(a) : profileLabel(a.profileId)}
+                        className="block truncate font-mono text-[13px] leading-snug"
+                        title={accountAdbLabel(a)}
                       >
-                        {a.accountType === 'mobile' ? mobileBindingLabel(a) : profileLabel(a.profileId)}
+                        {accountAdbLabel(a)}
                       </span>
                     </div>
                   </td>
@@ -746,6 +819,73 @@ export function DashboardPage() {
           accountType="browser"
           accountMode="mumu"
         />
+      </Modal>
+
+      <Modal
+        open={manualMobileOpen}
+        title="Manual mobile account"
+        onClose={closeManualMobileModal}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={closeManualMobileModal}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={manualMobileSubmitting}
+              onClick={() => void submitManualMobileAccount()}
+            >
+              {manualMobileSubmitting ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <label className="block text-xs font-medium text-zinc-400">
+            Name
+            <input
+              className={fieldClass}
+              value={manualMobileForm.name}
+              onChange={(e) => setManualMobileForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Manual Android"
+            />
+          </label>
+          <label className="block text-xs font-medium text-zinc-400">
+            Login
+            <input
+              className={fieldClass}
+              value={manualMobileForm.login}
+              onChange={(e) => setManualMobileForm((f) => ({ ...f, login: e.target.value }))}
+              placeholder="@username"
+            />
+          </label>
+          <label className="block text-xs font-medium text-zinc-400">
+            Proxy
+            <select
+              className={fieldClass}
+              value={manualMobileForm.proxyId}
+              onChange={(e) => setManualMobileForm((f) => ({ ...f, proxyId: e.target.value }))}
+            >
+              <option value="">Без прокси</option>
+              {proxies.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.provider} · {p.host}
+                  {p.port ? `:${p.port}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block text-xs font-medium text-zinc-400">
+            ADB Device ID
+            <input
+              className={fieldClassMono}
+              value={manualMobileForm.deviceId}
+              onChange={(e) => setManualMobileForm((f) => ({ ...f, deviceId: e.target.value }))}
+              placeholder="emulator-5554"
+            />
+          </label>
+          {manualMobileError ? <p className="text-sm text-rose-300">{manualMobileError}</p> : null}
+        </div>
       </Modal>
 
       <Modal
