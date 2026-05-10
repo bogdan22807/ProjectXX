@@ -79,6 +79,12 @@ function asMobileMode(raw: string | undefined): MobileAccountMode {
   return s === 'manual' ? 'manual' : 'mumu'
 }
 
+function normalizeNullableId(value: string | null | undefined) {
+  if (value == null) return null
+  const trimmed = String(value).trim()
+  return trimmed ? trimmed : null
+}
+
 export function mapAccount(row: ApiAccount): Account {
   return {
     id: row.id,
@@ -170,8 +176,8 @@ export function accountToApiBody(input: {
     platform: input.platform,
     account_type: input.accountType ?? 'browser',
     mobile_mode: input.mode ?? 'mumu',
-    proxy_id: input.proxyId,
-    browser_profile_id: input.profileId,
+    proxy_id: normalizeNullableId(input.proxyId),
+    browser_profile_id: normalizeNullableId(input.profileId),
     browser_engine: input.browserEngine,
     device_id: input.deviceId ?? null,
     emulator_name: input.emulatorName ?? null,
@@ -188,8 +194,8 @@ export function accountPatchToApi(patch: Partial<Omit<Account, 'id'>>) {
   if (patch.platform !== undefined) body.platform = patch.platform
   if (patch.accountType !== undefined) body.account_type = patch.accountType
   if (patch.mode !== undefined) body.mobile_mode = patch.mode
-  if (patch.proxyId !== undefined) body.proxy_id = patch.proxyId
-  if (patch.profileId !== undefined) body.browser_profile_id = patch.profileId
+  if (patch.proxyId !== undefined) body.proxy_id = normalizeNullableId(patch.proxyId)
+  if (patch.profileId !== undefined) body.browser_profile_id = normalizeNullableId(patch.profileId)
   if (patch.browserEngine !== undefined) body.browser_engine = patch.browserEngine
   if (patch.deviceId !== undefined) body.device_id = patch.deviceId
   if (patch.emulatorName !== undefined) body.emulator_name = patch.emulatorName

@@ -5,6 +5,8 @@ import { accountCreatePayload, accountPatchPayload } from '../requestFields.js'
 import { sendJsonData, sendJsonError, sendJsonRow, sendJsonSuccess } from '../sendJson.js'
 
 const router = Router()
+const getProxyByIdStmt = db.prepare('SELECT id FROM proxies WHERE id = ?')
+const getBrowserProfileByIdStmt = db.prepare('SELECT id FROM browser_profiles WHERE id = ?')
 
 function normalizeAccountRow(row) {
   if (!row || typeof row !== 'object') return row
@@ -14,6 +16,25 @@ function normalizeAccountRow(row) {
   if (acc.emulator_name == null) acc.emulator_name = acc.mobile_emulator_name ?? ''
   if (acc.emulator_index == null) acc.emulator_index = acc.mobile_vm_index ?? ''
   return acc
+}
+
+function isConstraintError(err) {
+  const code =
+    err && typeof err === 'object' && 'code' in err ? String(/** @type {{ code?: string }} */ (err).code ?? '') : ''
+  const msg = err instanceof Error ? err.message : String(err)
+  return code.includes('SQLITE_CONSTRAINT') || msg.includes('FOREIGN KEY')
+}
+
+function validateAccountRelations({ proxy_id, browser_profile_id }) {
+  const proxyId = String(proxy_id ?? '').trim()
+  const browserProfileId = String(browser_profile_id ?? '').trim()
+  if (proxyId && !getProxyByIdStmt.get(proxyId)) {
+    return 'Selected proxy_id was not found in the database. Choose an existing proxy ID or “None”.'
+  }
+  if (browserProfileId && !getBrowserProfileByIdStmt.get(browserProfileId)) {
+    return 'Selected browser_profile_id was not found in the database. Choose an existing browser profile ID or “None”.'
+  }
+  return null
 }
 
 router.get('/', (_req, res) => {
@@ -38,6 +59,10 @@ router.post('/', (req, res) => {
     mobile_vm_index,
   } = accountCreatePayload(req.body)
   const id = newId('acc')
+  const relationError = validateAccountRelations({ proxy_id, browser_profile_id })
+  if (relationError) {
+    return sendJsonError(res, 400, relationError)
+  }
   try {
     db.prepare(
       `INSERT INTO accounts (
@@ -62,9 +87,7 @@ router.post('/', (req, res) => {
       mobile_vm_index,
     )
   } catch (e) {
-    const code = e && typeof e === 'object' && 'code' in e ? String(/** @type {{ code?: string }} */ (e).code) : ''
-    const msg = e instanceof Error ? e.message : String(e)
-    if (code.includes('SQLITE_CONSTRAINT') || msg.includes('FOREIGN KEY')) {
+    if (isConstraintError(e)) {
       return sendJsonError(
         res,
         400,
@@ -153,12 +176,33 @@ router.patch('/:id', (req, res) => {
   if (Object.keys(updates).length === 0) {
     return sendJsonData(res, 200, normalizeAccountRow(existing))
   }
+  const relationError = validateAccountRelations({
+    proxy_id: Object.prototype.hasOwnProperty.call(updates, 'proxy_id') ? updates.proxy_id : existing.proxy_id,
+    browser_profile_id: Object.prototype.hasOwnProperty.call(updates, 'browser_profile_id')
+      ? updates.browser_profile_id
+      : existing.browser_profile_id,
+  })
+  if (relationError) {
+    return sendJsonError(res, 400, relationError)
+  }
   const cols = Object.keys(updates)
   const setClause = cols.map((c) => `${c} = @${c}`).join(', ')
-  db.prepare(`UPDATE accounts SET ${setClause} WHERE id = @id`).run({
-    ...updates,
-    id,
-  })
+  try {
+    db.prepare(`UPDATE accounts SET ${setClause} WHERE id = @id`).run({
+      ...updates,
+      id,
+    })
+  } catch (e) {
+    if (isConstraintError(e)) {
+      return sendJsonError(
+        res,
+        400,
+        'Invalid proxy or browser profile: pick existing items from the lists or choose “None”.',
+      )
+    }
+    console.error(e)
+    return sendJsonError(res, 500, 'Internal server error')
+  }
   const updated = normalizeAccountRow(db.prepare('SELECT * FROM accounts WHERE id = ?').get(id))
   return sendJsonRow(res, 200, updated, 'Account missing after update')
 })
