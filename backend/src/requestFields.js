@@ -6,6 +6,12 @@ function has(o, k) {
   return o != null && Object.prototype.hasOwnProperty.call(o, k)
 }
 
+function normalizeNullableId(v) {
+  if (v == null) return null
+  const s = String(v).trim()
+  return s ? s : null
+}
+
 /** @param {Record<string, unknown> | null | undefined} body */
 export function accountFieldsFromBody(body) {
   const b = body ?? {}
@@ -19,10 +25,10 @@ export function accountFieldsFromBody(body) {
   else if (has(b, 'accountType')) out.account_type = trimStr(b.accountType)
   if (has(b, 'mobile_mode')) out.mobile_mode = trimStr(b.mobile_mode)
   else if (has(b, 'mode')) out.mobile_mode = trimStr(b.mode)
-  if (has(b, 'proxy_id')) out.proxy_id = b.proxy_id
-  else if (has(b, 'proxyId')) out.proxy_id = b.proxyId
-  if (has(b, 'browser_profile_id')) out.browser_profile_id = b.browser_profile_id
-  else if (has(b, 'browserProfileId')) out.browser_profile_id = b.browserProfileId
+  if (has(b, 'proxy_id')) out.proxy_id = normalizeNullableId(b.proxy_id)
+  else if (has(b, 'proxyId')) out.proxy_id = normalizeNullableId(b.proxyId)
+  if (has(b, 'browser_profile_id')) out.browser_profile_id = normalizeNullableId(b.browser_profile_id)
+  else if (has(b, 'browserProfileId')) out.browser_profile_id = normalizeNullableId(b.browserProfileId)
   if (has(b, 'browser_engine')) out.browser_engine = b.browser_engine
   else if (has(b, 'browserEngine')) out.browser_engine = b.browserEngine
   if (has(b, 'mobile_device_id')) out.mobile_device_id = trimStr(b.mobile_device_id)
