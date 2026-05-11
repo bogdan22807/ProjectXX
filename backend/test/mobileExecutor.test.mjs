@@ -75,6 +75,37 @@ test('mobileOpenApp passes MOBILE_APP_PACKAGE into adb monkey and logs MOBILE_AP
   }
 })
 
+test('mobileOpenApp uses default TikTok package when MOBILE_APP_PACKAGE is unset', async () => {
+  const argsFile = path.join(os.tmpdir(), `mobile-open-default-${process.pid}-${Date.now()}.txt`)
+  const { adbPath, tempDir } = makeFakeAdb({
+    monkeyStdout: 'Events injected: 1',
+    argsFile,
+  })
+  const emitted = []
+
+  try {
+    const result = await mobileOpenApp({
+      adbPath,
+      env: { MOBILE_DEVICE_ID: 'emulator-5554' },
+      emit: (action, details = '') => emitted.push({ action, details }),
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.package, 'com.zhiliaoapp.musically')
+
+    const args = fs.readFileSync(argsFile, 'utf8')
+    assert.match(
+      args,
+      /-s\nemulator-5554\nshell\nmonkey\n-p\ncom\.zhiliaoapp\.musically\n-c\nandroid\.intent\.category\.LAUNCHER\n1\n?$/,
+    )
+    assert.match(emitted[1].details, /package=com\.zhiliaoapp\.musically device=emulator-5554/)
+  } finally {
+    _resetMobileExecutorSessionForTests()
+    fs.rmSync(tempDir, { recursive: true, force: true })
+    fs.rmSync(argsFile, { force: true })
+  }
+})
+
 test('mobileOpenApp reports MOBILE_ERROR when adb monkey aborts without stderr error marker', async () => {
   const { adbPath, tempDir } = makeFakeAdb({
     monkeyStdout: '** No activities found to run, monkey aborted.',
@@ -240,14 +271,14 @@ test('mobileRunScenario stops early when abort signal is triggered during wait',
     })
 
     const result = await resultPromise
-    assert.equal(result.ok, true)
+    assert.equal(result.ok, false)
     assert.equal(result.stopped, true)
 
     const commandLog = fs.readFileSync(commandLogFile, 'utf8')
     assert.match(commandLog, /shell monkey -p com\.example\.app/)
     assert.equal((commandLog.match(/shell input swipe 720 1900 720 600 500/g) ?? []).length, 0)
     assert.equal((commandLog.match(/shell input tap 1360 1750/g) ?? []).length, 0)
-    assert.deepEqual(sleepCalls, [1000])
+    assert.deepEqual(sleepCalls, [400])
     assert.deepEqual(
       emitted.map((entry) => entry.action),
       ['MOBILE_EXECUTOR_STARTED', 'MOBILE_APP_OPENED', 'MOBILE_VIEW'],

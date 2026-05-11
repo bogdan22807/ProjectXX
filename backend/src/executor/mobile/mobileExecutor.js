@@ -77,6 +77,18 @@ function throwIfMobileStopRequested(opts, stage = '') {
 const MOBILE_SWIPE_ARGS = ['shell', 'input', 'swipe', '720', '1900', '720', '600', '500']
 const MOBILE_LIKE_ARGS = ['shell', 'input', 'tap', '1360', '1750']
 
+/** TikTok (global Android). Override with `MOBILE_APP_PACKAGE`. */
+const DEFAULT_MOBILE_APP_PACKAGE = 'com.zhiliaoapp.musically'
+
+/**
+ * @param {import('node:process').ProcessEnv | Record<string, string | undefined>} env
+ * @returns {string}
+ */
+function resolveMobileAppPackage(env) {
+  const fromEnv = String(env.MOBILE_APP_PACKAGE ?? '').trim()
+  return fromEnv || DEFAULT_MOBILE_APP_PACKAGE
+}
+
 /**
  * @param {number} ms
  * @returns {Promise<void>}
@@ -283,12 +295,7 @@ export async function mobileCheckDevice(opts = {}) {
 export async function mobileOpenApp(opts = {}) {
   ensureSessionStarted(opts)
   const env = opts.env ?? process.env
-  const pkg = String(env.MOBILE_APP_PACKAGE ?? '').trim()
-  if (!pkg) {
-    const msg = 'MOBILE_APP_PACKAGE is not set'
-    mobileError(opts, msg, 'open_app')
-    return { ok: false, error: msg }
-  }
+  const pkg = resolveMobileAppPackage(env)
   try {
     const { deviceId } = await resolveMobileDevice(opts)
     const result = await runAdb(
@@ -373,13 +380,13 @@ export async function mobileRunScenario(opts = {}) {
 }
 
 /**
- * Ends mobile executor session; optionally force-stops MOBILE_APP_PACKAGE when set.
+ * Ends mobile executor session; optionally force-stops the resolved app package (`MOBILE_APP_PACKAGE` or TikTok default).
  * @param {MobileExecutorOpts} [opts]
  */
 export async function mobileStop(opts = {}) {
   const env = opts.env ?? process.env
   const forceStop = opts.forceStopApp !== false
-  const pkg = String(env.MOBILE_APP_PACKAGE ?? '').trim()
+  const pkg = resolveMobileAppPackage(env)
   const hadSession = sessionStarted
 
   try {
