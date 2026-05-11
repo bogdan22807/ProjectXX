@@ -60,13 +60,20 @@ export function accountCreatePayload(body) {
     proxy_id: null,
     browser_profile_id: null,
     browser_engine: 'chromium',
-    mobile_device_id: null,
-    mobile_emulator_name: null,
-    mobile_vm_index: null,
+    mobile_device_id: '',
+    mobile_emulator_name: '',
+    mobile_vm_index: '',
     status: 'New',
   }
   const merged = { ...defaults, ...raw }
   merged.platform = 'TikTok'
+  const nameTrim = merged.name == null ? '' : String(merged.name).trim()
+  merged.name = nameTrim || 'Unnamed'
+  merged.login = merged.login == null ? '' : String(merged.login)
+  merged.cookies = merged.cookies == null ? '' : String(merged.cookies)
+  merged.mobile_device_id = merged.mobile_device_id == null ? '' : String(merged.mobile_device_id)
+  merged.mobile_emulator_name = merged.mobile_emulator_name == null ? '' : String(merged.mobile_emulator_name)
+  merged.mobile_vm_index = merged.mobile_vm_index == null ? '' : String(merged.mobile_vm_index)
   return merged
 }
 
@@ -75,6 +82,17 @@ export function accountPatchPayload(body) {
   const p = accountFieldsFromBody(body)
   if (Object.prototype.hasOwnProperty.call(p, 'platform')) {
     p.platform = 'TikTok'
+  }
+  /** DB columns are NOT NULL TEXT — never bind SQLite NULL for these. */
+  const nnKeys = ['login', 'cookies', 'mobile_proxy_id', 'mobile_device_id', 'mobile_emulator_name', 'mobile_vm_index']
+  for (const k of nnKeys) {
+    if (!Object.prototype.hasOwnProperty.call(p, k)) continue
+    const v = p[k]
+    p[k] = v == null ? '' : String(v)
+  }
+  if (Object.prototype.hasOwnProperty.call(p, 'name')) {
+    const t = p.name == null ? '' : String(p.name).trim()
+    p.name = t || 'Unnamed'
   }
   return p
 }

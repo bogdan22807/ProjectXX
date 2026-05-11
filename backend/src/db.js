@@ -133,6 +133,12 @@ try {
       WHERE TRIM(COALESCE(account_type, 'browser')) = 'mobile'
         AND TRIM(COALESCE(proxy_id, '')) <> ''`,
   ).run()
+  db.prepare(
+    `UPDATE accounts
+        SET browser_profile_id = NULL
+      WHERE LOWER(TRIM(COALESCE(account_type, ''))) = 'mobile'
+        AND TRIM(COALESCE(browser_profile_id, '')) <> ''`,
+  ).run()
 } catch {
   /* ignore */
 }

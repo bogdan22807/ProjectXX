@@ -181,7 +181,7 @@ export function accountToApiBody(input: {
     mobile_mode: input.mode ?? 'mumu',
     proxy_id: input.accountType === 'mobile' ? null : normalizeNullableId(input.proxyId),
     mobile_proxy_id: input.accountType === 'mobile' ? normalizeNullableId(input.mobileProxyId) : null,
-    browser_profile_id: normalizeNullableId(input.profileId),
+    browser_profile_id: input.accountType === 'mobile' ? null : normalizeNullableId(input.profileId),
     browser_engine: input.browserEngine,
     device_id: input.deviceId ?? null,
     emulator_name: input.emulatorName ?? null,

@@ -32,6 +32,14 @@ function isConstraintError(err) {
   return code.includes('SQLITE_CONSTRAINT') || msg.includes('FOREIGN KEY')
 }
 
+function constraintAccountMessage(err) {
+  const msg = err instanceof Error ? err.message : String(err)
+  if (msg.includes('NOT NULL')) {
+    return 'Account save failed: a required text field was empty. This is usually a server bug; try again or report the error text.'
+  }
+  return 'Invalid proxy or browser profile: pick existing items from the lists or choose “None”.'
+}
+
 function normalizeAccountRelations({ account_type, proxy_id, browser_profile_id, mobile_proxy_id }) {
   const accountType = String(account_type ?? 'browser').trim().toLowerCase()
   const isMobile = accountType === 'mobile'
@@ -121,11 +129,7 @@ router.post('/', (req, res) => {
     )
   } catch (e) {
     if (isConstraintError(e)) {
-      return sendJsonError(
-        res,
-        400,
-        'Invalid proxy or browser profile: pick existing items from the lists or choose “None”.',
-      )
+      return sendJsonError(res, 400, constraintAccountMessage(e))
     }
     console.error(e)
     return sendJsonError(res, 500, 'Internal server error')
@@ -237,11 +241,7 @@ router.patch('/:id', (req, res) => {
     })
   } catch (e) {
     if (isConstraintError(e)) {
-      return sendJsonError(
-        res,
-        400,
-        'Invalid proxy or browser profile: pick existing items from the lists or choose “None”.',
-      )
+      return sendJsonError(res, 400, constraintAccountMessage(e))
     }
     console.error(e)
     return sendJsonError(res, 500, 'Internal server error')
