@@ -15,6 +15,8 @@ test('accountCreatePayload keeps proxy_id and browser_profile_id nullable when o
   assert.equal(payload.proxy_id, null)
   assert.equal(payload.browser_profile_id, null)
   assert.equal(payload.mobile_device_id, 'emulator-5554')
+  assert.equal(payload.mobile_emulator_name, '')
+  assert.equal(payload.mobile_vm_index, '')
   assert.equal(payload.account_type, 'mobile')
   assert.equal(payload.mobile_mode, 'manual')
 })
@@ -38,4 +40,16 @@ test('accountPatchPayload normalizes blank camelCase proxy/profile selections to
 
   assert.equal(payload.proxy_id, null)
   assert.equal(payload.browser_profile_id, null)
+})
+
+test('accountPatchPayload coerces null NOT NULL text columns to empty string', () => {
+  const payload = accountPatchPayload({
+    mobile_emulator_name: null,
+    mobile_vm_index: null,
+    login: null,
+  })
+
+  assert.equal(payload.mobile_emulator_name, '')
+  assert.equal(payload.mobile_vm_index, '')
+  assert.equal(payload.login, '')
 })
