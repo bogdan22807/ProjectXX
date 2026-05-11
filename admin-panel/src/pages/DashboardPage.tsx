@@ -86,7 +86,7 @@ function formFromAccount(a: Account): FormState {
     name: a.name,
     login: a.login,
     cookies: a.cookies,
-    proxyId: a.proxyId ?? '',
+    proxyId: a.accountType === 'mobile' ? a.mobileProxyId ?? '' : a.proxyId ?? '',
     profileId: a.profileId ?? '',
     browserEngine: a.browserEngine,
     deviceId: a.deviceId ?? '',
@@ -292,7 +292,8 @@ export function DashboardPage() {
       login: editForm.login.trim(),
       cookies: editForm.cookies,
       platform: 'TikTok',
-      proxyId: editForm.proxyId || null,
+      proxyId: account?.accountType === 'mobile' ? null : editForm.proxyId || null,
+      mobileProxyId: account?.accountType === 'mobile' ? editForm.proxyId || null : undefined,
       profileId: account?.accountType === 'mobile' ? null : editForm.profileId || null,
       browserEngine: editForm.browserEngine,
       deviceId: account?.accountType === 'mobile' ? editForm.deviceId.trim() || null : undefined,
@@ -356,7 +357,8 @@ export function DashboardPage() {
         platform: 'TikTok',
         accountType: 'mobile',
         mode: 'manual',
-        proxyId: manualMobileForm.proxyId || null,
+        proxyId: null,
+        mobileProxyId: manualMobileForm.proxyId || null,
         profileId: null,
         browserEngine: 'chromium',
         deviceId,
@@ -384,6 +386,13 @@ export function DashboardPage() {
     if (!id) return '—'
     const p = proxies.find((x) => x.id === id)
     return p ? `${p.provider} · ${p.host}${p.port ? `:${p.port}` : ''}` : '—'
+  }
+
+  function accountProxyLabel(a: Account) {
+    if (a.accountType === 'mobile') {
+      return proxyLabel(a.mobileProxyId ?? null)
+    }
+    return proxyLabel(a.proxyId)
   }
 
   function accountTypeLabel(a: Account) {
@@ -574,9 +583,9 @@ export function DashboardPage() {
                     <div className="min-w-0">
                       <span
                         className="block truncate text-[13px] leading-snug text-zinc-400"
-                        title={proxyLabel(a.proxyId)}
+                        title={accountProxyLabel(a)}
                       >
-                        {proxyLabel(a.proxyId)}
+                        {accountProxyLabel(a)}
                       </span>
                     </div>
                   </td>
@@ -875,6 +884,10 @@ export function DashboardPage() {
               ))}
             </select>
           </label>
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Прокси для mobile/MuMu аккаунта сохраняется как привязка к аккаунту, но не включается в эмулятор автоматически.
+            Его нужно вручную настроить внутри Android/MuMu.
+          </p>
           <label className="block text-xs font-medium text-zinc-400">
             ADB Device ID
             <input

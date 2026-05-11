@@ -55,6 +55,7 @@ interface AppStateValue {
     accountType?: AccountType
     mode?: Account['mode']
     proxyId: string | null
+    mobileProxyId?: string | null
     profileId: string | null
     browserEngine: BrowserEngine
     status: AccountStatus
@@ -207,6 +208,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       accountType?: AccountType
       mode?: Account['mode']
       proxyId: string | null
+      mobileProxyId?: string | null
       profileId: string | null
       browserEngine: BrowserEngine
       status: AccountStatus
@@ -225,6 +227,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
             accountType: input.accountType,
             mode: input.mode,
             proxyId: input.proxyId,
+            mobileProxyId: input.mobileProxyId,
             profileId: input.profileId,
             browserEngine: input.browserEngine,
             status: input.status,

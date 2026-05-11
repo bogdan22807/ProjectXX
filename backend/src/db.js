@@ -56,6 +56,7 @@ db.exec(`
     browser_profile_id TEXT,
     account_type TEXT NOT NULL DEFAULT 'browser',
     mobile_mode TEXT NOT NULL DEFAULT 'mumu',
+    mobile_proxy_id TEXT NOT NULL DEFAULT '',
     mobile_device_id TEXT NOT NULL DEFAULT '',
     mobile_emulator_name TEXT NOT NULL DEFAULT '',
     mobile_vm_index TEXT NOT NULL DEFAULT '',
@@ -110,12 +111,31 @@ ensureColumn('accounts', 'proxy_id', 'TEXT')
 ensureColumn('accounts', 'browser_profile_id', 'TEXT')
 ensureColumn('accounts', 'account_type', "TEXT NOT NULL DEFAULT 'browser'")
 ensureColumn('accounts', 'mobile_mode', "TEXT NOT NULL DEFAULT 'mumu'")
+ensureColumn('accounts', 'mobile_proxy_id', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'mobile_device_id', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'mobile_emulator_name', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'mobile_vm_index', "TEXT NOT NULL DEFAULT ''")
 ensureColumn('accounts', 'status', "TEXT NOT NULL DEFAULT 'New'")
 ensureColumn('accounts', 'created_at', "TEXT NOT NULL DEFAULT (datetime('now'))")
 ensureColumn('accounts', 'browser_engine', "TEXT NOT NULL DEFAULT 'chromium'")
+
+try {
+  db.prepare(
+    `UPDATE accounts
+        SET mobile_proxy_id = proxy_id
+      WHERE TRIM(COALESCE(account_type, 'browser')) = 'mobile'
+        AND TRIM(COALESCE(proxy_id, '')) <> ''
+        AND TRIM(COALESCE(mobile_proxy_id, '')) = ''`,
+  ).run()
+  db.prepare(
+    `UPDATE accounts
+        SET proxy_id = NULL
+      WHERE TRIM(COALESCE(account_type, 'browser')) = 'mobile'
+        AND TRIM(COALESCE(proxy_id, '')) <> ''`,
+  ).run()
+} catch {
+  /* ignore */
+}
 
 export function newId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
