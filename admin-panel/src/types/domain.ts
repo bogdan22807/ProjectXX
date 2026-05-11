@@ -42,6 +42,7 @@ export interface Account {
   accountType: AccountType
   mode: MobileAccountMode
   proxyId: string | null
+  mobileProxyId: string | null
   profileId: string | null
   browserEngine: BrowserEngine
   deviceId: string | null

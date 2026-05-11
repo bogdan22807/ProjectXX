@@ -25,6 +25,8 @@ export function accountFieldsFromBody(body) {
   else if (has(b, 'accountType')) out.account_type = trimStr(b.accountType)
   if (has(b, 'mobile_mode')) out.mobile_mode = trimStr(b.mobile_mode)
   else if (has(b, 'mode')) out.mobile_mode = trimStr(b.mode)
+  if (has(b, 'mobile_proxy_id')) out.mobile_proxy_id = normalizeNullableId(b.mobile_proxy_id)
+  else if (has(b, 'mobileProxyId')) out.mobile_proxy_id = normalizeNullableId(b.mobileProxyId)
   if (has(b, 'proxy_id')) out.proxy_id = normalizeNullableId(b.proxy_id)
   else if (has(b, 'proxyId')) out.proxy_id = normalizeNullableId(b.proxyId)
   if (has(b, 'browser_profile_id')) out.browser_profile_id = normalizeNullableId(b.browser_profile_id)
@@ -54,6 +56,7 @@ export function accountCreatePayload(body) {
     platform: 'TikTok',
     account_type: 'browser',
     mobile_mode: 'mumu',
+    mobile_proxy_id: null,
     proxy_id: null,
     browser_profile_id: null,
     browser_engine: 'chromium',

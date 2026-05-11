@@ -17,6 +17,7 @@ export type ApiAccount = {
   platform: string
   account_type?: string
   proxy_id: string | null
+  mobile_proxy_id?: string | null
   browser_profile_id: string | null
   browser_engine?: string
   mobile_mode?: string
@@ -95,6 +96,7 @@ export function mapAccount(row: ApiAccount): Account {
     accountType: asAccountType(row.account_type),
     mode: asMobileMode(row.mobile_mode ?? row.mode),
     proxyId: row.proxy_id ?? null,
+    mobileProxyId: normalizeNullableId(row.mobile_proxy_id ?? null),
     profileId: row.browser_profile_id ?? null,
     browserEngine: asBrowserEngine(row.browser_engine),
     deviceId: row.device_id ?? null,
@@ -162,6 +164,7 @@ export function accountToApiBody(input: {
   accountType?: AccountType
   mode?: MobileAccountMode
   proxyId: string | null
+  mobileProxyId?: string | null
   profileId: string | null
   browserEngine: BrowserEngine
   deviceId?: string | null
@@ -176,7 +179,8 @@ export function accountToApiBody(input: {
     platform: input.platform,
     account_type: input.accountType ?? 'browser',
     mobile_mode: input.mode ?? 'mumu',
-    proxy_id: normalizeNullableId(input.proxyId),
+    proxy_id: input.accountType === 'mobile' ? null : normalizeNullableId(input.proxyId),
+    mobile_proxy_id: input.accountType === 'mobile' ? normalizeNullableId(input.mobileProxyId) : null,
     browser_profile_id: normalizeNullableId(input.profileId),
     browser_engine: input.browserEngine,
     device_id: input.deviceId ?? null,
@@ -195,6 +199,7 @@ export function accountPatchToApi(patch: Partial<Omit<Account, 'id'>>) {
   if (patch.accountType !== undefined) body.account_type = patch.accountType
   if (patch.mode !== undefined) body.mobile_mode = patch.mode
   if (patch.proxyId !== undefined) body.proxy_id = normalizeNullableId(patch.proxyId)
+  if (patch.mobileProxyId !== undefined) body.mobile_proxy_id = normalizeNullableId(patch.mobileProxyId)
   if (patch.profileId !== undefined) body.browser_profile_id = normalizeNullableId(patch.profileId)
   if (patch.browserEngine !== undefined) body.browser_engine = patch.browserEngine
   if (patch.deviceId !== undefined) body.device_id = patch.deviceId
