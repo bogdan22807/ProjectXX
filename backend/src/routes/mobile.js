@@ -7,7 +7,7 @@ import {
   mobileStop,
 } from '../executor/mobile/mobileExecutor.js'
 import { ensureMuMuAccountPrepared, launchMuMuAccountEmulator } from '../executor/mobile/mumuManager.js'
-import { assignFreeAdbDeviceToAccount } from '../services/adbDeviceRegistry.js'
+import { assignFreeEmulatorToMobileAccount } from '../services/emulatorRegistry.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
@@ -34,7 +34,7 @@ function getAccountById(accountId) {
 function ensureAccountHasAdbSerial(accountRow) {
   const serial = String(accountRow?.mobile_device_id ?? '').trim()
   if (serial) return accountRow
-  assignFreeAdbDeviceToAccount(String(accountRow?.id ?? '').trim())
+  assignFreeEmulatorToMobileAccount(String(accountRow?.id ?? '').trim())
   return getAccountById(String(accountRow?.id ?? '').trim())
 }
 
@@ -238,7 +238,7 @@ router.post('/scenario', async (req, res) => {
         res,
         400,
         mode === 'manual'
-          ? 'Manual mobile account is missing adb_serial (set ADB device id or use POST /adb-devices/assign)'
+          ? 'Manual mobile account is missing adb_serial (bind an emulator in Emulator Manager or POST /emulators/assign)'
           : 'Mobile account is missing adb_serial',
       )
     }

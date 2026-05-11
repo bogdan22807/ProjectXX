@@ -1,5 +1,5 @@
 import { runAdbDevices } from '../executor/mobile/adbRunner.js'
-import { seedAdbDevicesFromAccounts, syncAdbDevicesFromScan } from './adbDeviceRegistry.js'
+import { seedEmulatorsFromAccounts, syncEmulatorsFromAdb } from './emulatorRegistry.js'
 
 let timerId = /** @type {ReturnType<typeof setInterval> | null} */ (null)
 
@@ -14,7 +14,7 @@ function readIntervalMs() {
 async function tick() {
   try {
     const stdout = await runAdbDevices({})
-    syncAdbDevicesFromScan(stdout)
+    syncEmulatorsFromAdb(stdout)
   } catch (err) {
     console.error('[adb-device-scanner]', err instanceof Error ? err.message : String(err))
   }
@@ -22,7 +22,7 @@ async function tick() {
 
 export function startAdbDeviceScanner() {
   if (timerId) return
-  seedAdbDevicesFromAccounts()
+  seedEmulatorsFromAccounts()
   void tick()
   timerId = setInterval(() => {
     void tick()

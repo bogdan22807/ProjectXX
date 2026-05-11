@@ -16,10 +16,12 @@ import {
   accountPatchToApi,
   accountToApiBody,
   mapAccount,
+  mapFarmEmulator,
   mapLog,
   mapProfile,
   mapProxy,
   type ApiAccount,
+  type ApiFarmEmulator,
   type ApiLog,
   type ApiProfile,
   type ApiProxy,
@@ -30,6 +32,7 @@ import type {
   AccountStatus,
   BrowserEngine,
   BrowserProfile,
+  FarmEmulator,
   LogEntry,
   Platform,
   ProfileStatus,
@@ -41,6 +44,7 @@ interface AppStateValue {
   proxies: Proxy[]
   profiles: BrowserProfile[]
   logs: LogEntry[]
+  emulators: FarmEmulator[]
   selectedAccountIds: Set<string>
   setSelectedAccountIds: Dispatch<SetStateAction<Set<string>>>
   selectedProxyIds: Set<string>
@@ -87,6 +91,13 @@ interface AppStateValue {
   openMobileEmulator: (accountId: string) => Promise<void>
   markMobileReady: (accountId: string) => Promise<void>
   stopMobileSession: (accountId: string) => Promise<void>
+  refreshEmulators: () => Promise<void>
+  syncEmulators: () => Promise<void>
+  createFarmEmulator: (emulatorName: string, mumuInstanceName: string) => Promise<void>
+  launchFarmEmulator: (emulatorId: string) => Promise<void>
+  shutdownFarmEmulator: (emulatorId: string) => Promise<void>
+  openFarmEmulatorWindow: (emulatorId: string) => Promise<void>
+  bindFarmEmulator: (emulatorId: string, accountId: string) => Promise<void>
   addProxy: (input: {
     provider: string
     host: string
@@ -131,6 +142,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const [proxies, setProxies] = useState<Proxy[]>([])
   const [profiles, setProfiles] = useState<BrowserProfile[]>([])
   const [logs, setLogs] = useState<LogEntry[]>([])
+  const [emulators, setEmulators] = useState<FarmEmulator[]>([])
 
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<string>>(new Set())
   const [selectedProxyIds, setSelectedProxyIds] = useState<Set<string>>(new Set())
@@ -165,6 +177,65 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setProxies(p.map(mapProxy))
     setLogs(l.map(mapLog))
   }, [])
+
+  const refreshEmulators = useCallback(async () => {
+    try {
+      const rows = await apiGet<ApiFarmEmulator[]>('/emulators')
+      setEmulators(rows.map(mapFarmEmulator))
+    } catch (e) {
+      console.error('refreshEmulators failed', e)
+      setLastError(formatApiFailure(e))
+    }
+  }, [])
+
+  const syncEmulators = useCallback(async () => {
+    try {
+      const res = await apiPost<{ ok: boolean; devices?: ApiFarmEmulator[] }>('/emulators/sync', {})
+      setEmulators((res.devices ?? []).map(mapFarmEmulator))
+    } catch (e) {
+      console.error('syncEmulators failed', e)
+      setLastError(formatApiFailure(e))
+    }
+  }, [])
+
+  const createFarmEmulator = useCallback(
+    async (emulatorName: string, mumuInstanceName: string) => {
+      await apiPost('/emulators', {
+        emulator_name: emulatorName,
+        mumu_instance_name: mumuInstanceName,
+      })
+      await refreshEmulators()
+    },
+    [refreshEmulators],
+  )
+
+  const launchFarmEmulator = useCallback(
+    async (emulatorId: string) => {
+      await apiPost(`/emulators/${encodeURIComponent(emulatorId)}/launch`, {})
+      await refreshEmulators()
+    },
+    [refreshEmulators],
+  )
+
+  const shutdownFarmEmulator = useCallback(
+    async (emulatorId: string) => {
+      await apiPost(`/emulators/${encodeURIComponent(emulatorId)}/shutdown`, {})
+      await refreshEmulators()
+    },
+    [refreshEmulators],
+  )
+
+  const openFarmEmulatorWindow = useCallback(async (emulatorId: string) => {
+    await apiPost(`/emulators/${encodeURIComponent(emulatorId)}/open`, {})
+  }, [])
+
+  const bindFarmEmulator = useCallback(
+    async (emulatorId: string, accountId: string) => {
+      await apiPost(`/emulators/${encodeURIComponent(emulatorId)}/bind`, { accountId })
+      await Promise.all([refreshEmulators(), refreshAccountsLogsProxies()])
+    },
+    [refreshEmulators, refreshAccountsLogsProxies],
+  )
 
   useEffect(() => {
     startTransition(() => {
@@ -676,6 +747,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       proxies,
       profiles,
       logs,
+      emulators,
       selectedAccountIds,
       setSelectedAccountIds,
       selectedProxyIds,
@@ -697,6 +769,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       openMobileEmulator,
       markMobileReady,
       stopMobileSession,
+      refreshEmulators,
+      syncEmulators,
+      createFarmEmulator,
+      launchFarmEmulator,
+      shutdownFarmEmulator,
+      openFarmEmulatorWindow,
+      bindFarmEmulator,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,
@@ -713,6 +792,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       proxies,
       profiles,
       logs,
+      emulators,
       selectedAccountIds,
       selectedProxyIds,
       selectedProfileIds,
@@ -731,6 +811,13 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       openMobileEmulator,
       markMobileReady,
       stopMobileSession,
+      refreshEmulators,
+      syncEmulators,
+      createFarmEmulator,
+      launchFarmEmulator,
+      shutdownFarmEmulator,
+      openFarmEmulatorWindow,
+      bindFarmEmulator,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,

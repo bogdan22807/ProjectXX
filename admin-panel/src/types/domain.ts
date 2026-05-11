@@ -78,3 +78,18 @@ export interface LogEntry {
   action: string
   details: string
 }
+
+export type EmulatorFarmStatus = 'online' | 'offline' | 'busy'
+
+export interface FarmEmulator {
+  id: string
+  emulatorName: string
+  mumuInstanceName: string
+  adbSerial: string | null
+  linkedAccountId: string | null
+  linkedAccountName: string | null
+  linkedAccountLogin: string | null
+  status: EmulatorFarmStatus
+  lastSeen: number
+  createdAt: string | null
+}
