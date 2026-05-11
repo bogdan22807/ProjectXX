@@ -3,6 +3,8 @@ import type {
   AccountType,
   BrowserEngine,
   BrowserProfile,
+  EmulatorFarmStatus,
+  FarmEmulator,
   LogEntry,
   MobileAccountMode,
   Platform,
@@ -187,6 +189,37 @@ export function accountToApiBody(input: {
     emulator_name: input.emulatorName ?? null,
     emulator_index: input.emulatorIndex ?? null,
     status: input.status,
+  }
+}
+
+export type ApiFarmEmulator = {
+  id: string
+  emulator_name: string
+  mumu_instance_name: string
+  adb_serial: string | null
+  linked_account_id: string | null
+  linked_account_name?: string | null
+  linked_account_login?: string | null
+  status: string
+  last_seen: number
+  created_at?: string | null
+}
+
+export function mapFarmEmulator(row: ApiFarmEmulator): FarmEmulator {
+  const s = String(row.status ?? '').trim().toLowerCase()
+  const status: EmulatorFarmStatus =
+    s === 'online' || s === 'offline' || s === 'busy' ? s : 'offline'
+  return {
+    id: row.id,
+    emulatorName: row.emulator_name ?? '',
+    mumuInstanceName: row.mumu_instance_name ?? '',
+    adbSerial: row.adb_serial ?? null,
+    linkedAccountId: row.linked_account_id ?? null,
+    linkedAccountName: row.linked_account_name ?? null,
+    linkedAccountLogin: row.linked_account_login ?? null,
+    status,
+    lastSeen: Number(row.last_seen ?? 0),
+    createdAt: row.created_at ?? null,
   }
 }
 

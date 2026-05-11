@@ -4,6 +4,7 @@ import { MainLayout } from './components/layout/MainLayout'
 import { DashboardPage } from './pages/DashboardPage'
 import { ProxiesPage } from './pages/ProxiesPage'
 import { BrowserProfilesPage } from './pages/BrowserProfilesPage'
+import { EmulatorManagerPage } from './pages/EmulatorManagerPage'
 import { LogsPage } from './pages/LogsPage'
 
 const routerBasename =
@@ -18,6 +19,7 @@ export default function App() {
         <Routes>
           <Route element={<MainLayout />}>
             <Route index element={<DashboardPage />} />
+            <Route path="emulators" element={<EmulatorManagerPage />} />
             <Route path="proxies" element={<ProxiesPage />} />
             <Route path="profiles" element={<BrowserProfilesPage />} />
             <Route path="logs" element={<LogsPage />} />

@@ -4,7 +4,7 @@ registerProcessGlobalErrorHandlers()
 
 import express from 'express'
 import accountsRouter from './routes/accounts.js'
-import adbDevicesRouter from './routes/adbDevices.js'
+import emulatorsRouter from './routes/emulators.js'
 import proxiesRouter from './routes/proxies.js'
 import profilesRouter from './routes/profiles.js'
 import logsRouter from './routes/logs.js'
@@ -34,7 +34,7 @@ function mountApi(path, router) {
 }
 
 mountApi('/accounts', accountsRouter)
-mountApi('/adb-devices', adbDevicesRouter)
+mountApi('/emulators', emulatorsRouter)
 mountApi('/proxies', proxiesRouter)
 mountApi('/profiles', profilesRouter)
 mountApi('/logs', logsRouter)

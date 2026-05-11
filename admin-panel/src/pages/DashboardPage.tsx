@@ -51,7 +51,6 @@ type ManualMobileFormState = {
   name: string
   login: string
   proxyId: string
-  deviceId: string
 }
 
 const emptyForm = (): FormState => ({
@@ -71,7 +70,6 @@ const emptyManualMobileForm = (): ManualMobileFormState => ({
   name: '',
   login: '',
   proxyId: '',
-  deviceId: '',
 })
 
 function isMacOsClient() {
@@ -150,24 +148,17 @@ function AccountFields({
             Прокси для mobile account временно не сохраняется через UI. Сначала добавьте аккаунт без прокси, а сам
             прокси настройте вручную внутри MuMu / Android Emulator.
           </div>
-          <label className="block text-xs font-medium text-zinc-400">
-            ADB Device ID
-            <input
-              className={fieldClassMono}
-              value={form.deviceId}
-              onChange={(e) => setForm((f) => ({ ...f, deviceId: e.target.value }))}
-              placeholder="emulator-5554"
-            />
-          </label>
-          <label className="block text-xs font-medium text-zinc-400">
-            Имя эмулятора
-            <input
-              className={fieldClass}
-              value={form.emulatorName}
-              onChange={(e) => setForm((f) => ({ ...f, emulatorName: e.target.value }))}
-              placeholder={accountMode === 'manual' ? 'Manual Android' : 'MuMu 1'}
-            />
-          </label>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs leading-relaxed text-zinc-400">
+            ADB serial и привязка к эмулятору выполняются только через{' '}
+            <Link to="/emulators" className="text-violet-400 underline hover:text-violet-300">
+              Emulator Manager
+            </Link>
+            . Ручной ввод device id, serial или порта отключён.
+          </div>
+          <div className="text-xs text-zinc-500">
+            <span className="text-zinc-600">Текущий ADB serial: </span>
+            <span className="font-mono text-zinc-300">{form.deviceId?.trim() ? form.deviceId : '— не привязан'}</span>
+          </div>
           <p className="text-xs text-zinc-500">
             Mobile mode: <span className="font-mono text-zinc-400">{accountMode}</span>
           </p>
@@ -299,8 +290,6 @@ export function DashboardPage() {
       proxyId: account?.accountType === 'mobile' ? null : editForm.proxyId || null,
       profileId: account?.accountType === 'mobile' ? null : editForm.profileId || null,
       browserEngine: editForm.browserEngine,
-      deviceId: account?.accountType === 'mobile' ? editForm.deviceId.trim() || null : undefined,
-      emulatorName: account?.accountType === 'mobile' ? editForm.emulatorName.trim() || null : undefined,
       status: editForm.status,
     })
     closeEdit()
@@ -345,16 +334,11 @@ export function DashboardPage() {
 
   async function submitManualMobileAccount() {
     if (manualMobileSubmitting) return
-    const deviceId = manualMobileForm.deviceId.trim()
-    if (!deviceId) {
-      setManualMobileError('ADB Device ID is required.')
-      return
-    }
     setManualMobileSubmitting(true)
     setManualMobileError(null)
     try {
       const ok = await addAccount({
-        name: manualMobileForm.name.trim() || `Manual Android ${deviceId}`,
+        name: manualMobileForm.name.trim() || 'Manual Android',
         login: manualMobileForm.login.trim(),
         cookies: '',
         platform: 'TikTok',
@@ -364,10 +348,10 @@ export function DashboardPage() {
         mobileProxyId: null,
         profileId: null,
         browserEngine: 'chromium',
-        deviceId,
-        emulatorName: null,
+        deviceId: null,
+        emulatorName: manualMobileForm.name.trim() || 'Manual Android',
         emulatorIndex: null,
-        status: 'ready',
+        status: 'setup_required',
       })
       if (ok) {
         closeManualMobileModal()
@@ -544,7 +528,7 @@ export function DashboardPage() {
                 <th className={tableCellHeaderClass}>Тип</th>
                 <th className={tableCellHeaderClass}>Mode</th>
                 <th className={tableCellHeaderClass}>Прокси</th>
-                <th className={tableCellHeaderClass}>ADB Device ID</th>
+                <th className={tableCellHeaderClass}>ADB serial</th>
                 <th className={tableCellHeaderClass}>Статус</th>
                 <th className={`${tableCellHeaderClass} text-right`}>Действия</th>
               </tr>
@@ -872,15 +856,13 @@ export function DashboardPage() {
             Пока сохраняем mobile account без прокси. Если прокси понадобится позже, настройте его вручную внутри
             Android / MuMu Emulator.
           </p>
-          <label className="block text-xs font-medium text-zinc-400">
-            ADB Device ID
-            <input
-              className={fieldClassMono}
-              value={manualMobileForm.deviceId}
-              onChange={(e) => setManualMobileForm((f) => ({ ...f, deviceId: e.target.value }))}
-              placeholder="emulator-5554"
-            />
-          </label>
+          <p className="text-xs leading-relaxed text-zinc-500">
+            ADB serial не вводится здесь: после создания аккаунта откройте{' '}
+            <Link to="/emulators" className="text-violet-400 underline hover:text-violet-300">
+              Emulator Manager
+            </Link>{' '}
+            и привяжите устройство к аккаунту.
+          </p>
           {manualMobileError ? <p className="text-sm text-rose-300">{manualMobileError}</p> : null}
         </div>
       </Modal>
