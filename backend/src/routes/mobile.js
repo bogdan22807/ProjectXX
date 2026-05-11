@@ -57,7 +57,7 @@ function mobileEnvForAccount(account) {
 
 /**
  * POST body: { accountId: string }
- * Runs ADB check_device then open_app (MuMu / QA). Uses process.env MOBILE_DEVICE_ID, MOBILE_APP_PACKAGE.
+ * Runs ADB check_device then open_app (MuMu / QA). Uses account `MOBILE_DEVICE_ID` when set; app package from `MOBILE_APP_PACKAGE` or TikTok default.
  */
 router.post('/qa-open', async (req, res) => {
   const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
@@ -281,7 +281,7 @@ router.post('/scenario', async (req, res) => {
 
 /**
  * POST body: { accountId: string }
- * Stops mobile session (force-stop when MOBILE_APP_PACKAGE is set).
+ * Stops mobile session (force-stop for `MOBILE_APP_PACKAGE` when set, otherwise TikTok default package).
  */
 router.post('/stop', async (req, res) => {
   const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
