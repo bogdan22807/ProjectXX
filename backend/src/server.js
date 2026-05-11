@@ -4,12 +4,14 @@ registerProcessGlobalErrorHandlers()
 
 import express from 'express'
 import accountsRouter from './routes/accounts.js'
+import adbDevicesRouter from './routes/adbDevices.js'
 import proxiesRouter from './routes/proxies.js'
 import profilesRouter from './routes/profiles.js'
 import logsRouter from './routes/logs.js'
 import warmupRouter from './routes/warmup.js'
 import warmupTestRunRouter from './routes/warmupTestRun.js'
 import mobileRouter from './routes/mobile.js'
+import { startAdbDeviceScanner } from './services/adbDeviceScanner.js'
 import { sendJsonData, sendJsonError, sendJsonSuccess } from './sendJson.js'
 
 const app = express()
@@ -32,6 +34,7 @@ function mountApi(path, router) {
 }
 
 mountApi('/accounts', accountsRouter)
+mountApi('/adb-devices', adbDevicesRouter)
 mountApi('/proxies', proxiesRouter)
 mountApi('/profiles', profilesRouter)
 mountApi('/logs', logsRouter)
@@ -54,4 +57,5 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, () => {
   console.log(`API listening on http://localhost:${PORT}`)
+  startAdbDeviceScanner()
 })

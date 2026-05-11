@@ -74,6 +74,19 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
   );
+
+  CREATE TABLE IF NOT EXISTS adb_devices (
+    id TEXT PRIMARY KEY,
+    adb_serial TEXT NOT NULL UNIQUE,
+    status TEXT NOT NULL DEFAULT 'offline',
+    linked_account_id TEXT,
+    last_seen INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY (linked_account_id) REFERENCES accounts(id) ON DELETE SET NULL
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_adb_devices_status_serial ON adb_devices(status, adb_serial);
+  CREATE INDEX IF NOT EXISTS idx_adb_devices_linked ON adb_devices(linked_account_id);
 `)
 
 ensureColumn('proxies', 'provider', "TEXT NOT NULL DEFAULT ''")

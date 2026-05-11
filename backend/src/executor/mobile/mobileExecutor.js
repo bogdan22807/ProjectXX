@@ -3,12 +3,10 @@
  * Does not depend on browser executor or DB-backed account logs — uses stdout markers for QA.
  */
 
-import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
-
 import { filterOnlineDevices, parseAdbDevicesList } from './adbDevices.js'
+import { runAdb, runAdbDevices } from './adbRunner.js'
 
-const execFileAsync = promisify(execFile)
+export { runAdb, runAdbDevices } from './adbRunner.js'
 
 /** @typedef {'check_device' | 'open_app' | 'scenario' | 'stop'} MobileExecutorCommand */
 
@@ -164,42 +162,6 @@ function getMobileScenarioConfig(env) {
     throw new Error('MOBILE_VIEW_MAX_MS must be >= MOBILE_VIEW_MIN_MS')
   }
   return { swipesCount, viewMinMs, viewMaxMs, likeChance }
-}
-
-/**
- * @param {{ adbPath?: string; timeoutMs?: number }} [opts]
- * @returns {Promise<string>}
- */
-async function runAdbDevices(opts = {}) {
-  const adb = opts.adbPath ?? 'adb'
-  const timeoutMs = opts.timeoutMs ?? 25_000
-  const { stdout, stderr } = await execFileAsync(adb, ['devices'], {
-    timeout: timeoutMs,
-    maxBuffer: 2 * 1024 * 1024,
-    encoding: 'utf8',
-    windowsHide: true,
-  })
-  const errText = String(stderr ?? '').trim()
-  if (errText && !String(stdout ?? '').trim()) {
-    throw new Error(errText)
-  }
-  return String(stdout ?? '')
-}
-
-/**
- * @param {string} deviceId
- * @param {string[]} adbArgs
- * @param {{ adbPath?: string; timeoutMs?: number }} [opts]
- */
-async function runAdb(deviceId, adbArgs, opts = {}) {
-  const adb = opts.adbPath ?? 'adb'
-  const timeoutMs = opts.timeoutMs ?? 60_000
-  return execFileAsync(adb, ['-s', deviceId, ...adbArgs], {
-    timeout: timeoutMs,
-    maxBuffer: 4 * 1024 * 1024,
-    encoding: 'utf8',
-    windowsHide: true,
-  })
 }
 
 /**
