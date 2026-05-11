@@ -1,9 +1,11 @@
 /**
  * Parse `adb devices` output for MuMu / emulator / physical device selection.
+ * The first column is the device **adb serial** (exact string used with `adb -s <serial>`).
  */
 
 /**
  * @typedef {{ id: string, state: string }} AdbDeviceRow
+ * @description `id` is the adb serial from the devices list (do not treat numeric suffixes as a separate "port" id).
  */
 
 /**

@@ -2,6 +2,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
 import { db } from '../../db.js'
+import { waitForOnlineAdbSerial } from './adbSerialDiscovery.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -50,6 +51,10 @@ async function runMuMuManager(args, opts = {}) {
   })
 }
 
+/**
+ * Parse MuMu JSON row. Control plane still uses `index`; ADB identity comes only from `adb devices` serials.
+ * @param {unknown} entry
+ */
 function normalizeVm(entry) {
   if (!entry || typeof entry !== 'object') return null
   const row = /** @type {Record<string, unknown>} */ (entry)
@@ -57,12 +62,12 @@ function normalizeVm(entry) {
   if (!index) return null
   const adbHostIp = String(row.adb_host_ip ?? '').trim()
   const adbPort = String(row.adb_port ?? '').trim()
+  /** Full string as it appears in `adb devices` after the VM exposes ADB (often host:port). */
+  const adbSerialHint = adbHostIp && adbPort ? `${adbHostIp}:${adbPort}` : ''
   return {
     index,
     name: String(row.name ?? '').trim(),
-    adbHostIp,
-    adbPort,
-    deviceId: adbHostIp && adbPort ? `${adbHostIp}:${adbPort}` : '',
+    adbSerialHint,
     isProcessStarted: row.is_process_started === true,
     isAndroidStarted: row.is_android_started === true,
   }
@@ -71,7 +76,7 @@ function normalizeVm(entry) {
 export async function mumuList(opts = {}) {
   const result = await runMuMuManager(['info', '-v', 'all'], opts)
   const rows = readList(result.stdout).map(normalizeVm).filter(Boolean)
-  return /** @type {Array<{index:string,name:string,deviceId:string,adbHostIp:string,adbPort:string,isProcessStarted:boolean,isAndroidStarted:boolean}>} */ (rows)
+  return rows
 }
 
 export async function mumuCreate(opts = {}) {
@@ -110,21 +115,16 @@ export async function mumuInfo(index, opts = {}) {
 async function waitForMuMuInfo(index, opts = {}) {
   const attempts = opts.attempts ?? 40
   const delayMs = opts.delayMs ?? 3_000
-  const requireDeviceId = opts.requireDeviceId === true
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const info = await mumuInfo(index, opts)
-    if (info && (!requireDeviceId || info.deviceId)) {
+    if (info) {
       return info
     }
     if (attempt < attempts) {
       await sleepMs(delayMs)
     }
   }
-  throw new Error(
-    requireDeviceId
-      ? `MuMu emulator ${index} did not expose deviceId after launch`
-      : `MuMu emulator ${index} did not become available`,
-  )
+  throw new Error(`MuMu emulator ${index} did not become available`)
 }
 
 function patchAccountBinding(accountId, patch) {
@@ -155,7 +155,7 @@ export async function createMuMuProfile(opts = {}) {
   return {
     emulatorIndex,
     emulatorName,
-    deviceId: String(refreshed.deviceId ?? '').trim() || null,
+    adbSerial: null,
   }
 }
 
@@ -164,13 +164,22 @@ export async function launchMuMuProfile(opts = {}) {
   if (!emulatorIndex) throw new Error('emulatorIndex is required')
   await mumuLaunch(emulatorIndex, opts)
   await mumuShowWindow(emulatorIndex, opts)
-  const info = await waitForMuMuInfo(emulatorIndex, { ...opts, requireDeviceId: true })
+  const info = await waitForMuMuInfo(emulatorIndex, opts)
   const emulatorName = String(info.name ?? '').trim() || `MuMu ${emulatorIndex}`
-  emitLog(opts, 'MUMU_EMULATOR_OPENED', `index=${emulatorIndex} name=${emulatorName} device=${info.deviceId}`)
+  const hintSerial = String(info.adbSerialHint ?? '').trim()
+  const discoveryOpts = {
+    hintSerial: hintSerial || undefined,
+    adbPath: opts.adbPath,
+    timeoutMs: opts.timeoutMs,
+    attempts: opts.adbSerialAttempts ?? 45,
+    delayMs: opts.adbSerialDelayMs ?? 2_000,
+  }
+  const adbSerial = await waitForOnlineAdbSerial(discoveryOpts)
+  emitLog(opts, 'MUMU_EMULATOR_OPENED', `index=${emulatorIndex} name=${emulatorName} adb_serial=${adbSerial}`)
   return {
     emulatorIndex,
     emulatorName,
-    deviceId: String(info.deviceId ?? '').trim(),
+    adbSerial,
   }
 }
 
@@ -185,13 +194,27 @@ export async function ensureMuMuAccountPrepared(account, opts = {}) {
   const info = (await mumuInfo(emulatorIndex, opts)) ?? {
     index: emulatorIndex,
     name: String(account.mobile_emulator_name ?? '').trim() || `MuMu ${emulatorIndex}`,
-    deviceId: String(account.mobile_device_id ?? '').trim(),
+    adbSerialHint: '',
+  }
+  let adbSerial = String(account.mobile_device_id ?? '').trim()
+  if (!adbSerial && info.adbSerialHint) {
+    try {
+      adbSerial = await waitForOnlineAdbSerial({
+        hintSerial: info.adbSerialHint,
+        adbPath: opts.adbPath,
+        timeoutMs: opts.timeoutMs,
+        attempts: opts.adbSerialAttempts ?? 20,
+        delayMs: opts.adbSerialDelayMs ?? 2_000,
+      })
+    } catch {
+      adbSerial = ''
+    }
   }
   const updated = patchAccountBinding(accountId, {
     mobile_vm_index: emulatorIndex,
     mobile_emulator_name:
       String(info.name ?? '').trim() || String(account.mobile_emulator_name ?? '').trim() || `MuMu ${emulatorIndex}`,
-    mobile_device_id: String(info.deviceId ?? '').trim() || String(account.mobile_device_id ?? '').trim() || null,
+    mobile_device_id: adbSerial || String(account.mobile_device_id ?? '').trim() || null,
   })
   return { account: updated ?? account }
 }
@@ -208,12 +231,14 @@ export async function launchMuMuAccountEmulator(account, opts = {}) {
   const updated = patchAccountBinding(accountId, {
     mobile_vm_index: launched.emulatorIndex,
     mobile_emulator_name: launched.emulatorName,
-    mobile_device_id: launched.deviceId,
+    mobile_device_id: launched.adbSerial,
   })
   return {
     account: updated ?? account,
     emulatorIndex: launched.emulatorIndex,
     emulatorName: launched.emulatorName,
-    deviceId: launched.deviceId,
+    adbSerial: launched.adbSerial,
+    /** @deprecated use adbSerial — same value as in `adb devices` */
+    deviceId: launched.adbSerial,
   }
 }

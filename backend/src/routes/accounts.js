@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { db, newId } from '../db.js'
 import { createMuMuProfile, launchMuMuProfile } from '../executor/mobile/mumuManager.js'
 import { accountCreatePayload, accountPatchPayload } from '../requestFields.js'
+import { releaseAdbDeviceForAccount } from '../services/adbDeviceRegistry.js'
 import { sendJsonData, sendJsonError, sendJsonRow, sendJsonSuccess } from '../sendJson.js'
 
 const router = Router()
@@ -168,14 +169,14 @@ router.post('/mumu', async (_req, res) => {
         account_type, mobile_mode, mobile_proxy_id, mobile_device_id, mobile_emulator_name, mobile_vm_index
       )
        VALUES (?, ?, '', '', 'TikTok', NULL, NULL, 'chromium', 'setup_required', 'mobile', 'mumu', '', ?, ?, ?)`,
-    ).run(id, name, created.deviceId, created.emulatorName, created.emulatorIndex)
+    ).run(id, name, created.adbSerial ?? '', created.emulatorName, created.emulatorIndex)
 
     const launched = await launchMuMuProfile({ emulatorIndex: created.emulatorIndex })
     db.prepare(
       `UPDATE accounts
           SET mobile_device_id = ?, mobile_emulator_name = ?, mobile_vm_index = ?
         WHERE id = ?`,
-    ).run(launched.deviceId, launched.emulatorName, launched.emulatorIndex, id)
+    ).run(launched.adbSerial, launched.emulatorName, launched.emulatorIndex, id)
 
     const row = normalizeAccountRow(db.prepare('SELECT * FROM accounts WHERE id = ?').get(id))
     return sendJsonRow(res, 201, row, 'MuMu account missing after create')
@@ -252,6 +253,7 @@ router.patch('/:id', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   const { id } = req.params
+  releaseAdbDeviceForAccount(id)
   const r = db.prepare('DELETE FROM accounts WHERE id = ?').run(id)
   if (r.changes === 0) return sendJsonError(res, 404, 'Not found')
   return sendJsonSuccess(res)

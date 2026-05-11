@@ -7,6 +7,7 @@ import {
   mobileStop,
 } from '../executor/mobile/mobileExecutor.js'
 import { ensureMuMuAccountPrepared, launchMuMuAccountEmulator } from '../executor/mobile/mumuManager.js'
+import { assignFreeAdbDeviceToAccount } from '../services/adbDeviceRegistry.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
@@ -25,6 +26,16 @@ function insertLog(accountId, action, details = '') {
 
 function getAccountById(accountId) {
   return db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId)
+}
+
+/**
+ * If the mobile account has no adb serial yet, try to bind a free online device from the scanner registry.
+ */
+function ensureAccountHasAdbSerial(accountRow) {
+  const serial = String(accountRow?.mobile_device_id ?? '').trim()
+  if (serial) return accountRow
+  assignFreeAdbDeviceToAccount(String(accountRow?.id ?? '').trim())
+  return getAccountById(String(accountRow?.id ?? '').trim())
 }
 
 function getMobileAccountOrError(accountId, res) {
@@ -69,10 +80,11 @@ router.post('/qa-open', async (req, res) => {
     return sendJsonError(res, 404, 'Account not found')
   }
 
+  const rowWithSerial = ensureAccountHasAdbSerial(row) ?? row
   const emit = (action, details) => {
     insertLog(accountId, action, details)
   }
-  const opts = { emit, env: mobileEnvForAccount(row) }
+  const opts = { emit, env: mobileEnvForAccount(rowWithSerial) }
 
   try {
     const check = await mobileCheckDevice(opts)
@@ -98,6 +110,7 @@ router.post('/qa-open', async (req, res) => {
     return sendJsonData(res, 200, {
       ok: true,
       deviceId: open.deviceId,
+      adb_serial: open.deviceId,
       package: open.package,
     })
   } catch (err) {
@@ -142,6 +155,7 @@ router.post('/open-emulator', async (req, res) => {
       ok: true,
       emulatorName: opened.emulatorName,
       deviceId: opened.deviceId,
+      adb_serial: opened.adbSerial,
       emulatorIndex: opened.emulatorIndex,
     })
   } catch (err) {
@@ -163,20 +177,22 @@ router.post('/mark-ready', (req, res) => {
   const account = getMobileAccountOrError(accountId, res)
   if (!account) return
 
-  const mode = getMobileAccountMode(account)
-  const deviceId = String(account.mobile_device_id ?? '').trim()
-  const emulatorName = String(account.mobile_emulator_name ?? '').trim()
+  const bound = ensureAccountHasAdbSerial(account) ?? account
+
+  const mode = getMobileAccountMode(bound)
+  const deviceId = String(bound.mobile_device_id ?? '').trim()
+  const emulatorName = String(bound.mobile_emulator_name ?? '').trim()
   if (!deviceId || (mode !== 'manual' && !emulatorName)) {
-    return sendJsonError(res, 400, 'Mobile account is missing deviceId/emulatorName')
+    return sendJsonError(res, 400, 'Mobile account is missing adb_serial/emulatorName')
   }
 
   db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('ready', accountId)
   insertLog(
     accountId,
     'MOBILE_READY',
-    mode === 'manual' ? `device=${deviceId} mode=manual` : `device=${deviceId} emulator=${emulatorName}`,
+    mode === 'manual' ? `adb_serial=${deviceId} mode=manual` : `adb_serial=${deviceId} emulator=${emulatorName}`,
   )
-  return sendJsonData(res, 200, { ok: true, status: 'ready', deviceId, emulatorName, mode })
+  return sendJsonData(res, 200, { ok: true, status: 'ready', deviceId, adb_serial: deviceId, emulatorName, mode })
 })
 
 /**
@@ -215,12 +231,15 @@ router.post('/scenario', async (req, res) => {
         return sendJsonError(res, 500, msg)
       }
     }
+    accountRow = ensureAccountHasAdbSerial(accountRow) ?? accountRow
     const deviceId = String(accountRow.mobile_device_id ?? '').trim()
     if (!deviceId) {
       return sendJsonError(
         res,
         400,
-        mode === 'manual' ? 'Manual mobile account is missing adbDeviceId' : 'Mobile account is missing deviceId',
+        mode === 'manual'
+          ? 'Manual mobile account is missing adb_serial (set ADB device id or use POST /adb-devices/assign)'
+          : 'Mobile account is missing adb_serial',
       )
     }
   }
