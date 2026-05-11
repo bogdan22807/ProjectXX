@@ -86,7 +86,7 @@ function formFromAccount(a: Account): FormState {
     name: a.name,
     login: a.login,
     cookies: a.cookies,
-    proxyId: a.accountType === 'mobile' ? a.mobileProxyId ?? '' : a.proxyId ?? '',
+    proxyId: a.accountType === 'mobile' ? '' : a.proxyId ?? '',
     profileId: a.profileId ?? '',
     browserEngine: a.browserEngine,
     deviceId: a.deviceId ?? '',
@@ -144,24 +144,12 @@ function AccountFields({
         Платформа в API всегда <span className="font-mono text-zinc-400">TikTok</span> (других значений бэкенд не
         принимает).
       </p>
-      <label className="block text-xs font-medium text-zinc-400">
-        Прокси (proxy_id)
-        <select
-          className={fieldClass}
-          value={form.proxyId}
-          onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
-        >
-          <option value="">Без прокси</option>
-          {proxies.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.provider} · {p.host}
-              {p.port ? `:${p.port}` : ''}
-            </option>
-          ))}
-        </select>
-      </label>
       {accountType === 'mobile' ? (
         <>
+          <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs leading-relaxed text-zinc-400">
+            Прокси для mobile account временно не сохраняется через UI. Сначала добавьте аккаунт без прокси, а сам
+            прокси настройте вручную внутри MuMu / Android Emulator.
+          </div>
           <label className="block text-xs font-medium text-zinc-400">
             ADB Device ID
             <input
@@ -186,6 +174,22 @@ function AccountFields({
         </>
       ) : (
         <>
+          <label className="block text-xs font-medium text-zinc-400">
+            Прокси (proxy_id)
+            <select
+              className={fieldClass}
+              value={form.proxyId}
+              onChange={(e) => setForm((f) => ({ ...f, proxyId: e.target.value }))}
+            >
+              <option value="">Без прокси</option>
+              {proxies.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.provider} · {p.host}
+                  {p.port ? `:${p.port}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
           <label className="block text-xs font-medium text-zinc-400">
             Профиль браузера (browser_profile_id)
             <select
@@ -293,7 +297,7 @@ export function DashboardPage() {
       cookies: editForm.cookies,
       platform: 'TikTok',
       proxyId: account?.accountType === 'mobile' ? null : editForm.proxyId || null,
-      mobileProxyId: account?.accountType === 'mobile' ? editForm.proxyId || null : undefined,
+      mobileProxyId: account?.accountType === 'mobile' ? null : undefined,
       profileId: account?.accountType === 'mobile' ? null : editForm.profileId || null,
       browserEngine: editForm.browserEngine,
       deviceId: account?.accountType === 'mobile' ? editForm.deviceId.trim() || null : undefined,
@@ -358,7 +362,7 @@ export function DashboardPage() {
         accountType: 'mobile',
         mode: 'manual',
         proxyId: null,
-        mobileProxyId: manualMobileForm.proxyId || null,
+        mobileProxyId: null,
         profileId: null,
         browserEngine: 'chromium',
         deviceId,
@@ -389,10 +393,7 @@ export function DashboardPage() {
   }
 
   function accountProxyLabel(a: Account) {
-    if (a.accountType === 'mobile') {
-      return proxyLabel(a.mobileProxyId ?? null)
-    }
-    return proxyLabel(a.proxyId)
+    return a.accountType === 'mobile' ? 'manual setup' : proxyLabel(a.proxyId)
   }
 
   function accountTypeLabel(a: Account) {
@@ -868,25 +869,9 @@ export function DashboardPage() {
               placeholder="@username"
             />
           </label>
-          <label className="block text-xs font-medium text-zinc-400">
-            Proxy
-            <select
-              className={fieldClass}
-              value={manualMobileForm.proxyId}
-              onChange={(e) => setManualMobileForm((f) => ({ ...f, proxyId: e.target.value }))}
-            >
-              <option value="">Без прокси</option>
-              {proxies.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.provider} · {p.host}
-                  {p.port ? `:${p.port}` : ''}
-                </option>
-              ))}
-            </select>
-          </label>
           <p className="text-xs leading-relaxed text-zinc-500">
-            Прокси для mobile/MuMu аккаунта сохраняется как привязка к аккаунту, но не включается в эмулятор автоматически.
-            Его нужно вручную настроить внутри Android/MuMu.
+            Пока сохраняем mobile account без прокси. Если прокси понадобится позже, настройте его вручную внутри
+            Android / MuMu Emulator.
           </p>
           <label className="block text-xs font-medium text-zinc-400">
             ADB Device ID
