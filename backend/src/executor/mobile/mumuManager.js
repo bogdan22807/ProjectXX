@@ -1,4 +1,7 @@
 import { execFile } from 'node:child_process'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { filterOnlineDevices, parseAdbDevicesList } from './adbDevices.js'
@@ -6,7 +9,8 @@ import { runAdbDevices } from './adbRunner.js'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_MUMU_APP_NAME = 'MuMuPlayer'
-let cachedMuMuAppName = ''
+/** @type {{ appName: string, appPath: string } | null} */
+let cachedMuMuAppTarget = null
 
 function sleepMs(ms) {
   return new Promise((resolve) => {
@@ -35,34 +39,41 @@ function escapeAppleScriptString(value) {
   return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
 
-function buildMuMuAppCandidates(instanceLabel, opts = {}) {
-  const env = opts.env ?? process.env
-  const fromEnv = String(env.MUMU_APP_NAME ?? '').trim()
-  const fromOpts = String(opts.appName ?? '').trim()
-  const label = String(instanceLabel ?? '').trim()
-  const withoutExtension = label.toLowerCase().endsWith('.app') ? label.slice(0, -4) : label
-  const withoutVmTail = withoutExtension.replace(/-\d+\s*$/g, '').trim()
-
-  const raw = [
-    fromEnv,
-    fromOpts,
-    cachedMuMuAppName,
-    withoutExtension,
-    withoutVmTail,
-    DEFAULT_MUMU_APP_NAME,
-    'MuMuPlayer Global',
-    'MuMuPlayerGlobal',
-    'NemuPlayer',
-  ]
+function uniqueNonEmpty(items) {
   const seen = new Set()
   const out = []
-  for (const item of raw) {
+  for (const item of items) {
     const value = String(item ?? '').trim()
     if (!value || seen.has(value)) continue
     seen.add(value)
     out.push(value)
   }
   return out
+}
+
+function buildMuMuAppCandidates(instanceLabel, opts = {}) {
+  const env = opts.env ?? process.env
+  const fromEnv = String(env.MUMU_APP_NAME ?? '').trim()
+  const fromOpts = String(opts.appName ?? '').trim()
+  const fromPath = String(env.MUMU_APP_PATH ?? '').trim()
+  const label = String(instanceLabel ?? '').trim()
+  const withoutExtension = label.toLowerCase().endsWith('.app') ? label.slice(0, -4) : label
+  const withoutVmTail = withoutExtension.replace(/-\d+\s*$/g, '').trim()
+  const pathBase = path.basename(fromPath || '', '.app').trim()
+  const cachedName = cachedMuMuAppTarget?.appName?.trim() || ''
+
+  return uniqueNonEmpty([
+    fromEnv,
+    fromOpts,
+    pathBase,
+    cachedName,
+    withoutExtension,
+    withoutVmTail,
+    DEFAULT_MUMU_APP_NAME,
+    'MuMuPlayer Global',
+    'MuMuPlayerGlobal',
+    'NemuPlayer',
+  ])
 }
 
 async function appInstalledOnMac(appName, opts = {}) {
@@ -77,20 +88,82 @@ async function appInstalledOnMac(appName, opts = {}) {
   }
 }
 
+async function listMacAppBundles() {
+  const appDirs = ['/Applications', path.join(os.homedir(), 'Applications')]
+  /** @type {{ appName: string, appPath: string }[]} */
+  const bundles = []
+
+  for (const dir of appDirs) {
+    let entries = []
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true })
+    } catch {
+      continue
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue
+      if (!entry.name.toLowerCase().endsWith('.app')) continue
+      bundles.push({
+        appName: entry.name.slice(0, -4),
+        appPath: path.join(dir, entry.name),
+      })
+    }
+  }
+
+  return bundles
+}
+
 /**
  * For macOS we treat account emulator label as user-facing metadata, while app launch
  * uses app name (`open -a`) and not VM control tools like MuMuManager.
  */
-async function resolveMuMuAppName(instanceLabel, opts = {}) {
+async function resolveMuMuAppTarget(instanceLabel, opts = {}) {
+  const env = opts.env ?? process.env
+  const explicitPath = String(env.MUMU_APP_PATH ?? '').trim()
+  if (explicitPath) {
+    const appName = path.basename(explicitPath, '.app').trim() || DEFAULT_MUMU_APP_NAME
+    cachedMuMuAppTarget = { appName, appPath: explicitPath }
+    return cachedMuMuAppTarget
+  }
+
+  if (cachedMuMuAppTarget) return cachedMuMuAppTarget
+
   const candidates = buildMuMuAppCandidates(instanceLabel, opts)
-  for (const candidate of candidates) {
-    if (await appInstalledOnMac(candidate, opts)) {
-      cachedMuMuAppName = candidate
-      return candidate
+  const lowerCandidates = candidates.map((c) => c.toLowerCase())
+  const bundles = await listMacAppBundles()
+
+  for (const candidate of lowerCandidates) {
+    const exact = bundles.find((b) => b.appName.toLowerCase() === candidate)
+    if (exact) {
+      cachedMuMuAppTarget = exact
+      return exact
     }
   }
+
+  for (const bundle of bundles) {
+    const name = bundle.appName.toLowerCase()
+    if (!/(mumu|nemu)/i.test(name)) continue
+    if (lowerCandidates.some((candidate) => name.includes(candidate) || candidate.includes(name))) {
+      cachedMuMuAppTarget = bundle
+      return bundle
+    }
+  }
+
+  const firstMuMu = bundles.find((b) => /(mumu|nemu)/i.test(b.appName))
+  if (firstMuMu) {
+    cachedMuMuAppTarget = firstMuMu
+    return firstMuMu
+  }
+
+  for (const candidate of candidates) {
+    if (await appInstalledOnMac(candidate, opts)) {
+      cachedMuMuAppTarget = { appName: candidate, appPath: '' }
+      return cachedMuMuAppTarget
+    }
+  }
+
   throw new Error(
-    `MuMu app not found in /Applications. Tried: ${candidates.join(', ')}. Set MUMU_APP_NAME in backend env if your app name differs.`,
+    `MuMu app not found. Tried names: ${candidates.join(', ')}. Set MUMU_APP_NAME or MUMU_APP_PATH in backend env.`,
   )
 }
 
@@ -102,6 +175,11 @@ async function runMacProcess(bin, args, opts = {}) {
     encoding: 'utf8',
     windowsHide: true,
   })
+}
+
+async function openMuMuTarget(target, opts = {}) {
+  if (target.appPath) return runMacProcess('open', [target.appPath], opts)
+  return runMacProcess('open', ['-a', target.appName], opts)
 }
 
 async function listOnlineAdbSerials(opts = {}) {
@@ -138,27 +216,46 @@ async function waitForLaunchedAdbSerial(initialOnline, opts = {}) {
 
 export async function mumuLaunch(instanceLabel, opts = {}) {
   assertMacOsHost()
-  const appName = await resolveMuMuAppName(instanceLabel, opts)
+  let target = await resolveMuMuAppTarget(instanceLabel, opts)
   try {
-    await runMacProcess('open', ['-a', appName], opts)
+    await openMuMuTarget(target, opts)
   } catch (err) {
-    throw new Error(`Failed to launch MuMu app "${appName}": ${err instanceof Error ? err.message : String(err)}`)
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/Unable to find application named/i.test(msg) || /does not exist/i.test(msg)) {
+      cachedMuMuAppTarget = null
+      target = await resolveMuMuAppTarget(instanceLabel, opts)
+      await openMuMuTarget(target, opts)
+    } else {
+      throw new Error(`Failed to launch MuMu app "${target.appName}": ${msg}`)
+    }
   }
-  emitLog(opts, 'MUMU_LAUNCHED', `app=${appName}`)
-  return { appName }
+  emitLog(opts, 'MUMU_LAUNCHED', `app=${target.appName}`)
+  return { appName: target.appName }
 }
 
 export async function mumuShowWindow(instanceLabel, opts = {}) {
   assertMacOsHost()
-  const appName = await resolveMuMuAppName(instanceLabel, opts)
-  await runMacProcess('open', ['-a', appName], opts)
-  emitLog(opts, 'MUMU_WINDOW_OPENED', `app=${appName}`)
-  return { appName }
+  let target = await resolveMuMuAppTarget(instanceLabel, opts)
+  try {
+    await openMuMuTarget(target, opts)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    if (/Unable to find application named/i.test(msg) || /does not exist/i.test(msg)) {
+      cachedMuMuAppTarget = null
+      target = await resolveMuMuAppTarget(instanceLabel, opts)
+      await openMuMuTarget(target, opts)
+    } else {
+      throw err
+    }
+  }
+  emitLog(opts, 'MUMU_WINDOW_OPENED', `app=${target.appName}`)
+  return { appName: target.appName }
 }
 
 export async function mumuShutdown(instanceLabel, opts = {}) {
   assertMacOsHost()
-  const appName = await resolveMuMuAppName(instanceLabel, opts)
+  const target = await resolveMuMuAppTarget(instanceLabel, opts)
+  const appName = target.appName
 
   try {
     await runMacProcess('osascript', ['-e', `tell application "${appName}" to quit`], opts)
