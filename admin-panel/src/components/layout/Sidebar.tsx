@@ -2,7 +2,6 @@ import { NavLink } from 'react-router-dom'
 
 const nav = [
   { to: '/', label: 'Аккаунты', end: true },
-  { to: '/emulators', label: 'Эмуляторы' },
   { to: '/profiles', label: 'Профили браузера' },
   { to: '/logs', label: 'Журнал' },
 ] as const

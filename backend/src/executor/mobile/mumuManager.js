@@ -196,25 +196,11 @@ export async function ensureMuMuAccountPrepared(account, opts = {}) {
     name: String(account.mobile_emulator_name ?? '').trim() || `MuMu ${emulatorIndex}`,
     adbSerialHint: '',
   }
-  let adbSerial = String(account.mobile_device_id ?? '').trim()
-  if (!adbSerial && info.adbSerialHint) {
-    try {
-      adbSerial = await waitForOnlineAdbSerial({
-        hintSerial: info.adbSerialHint,
-        adbPath: opts.adbPath,
-        timeoutMs: opts.timeoutMs,
-        attempts: opts.adbSerialAttempts ?? 20,
-        delayMs: opts.adbSerialDelayMs ?? 2_000,
-      })
-    } catch {
-      adbSerial = ''
-    }
-  }
   const updated = patchAccountBinding(accountId, {
     mobile_vm_index: emulatorIndex,
     mobile_emulator_name:
       String(info.name ?? '').trim() || String(account.mobile_emulator_name ?? '').trim() || `MuMu ${emulatorIndex}`,
-    mobile_device_id: adbSerial || String(account.mobile_device_id ?? '').trim() || null,
+    mobile_device_id: '',
   })
   return { account: updated ?? account }
 }
@@ -231,7 +217,7 @@ export async function launchMuMuAccountEmulator(account, opts = {}) {
   const updated = patchAccountBinding(accountId, {
     mobile_vm_index: launched.emulatorIndex,
     mobile_emulator_name: launched.emulatorName,
-    mobile_device_id: launched.adbSerial,
+    mobile_device_id: '',
   })
   return {
     account: updated ?? account,
@@ -251,7 +237,7 @@ export async function launchMuMuAccountEmulator(account, opts = {}) {
  */
 export async function resolveMuMuVmIndexFromLabel(instanceLabel, opts = {}) {
   const label = String(instanceLabel ?? '').trim()
-  if (!label) throw new Error('mumu_instance_name is required')
+  if (!label) throw new Error('emulator name / label is required')
   const tail = label.match(/(\d+)\s*$/)
   if (tail) {
     const asIndex = tail[1]
@@ -264,4 +250,14 @@ export async function resolveMuMuVmIndexFromLabel(instanceLabel, opts = {}) {
   const loose = rows.find((r) => label.includes(r.name) || r.name.includes(label))
   if (loose) return String(loose.index)
   throw new Error(`MuMu instance not found for "${label}"`)
+}
+
+/**
+ * Launch MuMu by user-visible instance label (e.g. MuMuPlayer-2); returns adb serial without meaning for DB persistence.
+ * @param {string} instanceLabel
+ * @param {Record<string, unknown>} [opts]
+ */
+export async function startMuMuByEmulatorLabel(instanceLabel, opts = {}) {
+  const index = await resolveMuMuVmIndexFromLabel(instanceLabel, opts)
+  return launchMuMuProfile({ ...opts, emulatorIndex: index })
 }

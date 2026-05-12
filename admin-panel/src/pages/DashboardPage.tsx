@@ -32,7 +32,7 @@ const browserAccountStatuses: AccountStatus[] = [
   'auth_required',
 ]
 
-const mobileAccountStatuses: AccountStatus[] = ['setup_required', 'ready', 'running', 'error']
+const mobileAccountStatuses: AccountStatus[] = ['ready', 'running', 'error']
 
 type FormState = {
   name: string
@@ -50,7 +50,7 @@ type FormState = {
 type ManualMobileFormState = {
   name: string
   login: string
-  proxyId: string
+  emulatorName: string
 }
 
 const emptyForm = (): FormState => ({
@@ -69,15 +69,8 @@ const emptyForm = (): FormState => ({
 const emptyManualMobileForm = (): ManualMobileFormState => ({
   name: '',
   login: '',
-  proxyId: '',
+  emulatorName: '',
 })
-
-function isMacOsClient() {
-  if (typeof window === 'undefined') return false
-  const platform = String(window.navigator.platform ?? '')
-  const userAgent = String(window.navigator.userAgent ?? '')
-  return /mac|iphone|ipad|ipod/i.test(`${platform} ${userAgent}`)
-}
 
 function formFromAccount(a: Account): FormState {
   return {
@@ -145,20 +138,22 @@ function AccountFields({
       {accountType === 'mobile' ? (
         <>
           <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs leading-relaxed text-zinc-400">
-            Прокси для mobile account временно не сохраняется через UI. Сначала добавьте аккаунт без прокси, а сам
-            прокси настройте вручную внутри MuMu / Android Emulator.
+            Прокси для mobile account временно не сохраняется через UI. При необходимости настройте прокси внутри MuMu /
+            Android.
           </div>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs leading-relaxed text-zinc-400">
-            ADB serial и привязка к эмулятору выполняются только через{' '}
-            <Link to="/emulators" className="text-violet-400 underline hover:text-violet-300">
-              Emulator Manager
-            </Link>
-            . Ручной ввод device id, serial или порта отключён.
-          </div>
-          <div className="text-xs text-zinc-500">
-            <span className="text-zinc-600">Текущий ADB serial: </span>
-            <span className="font-mono text-zinc-300">{form.deviceId?.trim() ? form.deviceId : '— не привязан'}</span>
-          </div>
+          <label className="block text-xs font-medium text-zinc-400">
+            Имя экземпляра MuMu (как в MuMu Manager)
+            <input
+              className={fieldClassMono}
+              value={form.emulatorName}
+              onChange={(e) => setForm((f) => ({ ...f, emulatorName: e.target.value }))}
+              placeholder="MuMuPlayer-2"
+            />
+          </label>
+          <p className="text-xs text-zinc-500">
+            ADB serial не хранится в базе: после «Запустить» сервер сам найдёт устройство через{' '}
+            <span className="font-mono text-zinc-400">adb devices</span> и использует его только в памяти процесса.
+          </p>
           <p className="text-xs text-zinc-500">
             Mobile mode: <span className="font-mono text-zinc-400">{accountMode}</span>
           </p>
@@ -246,9 +241,8 @@ export function DashboardPage() {
     mobileQaPending,
     startPlaywrightTestRun,
     runMobileQaOpen,
-    addMuMuAccount,
     openMobileEmulator,
-    markMobileReady,
+    shutdownMobileEmulator,
     stopMobileSession,
   } = useAppState()
 
@@ -266,7 +260,6 @@ export function DashboardPage() {
   const [editForm, setEditForm] = useState<FormState>(emptyForm)
 
   const [deleteConfirm, setDeleteConfirm] = useState<Account | null>(null)
-  const macOsClient = isMacOsClient()
 
   function openEdit(a: Account) {
     setEditId(a.id)
@@ -291,6 +284,9 @@ export function DashboardPage() {
       profileId: account?.accountType === 'mobile' ? null : editForm.profileId || null,
       browserEngine: editForm.browserEngine,
       status: editForm.status,
+      ...(account?.accountType === 'mobile'
+        ? { emulatorName: editForm.emulatorName.trim(), deviceId: null, emulatorIndex: null }
+        : {}),
     })
     closeEdit()
   }
@@ -334,24 +330,28 @@ export function DashboardPage() {
 
   async function submitManualMobileAccount() {
     if (manualMobileSubmitting) return
+    if (!manualMobileForm.emulatorName.trim()) {
+      setManualMobileError('Укажите имя экземпляра MuMu (например MuMuPlayer-2)')
+      return
+    }
     setManualMobileSubmitting(true)
     setManualMobileError(null)
     try {
       const ok = await addAccount({
-        name: manualMobileForm.name.trim() || 'Manual Android',
+        name: manualMobileForm.name.trim() || 'Mobile',
         login: manualMobileForm.login.trim(),
         cookies: '',
         platform: 'TikTok',
         accountType: 'mobile',
-        mode: 'manual',
+        mode: 'mumu',
         proxyId: null,
         mobileProxyId: null,
         profileId: null,
         browserEngine: 'chromium',
         deviceId: null,
-        emulatorName: manualMobileForm.name.trim() || 'Manual Android',
+        emulatorName: manualMobileForm.emulatorName.trim(),
         emulatorIndex: null,
-        status: 'setup_required',
+        status: 'ready',
       })
       if (ok) {
         closeManualMobileModal()
@@ -361,12 +361,8 @@ export function DashboardPage() {
     }
   }
 
-  function handleAddMuMuClick() {
-    if (macOsClient) {
-      openManualMobileModal()
-      return
-    }
-    void addMuMuAccount()
+  function handleAddMobileClick() {
+    openManualMobileModal()
   }
 
   function proxyLabel(id: string | null) {
@@ -389,9 +385,9 @@ export function DashboardPage() {
     return a.mode === 'manual' ? 'Manual' : 'MuMu'
   }
 
-  function accountAdbLabel(a: Account) {
+  function accountEmulatorLabel(a: Account) {
     if (a.accountType !== 'mobile') return '—'
-    return a.deviceId?.trim() ? a.deviceId : '—'
+    return a.emulatorName?.trim() ? a.emulatorName : '—'
   }
 
   function isBrowserStartable(a: Account) {
@@ -409,11 +405,20 @@ export function DashboardPage() {
   }
 
   function isMobileStartable(a: Account) {
-    return a.accountType === 'mobile' && a.status === 'ready'
+    return (
+      a.accountType === 'mobile' &&
+      (a.status === 'ready' || a.status === 'error') &&
+      Boolean(a.emulatorName?.trim()) &&
+      a.mode !== 'manual'
+    )
   }
 
   function isMobileStoppable(a: Account) {
     return a.accountType === 'mobile' && a.status === 'running'
+  }
+
+  function isMobileShutdownable(a: Account) {
+    return a.accountType === 'mobile' && a.mode !== 'manual' && Boolean(a.emulatorName?.trim())
   }
 
   const statCards: {
@@ -480,8 +485,8 @@ export function DashboardPage() {
         <Button variant="primary" onClick={() => setAddOpen(true)}>
           Добавить аккаунт
         </Button>
-        <Button variant="secondary" onClick={handleAddMuMuClick}>
-          + MuMu аккаунт
+        <Button variant="secondary" onClick={handleAddMobileClick}>
+          + Mobile (MuMu)
         </Button>
       </div>
 
@@ -489,8 +494,8 @@ export function DashboardPage() {
         <div className={cardSectionHeaderClass}>
           <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Аккаунты</h2>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-            POST /accounts, POST /accounts/mumu, PATCH /accounts/:id · POST /warmup/start|stop ·
-            POST /warmup/test-run · POST /mobile/open-emulator|mark-ready|scenario|stop|qa-open
+            POST /accounts, PATCH /accounts/:id · POST /warmup/start|stop · POST /warmup/test-run ·
+            POST /mobile/launch|shutdown|open-window|scenario|stop|qa-open
           </p>
         </div>
         <div className={tableScrollClass}>
@@ -503,8 +508,8 @@ export function DashboardPage() {
                   <Button variant="primary" onClick={() => setAddOpen(true)}>
                     Добавить аккаунт
                   </Button>
-                  <Button variant="secondary" onClick={handleAddMuMuClick}>
-                    + MuMu аккаунт
+                  <Button variant="secondary" onClick={handleAddMobileClick}>
+                    + Mobile (MuMu)
                   </Button>
                 </div>
               }
@@ -528,7 +533,7 @@ export function DashboardPage() {
                 <th className={tableCellHeaderClass}>Тип</th>
                 <th className={tableCellHeaderClass}>Mode</th>
                 <th className={tableCellHeaderClass}>Прокси</th>
-                <th className={tableCellHeaderClass}>ADB serial</th>
+                <th className={tableCellHeaderClass}>Эмулятор</th>
                 <th className={tableCellHeaderClass}>Статус</th>
                 <th className={`${tableCellHeaderClass} text-right`}>Действия</th>
               </tr>
@@ -577,9 +582,9 @@ export function DashboardPage() {
                     <div className="min-w-0">
                       <span
                         className="block truncate font-mono text-[13px] leading-snug"
-                        title={accountAdbLabel(a)}
+                        title={accountEmulatorLabel(a)}
                       >
-                        {accountAdbLabel(a)}
+                        {accountEmulatorLabel(a)}
                       </span>
                     </div>
                   </td>
@@ -621,9 +626,17 @@ export function DashboardPage() {
                           variant="primary"
                           disabled={warmupPending[a.id] === 'start'}
                           onClick={() => startAccount(a.id)}
-                          title={a.accountType === 'mobile' ? 'Запустить mobile scenario через ADB' : 'Фоновый запуск (headless)'}
+                          title={
+                            a.accountType === 'mobile'
+                              ? 'Запустить MuMu, найти adb serial и выполнить сценарий'
+                              : 'Фоновый запуск (headless)'
+                          }
                         >
-                          {warmupPending[a.id] === 'start' ? 'Запуск…' : 'Запуск'}
+                          {warmupPending[a.id] === 'start'
+                            ? 'Запуск…'
+                            : a.accountType === 'mobile'
+                              ? 'Запустить'
+                              : 'Запуск'}
                         </Button>
                       ) : null}
                       {isBrowserStoppable(a) || isMobileStoppable(a) ? (
@@ -640,26 +653,42 @@ export function DashboardPage() {
                           <Button
                             className={tableActionButtonClass}
                             variant="secondary"
-                            disabled={mobileQaPending[a.id] === true}
+                            disabled={mobileQaPending[a.id] === true || a.mode === 'manual'}
                             title={
                               a.mode === 'manual'
-                                ? 'Manual mobile mode does not launch MuMu automatically'
-                                : 'Открыть/показать привязанный MuMu emulator'
+                                ? 'Режим manual: окно MuMu не управляется через API'
+                                : 'Показать окно эмулятора по имени экземпляра'
                             }
                             onClick={() => void openMobileEmulator(a.id)}
                           >
-                            {mobileQaPending[a.id] ? 'MuMu…' : a.mode === 'manual' ? 'Manual mode' : 'Открыть эмулятор'}
+                            {mobileQaPending[a.id] ? '…' : 'Открыть'}
                           </Button>
-                          {a.status === 'setup_required' ? (
-                            <Button
-                              className={tableActionButtonClass}
-                              variant="secondary"
-                              onClick={() => void markMobileReady(a.id)}
-                              title="Пометить MuMu аккаунт как готовый после ручной установки TikTok и входа"
-                            >
-                              Сохранить как готовый
-                            </Button>
-                          ) : null}
+                          <Button
+                            className={tableActionButtonClass}
+                            variant="secondary"
+                            disabled={!isMobileShutdownable(a) || mobileQaPending[a.id] === true}
+                            title="Остановить сценарий, выключить MuMu и сбросить adb-сессию в памяти сервера"
+                            onClick={() => void shutdownMobileEmulator(a.id)}
+                          >
+                            Выключить
+                          </Button>
+                          <Button
+                            className={tableActionButtonClass}
+                            variant="secondary"
+                            disabled={mobileQaPending[a.id] === true}
+                            title="Проверить adb и открыть приложение (нужен активный POST /mobile/launch — через «Запустить»)"
+                            onClick={() => void runMobileQaOpen(a.id)}
+                          >
+                            {mobileQaPending[a.id] ? 'ADB…' : 'Приложение'}
+                          </Button>
+                          <Button
+                            className={tableActionButtonClass}
+                            variant="ghost"
+                            title="Force-stop приложения по MOBILE_APP_PACKAGE (без выключения эмулятора)"
+                            onClick={() => void stopMobileSession(a.id)}
+                          >
+                            Стоп приложения
+                          </Button>
                         </>
                       ) : (
                         <>
@@ -686,23 +715,6 @@ export function DashboardPage() {
                             onClick={() => void startPlaywrightTestRun(a.id, { headless: false })}
                           >
                             {testRunPending[a.id] ? 'Открытие…' : 'Открыть браузер'}
-                          </Button>
-                          <Button
-                            className={tableActionButtonClass}
-                            variant="secondary"
-                            disabled={mobileQaPending[a.id] === true}
-                            title="ADB: проверить устройство и открыть MOBILE_APP_PACKAGE (MuMu). Env на сервере."
-                            onClick={() => void runMobileQaOpen(a.id)}
-                          >
-                            {mobileQaPending[a.id] ? 'ADB…' : 'Приложение (ADB)'}
-                          </Button>
-                          <Button
-                            className={tableActionButtonClass}
-                            variant="ghost"
-                            title="Остановить mobile-сессию (force-stop по MOBILE_APP_PACKAGE)"
-                            onClick={() => void stopMobileSession(a.id)}
-                          >
-                            Стоп ADB
                           </Button>
                         </>
                       )}
@@ -816,52 +828,54 @@ export function DashboardPage() {
 
       <Modal
         open={manualMobileOpen}
-        title="Manual mobile account"
+        title="Mobile (MuMu)"
         onClose={closeManualMobileModal}
         footer={
           <div className="flex justify-end gap-2">
             <Button variant="ghost" onClick={closeManualMobileModal}>
-              Cancel
+              Отмена
             </Button>
             <Button
               variant="primary"
               disabled={manualMobileSubmitting}
               onClick={() => void submitManualMobileAccount()}
             >
-              {manualMobileSubmitting ? 'Saving…' : 'Save'}
+              {manualMobileSubmitting ? 'Сохранение…' : 'Сохранить'}
             </Button>
           </div>
         }
       >
         <div className="space-y-3">
           <label className="block text-xs font-medium text-zinc-400">
-            Name
+            Имя аккаунта
             <input
               className={fieldClass}
               value={manualMobileForm.name}
               onChange={(e) => setManualMobileForm((f) => ({ ...f, name: e.target.value }))}
-              placeholder="Manual Android"
+              placeholder="telegram_acc_1"
             />
           </label>
           <label className="block text-xs font-medium text-zinc-400">
-            Login
+            Логин
             <input
               className={fieldClass}
               value={manualMobileForm.login}
               onChange={(e) => setManualMobileForm((f) => ({ ...f, login: e.target.value }))}
-              placeholder="@username"
+              placeholder="@test"
+            />
+          </label>
+          <label className="block text-xs font-medium text-zinc-400">
+            Имя экземпляра MuMu
+            <input
+              className={fieldClassMono}
+              value={manualMobileForm.emulatorName}
+              onChange={(e) => setManualMobileForm((f) => ({ ...f, emulatorName: e.target.value }))}
+              placeholder="MuMuPlayer-2"
             />
           </label>
           <p className="text-xs leading-relaxed text-zinc-500">
-            Пока сохраняем mobile account без прокси. Если прокси понадобится позже, настройте его вручную внутри
-            Android / MuMu Emulator.
-          </p>
-          <p className="text-xs leading-relaxed text-zinc-500">
-            ADB serial не вводится здесь: после создания аккаунта откройте{' '}
-            <Link to="/emulators" className="text-violet-400 underline hover:text-violet-300">
-              Emulator Manager
-            </Link>{' '}
-            и привяжите устройство к аккаунту.
+            В базе сохраняются только имя, логин и имя экземпляра. ADB serial подставляется в памяти сервера после кнопки
+            «Запустить».
           </p>
           {manualMobileError ? <p className="text-sm text-rose-300">{manualMobileError}</p> : null}
         </div>

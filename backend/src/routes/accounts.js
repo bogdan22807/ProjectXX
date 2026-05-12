@@ -1,8 +1,6 @@
 import { Router } from 'express'
 import { db, newId } from '../db.js'
-import { createMuMuProfile, launchMuMuProfile } from '../executor/mobile/mumuManager.js'
 import { accountCreatePayload, accountPatchPayload } from '../requestFields.js'
-import { releaseEmulatorForAccount } from '../services/emulatorRegistry.js'
 import { sendJsonData, sendJsonError, sendJsonRow, sendJsonSuccess } from '../sendJson.js'
 
 const router = Router()
@@ -139,53 +137,6 @@ router.post('/', (req, res) => {
   return sendJsonRow(res, 201, row, 'Account missing after insert')
 })
 
-router.post('/mumu', async (_req, res) => {
-  const id = newId('acc')
-  if (process.platform === 'darwin') {
-    try {
-      const name = `Manual Android ${id.slice(-4)}`
-      const defaultDeviceId = String(process.env.MOBILE_DEVICE_ID ?? '').trim()
-      db.prepare(
-        `INSERT INTO accounts (
-          id, name, login, cookies, platform, proxy_id, browser_profile_id, browser_engine, status,
-          account_type, mobile_mode, mobile_proxy_id, mobile_device_id, mobile_emulator_name, mobile_vm_index
-        )
-         VALUES (?, ?, '', '', 'TikTok', NULL, NULL, 'chromium', 'ready', 'mobile', 'manual', '', ?, ?, '')`,
-      ).run(id, name, defaultDeviceId, 'Manual Android')
-
-      const row = normalizeAccountRow(db.prepare('SELECT * FROM accounts WHERE id = ?').get(id))
-      return sendJsonRow(res, 201, row, 'Manual mobile account missing after create')
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      return sendJsonError(res, 500, msg)
-    }
-  }
-  try {
-    const created = await createMuMuProfile({ nameHint: `MuMu ${id.slice(-4)}` })
-    const name = created.emulatorName || `MuMu ${created.emulatorIndex}`
-    db.prepare(
-      `INSERT INTO accounts (
-        id, name, login, cookies, platform, proxy_id, browser_profile_id, browser_engine, status,
-        account_type, mobile_mode, mobile_proxy_id, mobile_device_id, mobile_emulator_name, mobile_vm_index
-      )
-       VALUES (?, ?, '', '', 'TikTok', NULL, NULL, 'chromium', 'setup_required', 'mobile', 'mumu', '', ?, ?, ?)`,
-    ).run(id, name, created.adbSerial ?? '', created.emulatorName, created.emulatorIndex)
-
-    const launched = await launchMuMuProfile({ emulatorIndex: created.emulatorIndex })
-    db.prepare(
-      `UPDATE accounts
-          SET mobile_device_id = ?, mobile_emulator_name = ?, mobile_vm_index = ?
-        WHERE id = ?`,
-    ).run(launched.adbSerial, launched.emulatorName, launched.emulatorIndex, id)
-
-    const row = normalizeAccountRow(db.prepare('SELECT * FROM accounts WHERE id = ?').get(id))
-    return sendJsonRow(res, 201, row, 'MuMu account missing after create')
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    return sendJsonError(res, 500, msg)
-  }
-})
-
 router.patch('/:id', (req, res) => {
   const { id } = req.params
   const existing = db.prepare('SELECT * FROM accounts WHERE id = ?').get(id)
@@ -253,7 +204,6 @@ router.patch('/:id', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   const { id } = req.params
-  releaseEmulatorForAccount(id)
   const r = db.prepare('DELETE FROM accounts WHERE id = ?').run(id)
   if (r.changes === 0) return sendJsonError(res, 404, 'Not found')
   return sendJsonSuccess(res)

@@ -6,11 +6,20 @@ import {
   mobileRunScenario,
   mobileStop,
 } from '../executor/mobile/mobileExecutor.js'
-import { ensureMuMuAccountPrepared, launchMuMuAccountEmulator } from '../executor/mobile/mumuManager.js'
-import { assignFreeEmulatorToMobileAccount } from '../services/emulatorRegistry.js'
+import {
+  mumuLaunch,
+  mumuShutdown,
+  mumuShowWindow,
+  resolveMuMuVmIndexFromLabel,
+  startMuMuByEmulatorLabel,
+} from '../executor/mobile/mumuManager.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
+
+/** In-memory ADB serial for this process only (not persisted). */
+const ephemeralAdbSerial = new Map()
+
 /** @type {Map<string, { deviceId: string, controller: AbortController, finished: Promise<void> }>} */
 const activeMobileRuns = new Map()
 
@@ -26,16 +35,6 @@ function insertLog(accountId, action, details = '') {
 
 function getAccountById(accountId) {
   return db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId)
-}
-
-/**
- * If the mobile account has no adb serial yet, try to bind a free online device from the scanner registry.
- */
-function ensureAccountHasAdbSerial(accountRow) {
-  const serial = String(accountRow?.mobile_device_id ?? '').trim()
-  if (serial) return accountRow
-  assignFreeEmulatorToMobileAccount(String(accountRow?.id ?? '').trim())
-  return getAccountById(String(accountRow?.id ?? '').trim())
 }
 
 function getMobileAccountOrError(accountId, res) {
@@ -59,16 +58,121 @@ function getMobileAccountMode(account) {
     : 'mumu'
 }
 
-function mobileEnvForAccount(account) {
+function effectiveAdbSerial(accountId, accountRow) {
+  const fromMem = ephemeralAdbSerial.get(String(accountId))?.trim()
+  if (fromMem) return fromMem
+  if (getMobileAccountMode(accountRow) === 'manual') {
+    return String(accountRow.mobile_device_id ?? '').trim() || String(process.env.MOBILE_DEVICE_ID ?? '').trim()
+  }
+  return ''
+}
+
+function mobileEnvForAccount(accountId, accountRow) {
   const env = { ...process.env }
-  const deviceId = String(account.mobile_device_id ?? '').trim()
-  if (deviceId) env.MOBILE_DEVICE_ID = deviceId
+  const serial = effectiveAdbSerial(accountId, accountRow)
+  if (serial) env.MOBILE_DEVICE_ID = serial
   return env
 }
 
+async function handleMuMuOpenWindow(req, res) {
+  const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
+  if (!accountId) return sendJsonError(res, 400, 'accountId is required')
+  const account = getMobileAccountOrError(accountId, res)
+  if (!account) return
+  if (getMobileAccountMode(account) !== 'mumu') {
+    return sendJsonError(res, 400, 'This route is only for MuMu mode')
+  }
+  const label = String(account.mobile_emulator_name ?? '').trim()
+  if (!label) return sendJsonError(res, 400, 'mobile_emulator_name is required')
+  const emit = (action, details) => insertLog(accountId, action, details)
+  try {
+    const index = await resolveMuMuVmIndexFromLabel(label, { emit })
+    await mumuLaunch(index, { emit })
+    await mumuShowWindow(index, { emit })
+    emit('MOBILE_OPEN_WINDOW', `label=${label} index=${index}`)
+    return sendJsonData(res, 200, { ok: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    emit('MOBILE_ERROR', `open-window: ${msg}`)
+    return sendJsonError(res, 500, msg)
+  }
+}
+
+/**
+ * POST { accountId } — MuMu: launch VM by `mobile_emulator_name`, discover adb serial, keep in memory only.
+ */
+router.post('/launch', async (req, res) => {
+  const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
+  if (!accountId) return sendJsonError(res, 400, 'accountId is required')
+  const account = getMobileAccountOrError(accountId, res)
+  if (!account) return
+  if (getMobileAccountMode(account) !== 'mumu') {
+    return sendJsonError(res, 400, 'POST /mobile/launch is only for MuMu mode accounts')
+  }
+  const label = String(account.mobile_emulator_name ?? '').trim()
+  if (!label) {
+    return sendJsonError(res, 400, 'mobile_emulator_name is required (e.g. MuMuPlayer-2)')
+  }
+  const emit = (action, details) => insertLog(accountId, action, details)
+  try {
+    const launched = await startMuMuByEmulatorLabel(label, { emit })
+    ephemeralAdbSerial.set(accountId, launched.adbSerial)
+    db.prepare(`UPDATE accounts SET mobile_device_id = '', mobile_vm_index = '' WHERE id = ?`).run(accountId)
+    emit('MOBILE_LAUNCH', `label=${label} adb_serial=${launched.adbSerial}`)
+    return sendJsonData(res, 200, {
+      ok: true,
+      adb_serial: launched.adbSerial,
+      emulator_index: launched.emulatorIndex,
+      emulator_name: launched.emulatorName,
+    })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    emit('MOBILE_ERROR', `launch: ${msg}`)
+    return sendJsonError(res, 500, msg)
+  }
+})
+
+/**
+ * POST { accountId } — MuMu: shutdown VM by `mobile_emulator_name`, clear in-memory adb serial.
+ */
+router.post('/shutdown', async (req, res) => {
+  const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
+  if (!accountId) return sendJsonError(res, 400, 'accountId is required')
+  const account = getMobileAccountOrError(accountId, res)
+  if (!account) return
+  if (getMobileAccountMode(account) !== 'mumu') {
+    return sendJsonError(res, 400, 'POST /mobile/shutdown is only for MuMu mode accounts')
+  }
+  const label = String(account.mobile_emulator_name ?? '').trim()
+  if (!label) return sendJsonError(res, 400, 'mobile_emulator_name is required')
+  const emit = (action, details) => insertLog(accountId, action, details)
+  const serial = ephemeralAdbSerial.get(accountId)?.trim()
+  try {
+    if (serial) {
+      try {
+        await mobileStop({ emit, env: { ...process.env, MOBILE_DEVICE_ID: serial } })
+      } catch {
+        /* ignore */
+      }
+    }
+    const index = await resolveMuMuVmIndexFromLabel(label, { emit })
+    await mumuShutdown(index, { emit })
+    ephemeralAdbSerial.delete(accountId)
+    emit('MOBILE_SHUTDOWN', `label=${label}`)
+    return sendJsonData(res, 200, { ok: true })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    emit('MOBILE_ERROR', `shutdown: ${msg}`)
+    return sendJsonError(res, 500, msg)
+  }
+})
+
+router.post('/open-window', handleMuMuOpenWindow)
+router.post('/open-emulator', handleMuMuOpenWindow)
+
 /**
  * POST body: { accountId: string }
- * Runs ADB check_device then open_app (MuMu / QA). Uses account `MOBILE_DEVICE_ID` when set; app package from `MOBILE_APP_PACKAGE` or TikTok default.
+ * Runs ADB check_device then open_app. MuMu requires prior POST /mobile/launch (ephemeral adb).
  */
 router.post('/qa-open', async (req, res) => {
   const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
@@ -80,11 +184,17 @@ router.post('/qa-open', async (req, res) => {
     return sendJsonError(res, 404, 'Account not found')
   }
 
-  const rowWithSerial = ensureAccountHasAdbSerial(row) ?? row
+  if (String(row.account_type ?? '').trim().toLowerCase() === 'mobile') {
+    const serial = effectiveAdbSerial(accountId, row)
+    if (!serial) {
+      return sendJsonError(res, 400, 'No active adb session: use POST /mobile/launch first (MuMu)')
+    }
+  }
+
   const emit = (action, details) => {
     insertLog(accountId, action, details)
   }
-  const opts = { emit, env: mobileEnvForAccount(rowWithSerial) }
+  const opts = { emit, env: mobileEnvForAccount(accountId, row) }
 
   try {
     const check = await mobileCheckDevice(opts)
@@ -122,82 +232,7 @@ router.post('/qa-open', async (req, res) => {
 
 /**
  * POST body: { accountId: string }
- * Opens the MuMu emulator window for a mobile account.
- */
-router.post('/open-emulator', async (req, res) => {
-  const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
-  if (!accountId) {
-    return sendJsonError(res, 400, 'accountId is required')
-  }
-  const account = getMobileAccountOrError(accountId, res)
-  if (!account) return
-
-  const emit = (action, details) => {
-    insertLog(accountId, action, details)
-  }
-  const mode = getMobileAccountMode(account)
-
-  if (mode === 'manual') {
-    const message = 'MuMuManager unavailable. Using manual mobile mode.'
-    insertLog(accountId, 'MOBILE_INFO', message)
-    return sendJsonData(res, 200, {
-      ok: true,
-      manual: true,
-      message,
-      deviceId: String(account.mobile_device_id ?? '').trim(),
-    })
-  }
-
-  try {
-    const prepared = await ensureMuMuAccountPrepared(account, { emit })
-    const opened = await launchMuMuAccountEmulator(prepared.account, { emit })
-    return sendJsonData(res, 200, {
-      ok: true,
-      emulatorName: opened.emulatorName,
-      deviceId: opened.deviceId,
-      adb_serial: opened.adbSerial,
-      emulatorIndex: opened.emulatorIndex,
-    })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    emit('MOBILE_ERROR', `open-emulator: ${msg}`)
-    return sendJsonError(res, 500, msg)
-  }
-})
-
-/**
- * POST body: { accountId: string }
- * Marks a prepared MuMu/mobile account as ready for scenario runs.
- */
-router.post('/mark-ready', (req, res) => {
-  const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
-  if (!accountId) {
-    return sendJsonError(res, 400, 'accountId is required')
-  }
-  const account = getMobileAccountOrError(accountId, res)
-  if (!account) return
-
-  const bound = ensureAccountHasAdbSerial(account) ?? account
-
-  const mode = getMobileAccountMode(bound)
-  const deviceId = String(bound.mobile_device_id ?? '').trim()
-  const emulatorName = String(bound.mobile_emulator_name ?? '').trim()
-  if (!deviceId || (mode !== 'manual' && !emulatorName)) {
-    return sendJsonError(res, 400, 'Mobile account is missing adb_serial/emulatorName')
-  }
-
-  db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('ready', accountId)
-  insertLog(
-    accountId,
-    'MOBILE_READY',
-    mode === 'manual' ? `adb_serial=${deviceId} mode=manual` : `adb_serial=${deviceId} emulator=${emulatorName}`,
-  )
-  return sendJsonData(res, 200, { ok: true, status: 'ready', deviceId, adb_serial: deviceId, emulatorName, mode })
-})
-
-/**
- * POST body: { accountId: string }
- * Runs mobile ADB scenario: open app -> random wait -> swipe -> random wait -> optional like.
+ * Runs mobile ADB scenario. MuMu: requires POST /mobile/launch first (ephemeral adb).
  */
 router.post('/scenario', async (req, res) => {
   const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
@@ -214,37 +249,22 @@ router.post('/scenario', async (req, res) => {
     return sendJsonError(res, 409, 'Mobile scenario already active for this account')
   }
   const isMobileAccount = String(row.account_type ?? 'browser').trim().toLowerCase() === 'mobile'
-  let accountRow = row
   if (isMobileAccount) {
-    const mode = getMobileAccountMode(accountRow)
-    if (String(accountRow.status ?? '').trim().toLowerCase() === 'setup_required') {
-      return sendJsonError(res, 400, 'Mobile account must be saved as ready first')
-    }
-    if (mode !== 'manual') {
-      try {
-        const prepared = await ensureMuMuAccountPrepared(accountRow, { emit })
-        const opened = await launchMuMuAccountEmulator(prepared.account, { emit })
-        accountRow = opened.account
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        emit('MOBILE_ERROR', `scenario_prepare: ${msg}`)
-        return sendJsonError(res, 500, msg)
-      }
-    }
-    accountRow = ensureAccountHasAdbSerial(accountRow) ?? accountRow
-    const deviceId = String(accountRow.mobile_device_id ?? '').trim()
-    if (!deviceId) {
+    const mode = getMobileAccountMode(row)
+    const serial = effectiveAdbSerial(accountId, row)
+    if (!serial) {
       return sendJsonError(
         res,
         400,
-        mode === 'manual'
-          ? 'Manual mobile account is missing adb_serial (bind an emulator in Emulator Manager or POST /emulators/assign)'
-          : 'Mobile account is missing adb_serial',
+        mode === 'mumu'
+          ? 'No adb session: click Launch (POST /mobile/launch) before running a scenario'
+          : 'Manual mobile: set mobile_device_id on the account or MOBILE_DEVICE_ID in server env',
       )
     }
   }
-  const opts = { emit, env: mobileEnvForAccount(accountRow) }
-  const deviceIdForRun = String(accountRow.mobile_device_id ?? '').trim() || String(opts.env?.MOBILE_DEVICE_ID ?? '').trim()
+  const opts = { emit, env: mobileEnvForAccount(accountId, row) }
+  const deviceIdForRun =
+    effectiveAdbSerial(accountId, row) || String(opts.env?.MOBILE_DEVICE_ID ?? '').trim()
   const controller = new AbortController()
   let finishRun = () => {}
   const finished = new Promise((resolve) => {
@@ -300,7 +320,7 @@ router.post('/scenario', async (req, res) => {
 
 /**
  * POST body: { accountId: string }
- * Stops mobile session (force-stop for `MOBILE_APP_PACKAGE` when set, otherwise TikTok default package).
+ * Stops mobile scenario (abort + force-stop app on current adb session).
  */
 router.post('/stop', async (req, res) => {
   const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
@@ -321,7 +341,7 @@ router.post('/stop', async (req, res) => {
     if (active) {
       active.controller.abort()
     }
-    await mobileStop({ emit, env: mobileEnvForAccount(row) })
+    await mobileStop({ emit, env: mobileEnvForAccount(accountId, row) })
     if (active) {
       await Promise.race([
         active.finished,
