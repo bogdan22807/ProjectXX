@@ -317,15 +317,18 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       )
         return
       const isMobile = acc.accountType === 'mobile'
-      if (
-        (!isMobile &&
+      if (!isMobile) {
+        if (
           acc.status !== 'New' &&
           acc.status !== 'Ready' &&
           acc.status !== 'challenge_detected' &&
-          acc.status !== 'auth_required') ||
-        (isMobile && acc.status !== 'ready')
-      )
-        return
+          acc.status !== 'auth_required'
+        )
+          return
+      } else {
+        if (acc.status === 'running') return
+        if (!String(acc.deviceId ?? '').trim()) return
+      }
       if (warmupPending[id]) return
       setWarmupPending((p) => ({ ...p, [id]: 'start' }))
       try {
