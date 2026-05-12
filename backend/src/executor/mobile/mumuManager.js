@@ -242,26 +242,3 @@ export async function launchMuMuAccountEmulator(account, opts = {}) {
     deviceId: launched.adbSerial,
   }
 }
-
-/**
- * Resolve MuMu VM index from a user label (e.g. "MuMuPlayer-2" or "2").
- * @param {string} instanceLabel
- * @param {Record<string, unknown>} [opts]
- * @returns {Promise<string>}
- */
-export async function resolveMuMuVmIndexFromLabel(instanceLabel, opts = {}) {
-  const label = String(instanceLabel ?? '').trim()
-  if (!label) throw new Error('mumu_instance_name is required')
-  const tail = label.match(/(\d+)\s*$/)
-  if (tail) {
-    const asIndex = tail[1]
-    const info = await mumuInfo(asIndex, opts).catch(() => null)
-    if (info?.index) return String(info.index)
-  }
-  const rows = await mumuList(opts)
-  const exact = rows.find((r) => r.name === label || r.name.toLowerCase() === label.toLowerCase())
-  if (exact) return String(exact.index)
-  const loose = rows.find((r) => label.includes(r.name) || r.name.includes(label))
-  if (loose) return String(loose.index)
-  throw new Error(`MuMu instance not found for "${label}"`)
-}

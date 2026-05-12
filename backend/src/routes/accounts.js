@@ -2,7 +2,6 @@ import { Router } from 'express'
 import { db, newId } from '../db.js'
 import { createMuMuProfile, launchMuMuProfile } from '../executor/mobile/mumuManager.js'
 import { accountCreatePayload, accountPatchPayload } from '../requestFields.js'
-import { releaseEmulatorForAccount } from '../services/emulatorRegistry.js'
 import { sendJsonData, sendJsonError, sendJsonRow, sendJsonSuccess } from '../sendJson.js'
 
 const router = Router()
@@ -253,7 +252,6 @@ router.patch('/:id', (req, res) => {
 
 router.delete('/:id', (req, res) => {
   const { id } = req.params
-  releaseEmulatorForAccount(id)
   const r = db.prepare('DELETE FROM accounts WHERE id = ?').run(id)
   if (r.changes === 0) return sendJsonError(res, 404, 'Not found')
   return sendJsonSuccess(res)

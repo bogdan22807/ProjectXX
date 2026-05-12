@@ -75,22 +75,6 @@ db.exec(`
     FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE SET NULL
   );
 
-  CREATE TABLE IF NOT EXISTS emulators (
-    id TEXT PRIMARY KEY,
-    emulator_name TEXT NOT NULL,
-    mumu_instance_name TEXT NOT NULL,
-    adb_serial TEXT,
-    linked_account_id TEXT,
-    status TEXT NOT NULL DEFAULT 'offline',
-    last_seen INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (linked_account_id) REFERENCES accounts(id) ON DELETE SET NULL
-  );
-
-  CREATE UNIQUE INDEX IF NOT EXISTS ux_emulators_serial_nonempty ON emulators(adb_serial)
-    WHERE adb_serial IS NOT NULL AND length(trim(adb_serial)) > 0;
-  CREATE INDEX IF NOT EXISTS idx_emulators_linked ON emulators(linked_account_id);
-  CREATE INDEX IF NOT EXISTS idx_emulators_status ON emulators(status);
 `)
 
 ensureColumn('proxies', 'provider', "TEXT NOT NULL DEFAULT ''")
@@ -161,33 +145,16 @@ try {
 }
 
 try {
-  const legacy = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='adb_devices'`).get()
-  if (legacy) {
-    const cols = db.prepare(`PRAGMA table_info(adb_devices)`).all()
-    const names = new Set(cols.map((/** @type {{ name: string }} */ c) => c.name))
-    const rows = db.prepare('SELECT * FROM adb_devices').all()
-    for (const r of rows) {
-      const serial = String(r.adb_serial ?? '').trim()
-      const emuName = names.has('emulator_name') ? String(r.emulator_name ?? '').trim() : ''
-      const mumuInst = names.has('mumu_instance_name') ? String(r.mumu_instance_name ?? '').trim() : ''
-      db.prepare(
-        `INSERT OR IGNORE INTO emulators (id, emulator_name, mumu_instance_name, adb_serial, linked_account_id, status, last_seen, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`,
-      ).run(
-        String(r.id),
-        emuName || serial || String(r.id),
-        mumuInst,
-        serial || null,
-        r.linked_account_id ?? null,
-        String(r.status ?? 'offline'),
-        Number(r.last_seen ?? 0),
-        r.created_at ?? null,
-      )
-    }
-    db.exec('DROP TABLE adb_devices')
-  }
+  db.exec('DROP TABLE IF EXISTS emulators')
 } catch (e) {
-  console.error('[db] migrate adb_devices → emulators', e)
+  console.error('[db] drop emulators', e)
+}
+
+try {
+  const legacy = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='adb_devices'`).get()
+  if (legacy) db.exec('DROP TABLE IF EXISTS adb_devices')
+} catch (e) {
+  console.error('[db] drop adb_devices', e)
 }
 
 export function newId(prefix) {

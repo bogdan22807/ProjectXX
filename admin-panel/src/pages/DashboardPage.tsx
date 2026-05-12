@@ -51,6 +51,7 @@ type ManualMobileFormState = {
   name: string
   login: string
   proxyId: string
+  deviceId: string
 }
 
 const emptyForm = (): FormState => ({
@@ -70,6 +71,7 @@ const emptyManualMobileForm = (): ManualMobileFormState => ({
   name: '',
   login: '',
   proxyId: '',
+  deviceId: '',
 })
 
 function isMacOsClient() {
@@ -148,17 +150,28 @@ function AccountFields({
             Прокси для mobile account временно не сохраняется через UI. Сначала добавьте аккаунт без прокси, а сам
             прокси настройте вручную внутри MuMu / Android Emulator.
           </div>
-          <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs leading-relaxed text-zinc-400">
-            ADB serial и привязка к эмулятору выполняются только через{' '}
-            <Link to="/emulators" className="text-violet-400 underline hover:text-violet-300">
-              Emulator Manager
-            </Link>
-            . Ручной ввод device id, serial или порта отключён.
-          </div>
-          <div className="text-xs text-zinc-500">
-            <span className="text-zinc-600">Текущий ADB serial: </span>
-            <span className="font-mono text-zinc-300">{form.deviceId?.trim() ? form.deviceId : '— не привязан'}</span>
-          </div>
+          <p className="text-xs text-zinc-500">
+            Укажите serial из вывода <span className="font-mono text-zinc-400">adb devices</span> (например{' '}
+            <span className="font-mono">127.0.0.1:16384</span> или <span className="font-mono">emulator-5554</span>).
+          </p>
+          <label className="block text-xs font-medium text-zinc-400">
+            ADB serial (mobile_device_id)
+            <input
+              className={fieldClassMono}
+              value={form.deviceId}
+              onChange={(e) => setForm((f) => ({ ...f, deviceId: e.target.value }))}
+              placeholder="127.0.0.1:16384"
+            />
+          </label>
+          <label className="block text-xs font-medium text-zinc-400">
+            Имя эмулятора (подпись)
+            <input
+              className={fieldClass}
+              value={form.emulatorName}
+              onChange={(e) => setForm((f) => ({ ...f, emulatorName: e.target.value }))}
+              placeholder={accountMode === 'manual' ? 'Manual Android' : 'MuMu 1'}
+            />
+          </label>
           <p className="text-xs text-zinc-500">
             Mobile mode: <span className="font-mono text-zinc-400">{accountMode}</span>
           </p>
@@ -248,7 +261,6 @@ export function DashboardPage() {
     runMobileQaOpen,
     addMuMuAccount,
     openMobileEmulator,
-    markMobileReady,
     stopMobileSession,
   } = useAppState()
 
@@ -290,6 +302,8 @@ export function DashboardPage() {
       proxyId: account?.accountType === 'mobile' ? null : editForm.proxyId || null,
       profileId: account?.accountType === 'mobile' ? null : editForm.profileId || null,
       browserEngine: editForm.browserEngine,
+      deviceId: account?.accountType === 'mobile' ? editForm.deviceId.trim() || null : undefined,
+      emulatorName: account?.accountType === 'mobile' ? editForm.emulatorName.trim() || null : undefined,
       status: editForm.status,
     })
     closeEdit()
@@ -334,11 +348,16 @@ export function DashboardPage() {
 
   async function submitManualMobileAccount() {
     if (manualMobileSubmitting) return
+    const deviceId = manualMobileForm.deviceId.trim()
+    if (!deviceId) {
+      setManualMobileError('Укажите ADB serial (как в adb devices).')
+      return
+    }
     setManualMobileSubmitting(true)
     setManualMobileError(null)
     try {
       const ok = await addAccount({
-        name: manualMobileForm.name.trim() || 'Manual Android',
+        name: manualMobileForm.name.trim() || `Manual Android ${deviceId}`,
         login: manualMobileForm.login.trim(),
         cookies: '',
         platform: 'TikTok',
@@ -348,10 +367,10 @@ export function DashboardPage() {
         mobileProxyId: null,
         profileId: null,
         browserEngine: 'chromium',
-        deviceId: null,
+        deviceId,
         emulatorName: manualMobileForm.name.trim() || 'Manual Android',
         emulatorIndex: null,
-        status: 'setup_required',
+        status: 'ready',
       })
       if (ok) {
         closeManualMobileModal()
@@ -409,7 +428,8 @@ export function DashboardPage() {
   }
 
   function isMobileStartable(a: Account) {
-    return a.accountType === 'mobile' && a.status === 'ready'
+    if (a.accountType !== 'mobile' || a.status === 'running') return false
+    return Boolean(a.deviceId?.trim())
   }
 
   function isMobileStoppable(a: Account) {
@@ -490,7 +510,7 @@ export function DashboardPage() {
           <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Аккаунты</h2>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
             POST /accounts, POST /accounts/mumu, PATCH /accounts/:id · POST /warmup/start|stop ·
-            POST /warmup/test-run · POST /mobile/open-emulator|mark-ready|scenario|stop|qa-open
+            POST /warmup/test-run · POST /mobile/open-emulator|scenario|stop|qa-open
           </p>
         </div>
         <div className={tableScrollClass}>
@@ -650,16 +670,6 @@ export function DashboardPage() {
                           >
                             {mobileQaPending[a.id] ? 'MuMu…' : a.mode === 'manual' ? 'Manual mode' : 'Открыть эмулятор'}
                           </Button>
-                          {a.status === 'setup_required' ? (
-                            <Button
-                              className={tableActionButtonClass}
-                              variant="secondary"
-                              onClick={() => void markMobileReady(a.id)}
-                              title="Пометить MuMu аккаунт как готовый после ручной установки TikTok и входа"
-                            >
-                              Сохранить как готовый
-                            </Button>
-                          ) : null}
                         </>
                       ) : (
                         <>
@@ -856,13 +866,15 @@ export function DashboardPage() {
             Пока сохраняем mobile account без прокси. Если прокси понадобится позже, настройте его вручную внутри
             Android / MuMu Emulator.
           </p>
-          <p className="text-xs leading-relaxed text-zinc-500">
-            ADB serial не вводится здесь: после создания аккаунта откройте{' '}
-            <Link to="/emulators" className="text-violet-400 underline hover:text-violet-300">
-              Emulator Manager
-            </Link>{' '}
-            и привяжите устройство к аккаунту.
-          </p>
+          <label className="block text-xs font-medium text-zinc-400">
+            ADB serial (как в adb devices)
+            <input
+              className={fieldClassMono}
+              value={manualMobileForm.deviceId}
+              onChange={(e) => setManualMobileForm((f) => ({ ...f, deviceId: e.target.value }))}
+              placeholder="127.0.0.1:16384"
+            />
+          </label>
           {manualMobileError ? <p className="text-sm text-rose-300">{manualMobileError}</p> : null}
         </div>
       </Modal>
