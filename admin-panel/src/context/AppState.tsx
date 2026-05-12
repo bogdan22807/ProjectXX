@@ -314,6 +314,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       try {
         if (isMobile) {
           await apiPost('/mobile/launch', { accountId: id })
+          const data = await apiPost<{ ok?: boolean; error?: string; step?: string }>('/mobile/scenario', {
+            accountId: id,
+          })
+          if (data.ok === false) {
+            setLastError(
+              data.error?.trim()
+                ? `Mobile scenario (${data.step ?? '?'}): ${data.error.trim()}`
+                : 'Mobile scenario failed',
+            )
+          }
         } else {
           await apiPost<{ ok?: boolean }>('/warmup/start', { accountId: id })
         }
@@ -338,7 +348,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       const acc = accounts.find((a) => a.id === id)
       if (!acc) return
       if (acc.accountType === 'mobile') {
-        if (acc.status !== 'running') return
+        if (acc.status === 'stopped') return
       } else if (acc.status !== 'Running' && acc.status !== 'Starting') {
         return
       }
