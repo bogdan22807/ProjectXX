@@ -26,7 +26,12 @@ function emitLog(opts, action, details = '') {
 }
 
 function parseIndexFromLabel(label) {
-  const tail = String(label ?? '').trim().match(/(\d+)\s*$/)
+  const normalized = String(label ?? '').trim()
+  if (!normalized) return ''
+  if (/^\d+$/.test(normalized)) return normalized
+  const androidDevice = normalized.match(/^android device(?:-(\d+))?$/i)
+  if (androidDevice) return androidDevice[1] ? androidDevice[1] : '0'
+  const tail = normalized.match(/(\d+)\s*$/)
   return tail?.[1] ? tail[1] : ''
 }
 
@@ -182,6 +187,88 @@ async function openMuMuTarget(target, opts = {}) {
   return runMacProcess('open', ['-a', target.appName], opts)
 }
 
+function buildMuMuToolCandidates(target, opts = {}) {
+  const env = opts.env ?? process.env
+  const explicit = String(env.MUMU_TOOL_PATH ?? opts.mumuToolPath ?? '').trim()
+  const appPath = String(target?.appPath ?? '').trim()
+  const fromApp = appPath
+    ? [
+        path.join(appPath, 'Contents', 'MacOS', 'mumutool'),
+        path.join(appPath, 'Contents', 'Resources', 'mumutool'),
+      ]
+    : []
+  return uniqueNonEmpty([explicit, ...fromApp, 'mumutool'])
+}
+
+async function runMuMuTool(args, target, opts = {}) {
+  const candidates = buildMuMuToolCandidates(target, opts)
+  let lastError = null
+  for (const bin of candidates) {
+    try {
+      return await runMacProcess(bin, args, opts)
+    } catch (err) {
+      const code =
+        err && typeof err === 'object' && 'code' in err ? String(/** @type {{ code?: string }} */ (err).code ?? '') : ''
+      const msg = err instanceof Error ? err.message : String(err)
+      if (code === 'ENOENT' || code === 'EACCES' || /command not found/i.test(msg)) {
+        lastError = err
+        continue
+      }
+      throw err
+    }
+  }
+  throw (
+    lastError ??
+    new Error(
+      `mumutool was not found. Set MUMU_TOOL_PATH, or install MuMu command-line tool. Tried: ${candidates.join(', ')}`,
+    )
+  )
+}
+
+function parseIndexFromMuMuInfo(raw, label) {
+  const wanted = String(label ?? '').trim().toLowerCase()
+  if (!wanted) return ''
+  const text = String(raw ?? '')
+  if (!text.trim()) return ''
+
+  try {
+    const parsed = JSON.parse(text)
+    const rows = Array.isArray(parsed) ? parsed : [parsed]
+    for (const row of rows) {
+      if (!row || typeof row !== 'object') continue
+      const r = /** @type {Record<string, unknown>} */ (row)
+      const vmName = String(r.vmName ?? r.name ?? '').trim().toLowerCase()
+      const index = String(r.index ?? r.id ?? '').trim()
+      if (vmName && vmName === wanted && index) return index
+    }
+  } catch {
+    /* ignore non-JSON output */
+  }
+
+  const lines = text.split(/\r?\n/).map((line) => line.trim())
+  for (const line of lines) {
+    if (!line || !line.toLowerCase().includes(wanted)) continue
+    const mNo = line.match(/NO\.?\s*(\d+)/i)
+    if (mNo?.[1]) return mNo[1]
+    const mIdx = line.match(/\bindex\s*[:=]\s*(\d+)/i)
+    if (mIdx?.[1]) return mIdx[1]
+    const mAny = line.match(/\b(\d+)\b/)
+    if (mAny?.[1]) return mAny[1]
+  }
+  return ''
+}
+
+async function resolveMuMuInstanceIndex(instanceLabel, target, opts = {}) {
+  const direct = parseIndexFromLabel(instanceLabel)
+  if (direct) return direct
+  try {
+    const info = await runMuMuTool(['info', 'all'], target, { ...opts, timeoutMs: 25_000 })
+    return parseIndexFromMuMuInfo(info.stdout, instanceLabel)
+  } catch {
+    return ''
+  }
+}
+
 async function listOnlineAdbSerials(opts = {}) {
   const stdout = await runAdbDevices({ adbPath: opts.adbPath, timeoutMs: opts.timeoutMs })
   return filterOnlineDevices(parseAdbDevicesList(stdout)).map((row) => row.id)
@@ -217,6 +304,17 @@ async function waitForLaunchedAdbSerial(initialOnline, opts = {}) {
 export async function mumuLaunch(instanceLabel, opts = {}) {
   assertMacOsHost()
   let target = await resolveMuMuAppTarget(instanceLabel, opts)
+  const instanceIndex = await resolveMuMuInstanceIndex(instanceLabel, target, opts)
+  if (instanceIndex) {
+    try {
+      await runMuMuTool(['open', instanceIndex], target, opts)
+      emitLog(opts, 'MUMU_LAUNCHED', `app=${target.appName} instance=${instanceIndex}`)
+      return { appName: target.appName, instanceIndex }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} failed; fallback to open app. ${msg}`)
+    }
+  }
   try {
     await openMuMuTarget(target, opts)
   } catch (err) {
@@ -229,13 +327,24 @@ export async function mumuLaunch(instanceLabel, opts = {}) {
       throw new Error(`Failed to launch MuMu app "${target.appName}": ${msg}`)
     }
   }
-  emitLog(opts, 'MUMU_LAUNCHED', `app=${target.appName}`)
-  return { appName: target.appName }
+  emitLog(opts, 'MUMU_LAUNCHED', `app=${target.appName}${instanceIndex ? ` instance=${instanceIndex}` : ''}`)
+  return { appName: target.appName, instanceIndex }
 }
 
 export async function mumuShowWindow(instanceLabel, opts = {}) {
   assertMacOsHost()
   let target = await resolveMuMuAppTarget(instanceLabel, opts)
+  const instanceIndex = await resolveMuMuInstanceIndex(instanceLabel, target, opts)
+  if (instanceIndex) {
+    try {
+      await runMuMuTool(['open', instanceIndex], target, opts)
+      emitLog(opts, 'MUMU_WINDOW_OPENED', `app=${target.appName} instance=${instanceIndex}`)
+      return { appName: target.appName, instanceIndex }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} failed; fallback to open app. ${msg}`)
+    }
+  }
   try {
     await openMuMuTarget(target, opts)
   } catch (err) {
@@ -248,14 +357,26 @@ export async function mumuShowWindow(instanceLabel, opts = {}) {
       throw err
     }
   }
-  emitLog(opts, 'MUMU_WINDOW_OPENED', `app=${target.appName}`)
-  return { appName: target.appName }
+  emitLog(opts, 'MUMU_WINDOW_OPENED', `app=${target.appName}${instanceIndex ? ` instance=${instanceIndex}` : ''}`)
+  return { appName: target.appName, instanceIndex }
 }
 
 export async function mumuShutdown(instanceLabel, opts = {}) {
   assertMacOsHost()
   const target = await resolveMuMuAppTarget(instanceLabel, opts)
   const appName = target.appName
+  const instanceIndex = await resolveMuMuInstanceIndex(instanceLabel, target, opts)
+
+  if (instanceIndex) {
+    try {
+      await runMuMuTool(['close', instanceIndex], target, opts)
+      emitLog(opts, 'MUMU_SHUTDOWN', `app=${appName} instance=${instanceIndex}`)
+      return { appName, instanceIndex }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      emitLog(opts, 'MUMU_WARN', `mumutool close ${instanceIndex} failed; fallback to app quit. ${msg}`)
+    }
+  }
 
   try {
     await runMacProcess('osascript', ['-e', `tell application "${appName}" to quit`], opts)
@@ -268,8 +389,8 @@ export async function mumuShutdown(instanceLabel, opts = {}) {
 
   // Fallback for builds that ignore Apple Events or spawn helper processes.
   await runMacProcess('pkill', ['-f', appName], opts).catch(() => {})
-  emitLog(opts, 'MUMU_SHUTDOWN', `app=${appName}`)
-  return { appName }
+  emitLog(opts, 'MUMU_SHUTDOWN', `app=${appName}${instanceIndex ? ` instance=${instanceIndex}` : ''}`)
+  return { appName, instanceIndex }
 }
 
 /**
