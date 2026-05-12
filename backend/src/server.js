@@ -14,7 +14,9 @@ import { sendJsonData, sendJsonError, sendJsonSuccess } from './sendJson.js'
 
 const app = express()
 const PORT = Number(process.env.PORT) || 3000
+const HOST = process.env.HOST || '0.0.0.0'
 const API_PREFIX = '/api'
+const mountedRoutes = []
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', '*')
@@ -29,6 +31,7 @@ app.use(express.json({ limit: '1mb' }))
 function mountApi(path, router) {
   app.use(path, router)
   app.use(`${API_PREFIX}${path}`, router)
+  mountedRoutes.push(path)
 }
 
 mountApi('/accounts', accountsRouter)
@@ -52,6 +55,19 @@ app.use((err, _req, res, _next) => {
   return sendJsonError(res, 500, 'Internal server error')
 })
 
-app.listen(PORT, () => {
-  console.log(`API listening on http://localhost:${PORT}`)
+const server = app.listen(PORT, HOST, () => {
+  const publicHost = HOST === '0.0.0.0' ? 'localhost' : HOST
+  console.log('[startup] backend API started')
+  console.log(`[startup] env=${process.env.NODE_ENV || 'development'} node=${process.version}`)
+  console.log(`[startup] listening=http://${publicHost}:${PORT}`)
+  console.log(`[startup] routes=${mountedRoutes.join(', ')}`)
+})
+
+server.on('error', (error) => {
+  if (error?.code === 'EADDRINUSE') {
+    console.error(`[startup] failed: port ${PORT} is already in use`)
+    return
+  }
+
+  console.error('[startup] failed:', error)
 })
