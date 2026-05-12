@@ -32,7 +32,7 @@ const browserAccountStatuses: AccountStatus[] = [
   'auth_required',
 ]
 
-const mobileAccountStatuses: AccountStatus[] = ['ready', 'running', 'error']
+const mobileAccountStatuses: AccountStatus[] = ['stopped', 'ready', 'running', 'error']
 
 type FormState = {
   name: string
@@ -142,12 +142,12 @@ function AccountFields({
             Android.
           </div>
           <label className="block text-xs font-medium text-zinc-400">
-            Имя экземпляра MuMu (как в MuMu Manager)
+            Имя приложения MuMu (macOS)
             <input
               className={fieldClassMono}
               value={form.emulatorName}
               onChange={(e) => setForm((f) => ({ ...f, emulatorName: e.target.value }))}
-              placeholder="MuMuPlayer-2"
+              placeholder="MuMuPlayer"
             />
           </label>
           <p className="text-xs text-zinc-500">
@@ -242,7 +242,6 @@ export function DashboardPage() {
     startPlaywrightTestRun,
     runMobileQaOpen,
     openMobileEmulator,
-    shutdownMobileEmulator,
     stopMobileSession,
   } = useAppState()
 
@@ -407,7 +406,7 @@ export function DashboardPage() {
   function isMobileStartable(a: Account) {
     return (
       a.accountType === 'mobile' &&
-      (a.status === 'ready' || a.status === 'error') &&
+      (a.status === 'ready' || a.status === 'error' || a.status === 'stopped') &&
       Boolean(a.emulatorName?.trim()) &&
       a.mode !== 'manual'
     )
@@ -415,10 +414,6 @@ export function DashboardPage() {
 
   function isMobileStoppable(a: Account) {
     return a.accountType === 'mobile' && a.status === 'running'
-  }
-
-  function isMobileShutdownable(a: Account) {
-    return a.accountType === 'mobile' && a.mode !== 'manual' && Boolean(a.emulatorName?.trim())
   }
 
   const statCards: {
@@ -614,6 +609,7 @@ export function DashboardPage() {
                             ? 'Ошибка (Manual)'
                             : 'Ошибка (MuMu)'
                           : null)}
+                      {a.status === 'stopped' && a.accountType === 'mobile' && 'Остановлен (MuMu)'}
                       {a.status === 'challenge_detected' && 'Капча'}
                       {a.status === 'auth_required' && 'Нужен вход'}
                     </StatusBadge>
@@ -662,15 +658,6 @@ export function DashboardPage() {
                             onClick={() => void openMobileEmulator(a.id)}
                           >
                             {mobileQaPending[a.id] ? '…' : 'Открыть'}
-                          </Button>
-                          <Button
-                            className={tableActionButtonClass}
-                            variant="secondary"
-                            disabled={!isMobileShutdownable(a) || mobileQaPending[a.id] === true}
-                            title="Остановить сценарий, выключить MuMu и сбросить adb-сессию в памяти сервера"
-                            onClick={() => void shutdownMobileEmulator(a.id)}
-                          >
-                            Выключить
                           </Button>
                           <Button
                             className={tableActionButtonClass}

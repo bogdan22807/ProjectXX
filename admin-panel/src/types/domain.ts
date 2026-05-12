@@ -7,6 +7,7 @@ export type AccountStatus =
   | 'setup_required'
   | 'ready'
   | 'running'
+  | 'stopped'
   | 'error'
   /** TikTok captcha / verify — run stopped; open visible test browser to solve manually */
   | 'challenge_detected'
