@@ -240,9 +240,6 @@ export function DashboardPage() {
     testRunPending,
     mobileQaPending,
     startPlaywrightTestRun,
-    runMobileQaOpen,
-    openMobileEmulator,
-    stopMobileSession,
   } = useAppState()
 
   const recentLogs = logs.slice(0, 8)
@@ -490,7 +487,7 @@ export function DashboardPage() {
           <h2 className="text-sm font-semibold tracking-tight text-zinc-100">Аккаунты</h2>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
             POST /accounts, PATCH /accounts/:id · POST /warmup/start|stop · POST /warmup/test-run ·
-            POST /mobile/launch|shutdown|open-window|scenario|stop|qa-open
+            POST /mobile/launch|shutdown
           </p>
         </div>
         <div className={tableScrollClass}>
@@ -644,40 +641,7 @@ export function DashboardPage() {
                           {warmupPending[a.id] === 'stop' ? 'Стоп…' : 'Стоп'}
                         </Button>
                       ) : null}
-                      {a.accountType === 'mobile' ? (
-                        <>
-                          <Button
-                            className={tableActionButtonClass}
-                            variant="secondary"
-                            disabled={mobileQaPending[a.id] === true || a.mode === 'manual'}
-                            title={
-                              a.mode === 'manual'
-                                ? 'Режим manual: окно MuMu не управляется через API'
-                                : 'Показать окно эмулятора по имени экземпляра'
-                            }
-                            onClick={() => void openMobileEmulator(a.id)}
-                          >
-                            {mobileQaPending[a.id] ? '…' : 'Открыть'}
-                          </Button>
-                          <Button
-                            className={tableActionButtonClass}
-                            variant="secondary"
-                            disabled={mobileQaPending[a.id] === true}
-                            title="Проверить adb и открыть приложение (нужен активный POST /mobile/launch — через «Запустить»)"
-                            onClick={() => void runMobileQaOpen(a.id)}
-                          >
-                            {mobileQaPending[a.id] ? 'ADB…' : 'Приложение'}
-                          </Button>
-                          <Button
-                            className={tableActionButtonClass}
-                            variant="ghost"
-                            title="Force-stop приложения по MOBILE_APP_PACKAGE (без выключения эмулятора)"
-                            onClick={() => void stopMobileSession(a.id)}
-                          >
-                            Стоп приложения
-                          </Button>
-                        </>
-                      ) : (
+                      {a.accountType === 'mobile' ? null : (
                         <>
                           <Button
                             className={`${tableActionButtonClass} ${
