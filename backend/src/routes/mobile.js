@@ -7,10 +7,8 @@ import {
   mobileStop,
 } from '../executor/mobile/mobileExecutor.js'
 import {
-  mumuLaunch,
   mumuShutdown,
   mumuShowWindow,
-  resolveMuMuVmIndexFromLabel,
   startMuMuByEmulatorLabel,
 } from '../executor/mobile/mumuManager.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
@@ -86,10 +84,8 @@ async function handleMuMuOpenWindow(req, res) {
   if (!label) return sendJsonError(res, 400, 'mobile_emulator_name is required')
   const emit = (action, details) => insertLog(accountId, action, details)
   try {
-    const index = await resolveMuMuVmIndexFromLabel(label, { emit })
-    await mumuLaunch(index, { emit })
-    await mumuShowWindow(index, { emit })
-    emit('MOBILE_OPEN_WINDOW', `label=${label} index=${index}`)
+    const opened = await mumuShowWindow(label, { emit })
+    emit('MOBILE_OPEN_WINDOW', `label=${label} app=${opened.appName}`)
     return sendJsonData(res, 200, { ok: true })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -117,7 +113,14 @@ router.post('/launch', async (req, res) => {
   try {
     const launched = await startMuMuByEmulatorLabel(label, { emit })
     ephemeralAdbSerial.set(accountId, launched.adbSerial)
-    db.prepare(`UPDATE accounts SET mobile_device_id = '', mobile_vm_index = '' WHERE id = ?`).run(accountId)
+    db.prepare(
+      `UPDATE accounts
+          SET mobile_device_id = '',
+              mobile_vm_index = ?,
+              mobile_emulator_name = ?,
+              status = 'running'
+        WHERE id = ?`,
+    ).run(String(launched.emulatorIndex ?? ''), String(launched.emulatorName ?? label), accountId)
     emit('MOBILE_LAUNCH', `label=${label} adb_serial=${launched.adbSerial}`)
     return sendJsonData(res, 200, {
       ok: true,
@@ -147,7 +150,11 @@ router.post('/shutdown', async (req, res) => {
   if (!label) return sendJsonError(res, 400, 'mobile_emulator_name is required')
   const emit = (action, details) => insertLog(accountId, action, details)
   const serial = ephemeralAdbSerial.get(accountId)?.trim()
+  const active = activeMobileRuns.get(accountId)
   try {
+    if (active) {
+      active.controller.abort()
+    }
     if (serial) {
       try {
         await mobileStop({ emit, env: { ...process.env, MOBILE_DEVICE_ID: serial } })
@@ -155,10 +162,13 @@ router.post('/shutdown', async (req, res) => {
         /* ignore */
       }
     }
-    const index = await resolveMuMuVmIndexFromLabel(label, { emit })
-    await mumuShutdown(index, { emit })
+    const shutdown = await mumuShutdown(label, { emit })
+    if (active) {
+      await Promise.race([active.finished, new Promise((resolve) => setTimeout(resolve, 2_000))])
+    }
     ephemeralAdbSerial.delete(accountId)
-    emit('MOBILE_SHUTDOWN', `label=${label}`)
+    db.prepare(`UPDATE accounts SET mobile_device_id = '', status = 'stopped' WHERE id = ?`).run(accountId)
+    emit('MOBILE_SHUTDOWN', `label=${label} app=${shutdown.appName}`)
     return sendJsonData(res, 200, { ok: true })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)

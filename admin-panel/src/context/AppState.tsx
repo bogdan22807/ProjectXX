@@ -84,7 +84,6 @@ interface AppStateValue {
   ) => Promise<void>
   runMobileQaOpen: (accountId: string) => Promise<void>
   openMobileEmulator: (accountId: string) => Promise<void>
-  shutdownMobileEmulator: (accountId: string) => Promise<void>
   stopMobileSession: (accountId: string) => Promise<void>
   addProxy: (input: {
     provider: string
@@ -307,7 +306,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
           acc.status !== 'auth_required') ||
         (isMobile &&
           (!String(acc.emulatorName ?? '').trim() ||
-            (acc.status !== 'ready' && acc.status !== 'error')))
+            (acc.status !== 'ready' && acc.status !== 'error' && acc.status !== 'stopped')))
       )
         return
       if (warmupPending[id]) return
@@ -315,16 +314,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       try {
         if (isMobile) {
           await apiPost('/mobile/launch', { accountId: id })
-          const data = await apiPost<{ ok?: boolean; error?: string; step?: string }>('/mobile/scenario', {
-            accountId: id,
-          })
-          if (data.ok === false) {
-            setLastError(
-              data.error?.trim()
-                ? `Mobile scenario (${data.step ?? '?'}): ${data.error.trim()}`
-                : 'Mobile scenario failed',
-            )
-          }
         } else {
           await apiPost<{ ok?: boolean }>('/warmup/start', { accountId: id })
         }
@@ -357,7 +346,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setWarmupPending((p) => ({ ...p, [id]: 'stop' }))
       try {
         if (acc.accountType === 'mobile') {
-          await apiPost<{ ok?: boolean }>('/mobile/stop', { accountId: id })
+          await apiPost<{ ok?: boolean }>('/mobile/shutdown', { accountId: id })
         } else {
           await apiPost<{ ok?: boolean }>('/warmup/stop', { accountId: id })
         }
@@ -593,20 +582,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [mobileQaPending, refreshAccountsLogsProxies],
   )
 
-  const shutdownMobileEmulator = useCallback(
-    async (accountId: string) => {
-      try {
-        await apiPost('/mobile/stop', { accountId }).catch(() => {})
-        await apiPost('/mobile/shutdown', { accountId })
-        void refreshAccountsLogsProxies()
-      } catch (e) {
-        console.error('shutdownMobileEmulator failed', e)
-        setLastError(formatApiFailure(e))
-      }
-    },
-    [refreshAccountsLogsProxies],
-  )
-
   const stopMobileSession = useCallback(
     async (accountId: string) => {
       try {
@@ -679,7 +654,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       startPlaywrightTestRun,
       runMobileQaOpen,
       openMobileEmulator,
-      shutdownMobileEmulator,
       stopMobileSession,
       addProxy,
       deleteSelectedProxies,
@@ -712,7 +686,6 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       startPlaywrightTestRun,
       runMobileQaOpen,
       openMobileEmulator,
-      shutdownMobileEmulator,
       stopMobileSession,
       addProxy,
       deleteSelectedProxies,

@@ -12,6 +12,7 @@ const styles: Record<string, string> = {
   setup_required: 'bg-amber-950/85 text-amber-200 border-amber-600/70',
   ready: 'bg-sky-950/80 text-sky-300 border-sky-800/60',
   running: 'bg-emerald-950/80 text-emerald-300 border-emerald-800/60',
+  stopped: 'bg-zinc-900/90 text-zinc-300 border-zinc-700/70',
   error: 'bg-red-950/80 text-red-300 border-red-800/60',
   challenge_detected: 'bg-amber-950/85 text-amber-200 border-amber-600/70',
   auth_required: 'bg-orange-950/85 text-orange-200 border-orange-600/70',
