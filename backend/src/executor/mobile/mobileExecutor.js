@@ -75,6 +75,12 @@ function throwIfMobileStopRequested(opts, stage = '') {
 /** TikTok (global Android). Override with `MOBILE_APP_PACKAGE`. */
 const DEFAULT_MOBILE_APP_PACKAGE = 'com.zhiliaoapp.musically'
 const FALLBACK_MOBILE_APP_PACKAGES = ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill']
+const KNOWN_TIKTOK_PACKAGES = [
+  'com.zhiliaoapp.musically',
+  'com.ss.android.ugc.trill',
+  'com.ss.android.ugc.aweme',
+  'com.ss.android.ugc.tiktok',
+]
 
 /**
  * @param {import('node:process').ProcessEnv | Record<string, string | undefined>} env
@@ -100,6 +106,44 @@ function resolveMobileAppPackages(env) {
     if (parsed.length > 0) return [...new Set(parsed)]
   }
   return [...FALLBACK_MOBILE_APP_PACKAGES]
+}
+
+/**
+ * @param {string} stdout
+ * @returns {string[]}
+ */
+function parseInstalledAndroidPackages(stdout) {
+  return String(stdout ?? '')
+    .split(/\r?\n/g)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^package:/i, '').trim())
+    .filter(Boolean)
+}
+
+/**
+ * Resolve best TikTok package from installed apps on device.
+ *
+ * @param {string[]} requestedPackages
+ * @param {string[]} installedPackages
+ * @returns {string[]}
+ */
+function rankTikTokPackages(requestedPackages, installedPackages) {
+  const installedSet = new Set(installedPackages)
+  const ordered = []
+  const push = (pkg) => {
+    const p = String(pkg ?? '').trim()
+    if (!p || ordered.includes(p) || !installedSet.has(p)) return
+    ordered.push(p)
+  }
+
+  for (const pkg of requestedPackages) push(pkg)
+  for (const pkg of KNOWN_TIKTOK_PACKAGES) push(pkg)
+  for (const pkg of installedPackages) {
+    const p = pkg.toLowerCase()
+    if (p.includes('tiktok') || p.includes('musical') || p.includes('trill')) push(pkg)
+  }
+  return ordered
 }
 
 /**
@@ -301,9 +345,23 @@ export async function mobileCheckDevice(opts = {}) {
 export async function mobileOpenApp(opts = {}) {
   ensureSessionStarted(opts)
   const env = opts.env ?? process.env
-  const packages = resolveMobileAppPackages(env)
+  const requestedPackages = resolveMobileAppPackages(env)
   try {
     const { deviceId } = await resolveMobileDevice(opts)
+    let packages = [...requestedPackages]
+    try {
+      const packageListResult = await runAdb(deviceId, ['shell', 'pm', 'list', 'packages'], opts)
+      assertAdbOk(packageListResult)
+      const installed = parseInstalledAndroidPackages(packageListResult.stdout)
+      const detected = rankTikTokPackages(requestedPackages, installed)
+      if (detected.length > 0) {
+        packages = detected
+        mobileLog(opts, 'MOBILE_APP_DETECTED', `device=${deviceId} package=${detected[0]} variants=${detected.length}`)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      mobileLog(opts, 'MOBILE_WARN', `open_app package discovery failed: ${msg}`)
+    }
     let lastError = null
     for (let i = 0; i < packages.length; i += 1) {
       const pkg = packages[i]
