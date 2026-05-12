@@ -410,7 +410,7 @@ export function DashboardPage() {
   }
 
   function isMobileStoppable(a: Account) {
-    return a.accountType === 'mobile' && a.status === 'running'
+    return a.accountType === 'mobile' && (a.status === 'running' || a.status === 'ready' || a.status === 'error')
   }
 
   const statCards: {
@@ -637,6 +637,11 @@ export function DashboardPage() {
                           className={tableActionButtonClass}
                           disabled={warmupPending[a.id] === 'stop'}
                           onClick={() => stopAccount(a.id)}
+                          title={
+                            a.accountType === 'mobile'
+                              ? 'Остановить сценарий (если активен) и закрыть MuMu'
+                              : undefined
+                          }
                         >
                           {warmupPending[a.id] === 'stop' ? 'Стоп…' : 'Стоп'}
                         </Button>
