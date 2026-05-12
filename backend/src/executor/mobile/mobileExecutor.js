@@ -72,19 +72,62 @@ function throwIfMobileStopRequested(opts, stage = '') {
   throw new MobileScenarioStoppedError(`stop requested${suffix}`)
 }
 
-const MOBILE_SWIPE_ARGS = ['shell', 'input', 'swipe', '720', '1900', '720', '600', '500']
-const MOBILE_LIKE_ARGS = ['shell', 'input', 'tap', '1360', '1750']
-
 /** TikTok (global Android). Override with `MOBILE_APP_PACKAGE`. */
 const DEFAULT_MOBILE_APP_PACKAGE = 'com.zhiliaoapp.musically'
+const FALLBACK_MOBILE_APP_PACKAGES = ['com.zhiliaoapp.musically', 'com.ss.android.ugc.trill']
 
 /**
  * @param {import('node:process').ProcessEnv | Record<string, string | undefined>} env
  * @returns {string}
  */
 function resolveMobileAppPackage(env) {
-  const fromEnv = String(env.MOBILE_APP_PACKAGE ?? '').trim()
-  return fromEnv || DEFAULT_MOBILE_APP_PACKAGE
+  return resolveMobileAppPackages(env)[0] || DEFAULT_MOBILE_APP_PACKAGE
+}
+
+/**
+ * @param {import('node:process').ProcessEnv | Record<string, string | undefined>} env
+ * @returns {string[]}
+ */
+function resolveMobileAppPackages(env) {
+  const single = String(env.MOBILE_APP_PACKAGE ?? '').trim()
+  if (single) return [single]
+  const list = String(env.MOBILE_APP_PACKAGES ?? '').trim()
+  if (list) {
+    const parsed = list
+      .split(/[,\s]+/g)
+      .map((item) => item.trim())
+      .filter(Boolean)
+    if (parsed.length > 0) return [...new Set(parsed)]
+  }
+  return [...FALLBACK_MOBILE_APP_PACKAGES]
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} env
+ */
+function getMobileGestureConfig(env) {
+  const swipeX1 = readMobileEnvInt(env, 'MOBILE_SWIPE_X1', 720)
+  const swipeY1 = readMobileEnvInt(env, 'MOBILE_SWIPE_Y1', 1900)
+  const swipeX2 = readMobileEnvInt(env, 'MOBILE_SWIPE_X2', 720)
+  const swipeY2 = readMobileEnvInt(env, 'MOBILE_SWIPE_Y2', 600)
+  const swipeDurationMs = readMobileEnvInt(env, 'MOBILE_SWIPE_DURATION_MS', 500, { min: 1 })
+  const likeX = readMobileEnvInt(env, 'MOBILE_LIKE_X', 1360)
+  const likeY = readMobileEnvInt(env, 'MOBILE_LIKE_Y', 1750)
+  return {
+    swipeArgs: [
+      'shell',
+      'input',
+      'swipe',
+      String(swipeX1),
+      String(swipeY1),
+      String(swipeX2),
+      String(swipeY2),
+      String(swipeDurationMs),
+    ],
+    likeArgs: ['shell', 'input', 'tap', String(likeX), String(likeY)],
+    swipe: { x1: swipeX1, y1: swipeY1, x2: swipeX2, y2: swipeY2, durationMs: swipeDurationMs },
+    like: { x: likeX, y: likeY },
+  }
 }
 
 /**
@@ -158,10 +201,11 @@ function getMobileScenarioConfig(env) {
   const viewMinMs = readMobileEnvInt(env, 'MOBILE_VIEW_MIN_MS', 5000, { min: 0 })
   const viewMaxMs = readMobileEnvInt(env, 'MOBILE_VIEW_MAX_MS', 10000, { min: 0 })
   const likeChance = readMobileEnvInt(env, 'MOBILE_LIKE_CHANCE', 10, { min: 0, max: 100 })
+  const gestures = getMobileGestureConfig(env)
   if (viewMaxMs < viewMinMs) {
     throw new Error('MOBILE_VIEW_MAX_MS must be >= MOBILE_VIEW_MIN_MS')
   }
-  return { swipesCount, viewMinMs, viewMaxMs, likeChance }
+  return { swipesCount, viewMinMs, viewMaxMs, likeChance, gestures }
 }
 
 /**
@@ -257,17 +301,30 @@ export async function mobileCheckDevice(opts = {}) {
 export async function mobileOpenApp(opts = {}) {
   ensureSessionStarted(opts)
   const env = opts.env ?? process.env
-  const pkg = resolveMobileAppPackage(env)
+  const packages = resolveMobileAppPackages(env)
   try {
     const { deviceId } = await resolveMobileDevice(opts)
-    const result = await runAdb(
-      deviceId,
-      ['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'],
-      opts,
-    )
-    assertMonkeyLaunchOk(result)
-    mobileLog(opts, 'MOBILE_APP_OPENED', `package=${pkg} device=${deviceId}`)
-    return { ok: true, deviceId, package: pkg }
+    let lastError = null
+    for (let i = 0; i < packages.length; i += 1) {
+      const pkg = packages[i]
+      try {
+        const result = await runAdb(
+          deviceId,
+          ['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'],
+          opts,
+        )
+        assertMonkeyLaunchOk(result)
+        mobileLog(opts, 'MOBILE_APP_OPENED', `package=${pkg} device=${deviceId}`)
+        return { ok: true, deviceId, package: pkg }
+      } catch (err) {
+        lastError = err
+        if (i < packages.length - 1) {
+          const msg = err instanceof Error ? err.message : String(err)
+          mobileLog(opts, 'MOBILE_WARN', `open_app fallback package=${pkg} failed: ${msg}`)
+        }
+      }
+    }
+    throw lastError ?? new Error('open_app failed for all configured packages')
   } catch (err) {
     mobileError(opts, err, 'open_app')
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
@@ -299,9 +356,13 @@ export async function mobileRunScenario(opts = {}) {
       await sleepWithStopChecks(beforeSwipeWaitMs, opts)
 
       throwIfMobileStopRequested(opts, `before_swipe iteration=${iteration}`)
-      const swipeResult = await runAdb(open.deviceId, MOBILE_SWIPE_ARGS, opts)
+      const swipeResult = await runAdb(open.deviceId, config.gestures.swipeArgs, opts)
       assertAdbOk(swipeResult)
-      mobileLog(opts, 'MOBILE_SWIPE', `iteration=${iteration} x1=720 y1=1900 x2=720 y2=600 durationMs=500`)
+      mobileLog(
+        opts,
+        'MOBILE_SWIPE',
+        `iteration=${iteration} x1=${config.gestures.swipe.x1} y1=${config.gestures.swipe.y1} x2=${config.gestures.swipe.x2} y2=${config.gestures.swipe.y2} durationMs=${config.gestures.swipe.durationMs}`,
+      )
 
       const afterSwipeWaitMs = randomBetween(config.viewMinMs, config.viewMaxMs, random)
       mobileLog(opts, 'MOBILE_VIEW', `iteration=${iteration} stage=after_swipe waitMs=${afterSwipeWaitMs}`)
@@ -309,10 +370,10 @@ export async function mobileRunScenario(opts = {}) {
 
       if (random() * 100 < config.likeChance) {
         throwIfMobileStopRequested(opts, `before_like iteration=${iteration}`)
-        const likeResult = await runAdb(open.deviceId, MOBILE_LIKE_ARGS, opts)
+        const likeResult = await runAdb(open.deviceId, config.gestures.likeArgs, opts)
         assertAdbOk(likeResult)
         likes += 1
-        mobileLog(opts, 'MOBILE_LIKE', `iteration=${iteration} x=1360 y=1750`)
+        mobileLog(opts, 'MOBILE_LIKE', `iteration=${iteration} x=${config.gestures.like.x} y=${config.gestures.like.y}`)
       }
     }
 
