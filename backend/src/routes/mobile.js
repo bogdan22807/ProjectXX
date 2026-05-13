@@ -2,7 +2,6 @@ import { Router } from 'express'
 import { db, newId } from '../db.js'
 import {
   mobileCheckDevice,
-  mobileOpenApp,
   mobileRunScenario,
   mobileStop,
 } from '../executor/mobile/mobileExecutor.js'
@@ -11,6 +10,7 @@ import {
   mumuShowWindow,
   startMuMuByEmulatorLabel,
 } from '../executor/mobile/mumuManager.js'
+import { ensureMobileAdbReady } from '../executor/mobile/mobileAdbReady.js'
 import { openMobileAppAfterLaunch } from '../executor/mobile/mobileLaunchOpenApp.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
@@ -86,6 +86,13 @@ function readBooleanBodyFlag(body, camelKey, snakeKey, defaultValue) {
   return defaultValue
 }
 
+function readStringBodyField(body, camelKey, snakeKey) {
+  const raw = body && typeof body === 'object'
+    ? body[camelKey] ?? body[snakeKey]
+    : undefined
+  return String(raw ?? '').trim()
+}
+
 async function handleMuMuOpenWindow(req, res) {
   const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
   if (!accountId) return sendJsonError(res, 400, 'accountId is required')
@@ -128,6 +135,12 @@ router.post('/launch', async (req, res) => {
   const emit = (action, details) => insertLog(accountId, action, details)
   try {
     const launched = await startMuMuByEmulatorLabel(label, { emit })
+    const launchEnv = { ...process.env, MOBILE_DEVICE_ID: launched.adbSerial }
+    emit('EMULATOR_STARTED', `label=${label} adb_serial=${launched.adbSerial}`)
+    await ensureMobileAdbReady({
+      adbSerial: launched.adbSerial,
+      emit,
+    })
     ephemeralAdbSerial.set(accountId, launched.adbSerial)
     db.prepare(
       `UPDATE accounts
@@ -142,8 +155,9 @@ router.post('/launch', async (req, res) => {
     if (openAppAfterLaunch) {
       const open = await openMobileAppAfterLaunch({
         adbSerial: launched.adbSerial,
-        env: { ...process.env, MOBILE_DEVICE_ID: launched.adbSerial },
+        env: launchEnv,
         emit,
+        attempts: 3,
       })
       openedPackage = String(open.package ?? '').trim()
     }
@@ -234,6 +248,13 @@ router.post('/qa-open', async (req, res) => {
   const opts = { emit, env: mobileEnvForAccount(accountId, row) }
 
   try {
+    const serial = effectiveAdbSerial(accountId, row)
+    if (serial) {
+      await ensureMobileAdbReady({
+        adbSerial: serial,
+        emit,
+      })
+    }
     const check = await mobileCheckDevice(opts)
     if (!check.ok) {
       return sendJsonData(res, 200, {
@@ -243,7 +264,12 @@ router.post('/qa-open', async (req, res) => {
       })
     }
 
-    const open = await mobileOpenApp(opts)
+    const open = await openMobileAppAfterLaunch({
+      adbSerial: check.deviceId,
+      env: { ...opts.env, MOBILE_DEVICE_ID: check.deviceId },
+      emit,
+      attempts: 3,
+    })
     if (!open.ok) {
       await mobileStop(opts)
       return sendJsonData(res, 200, {
@@ -302,6 +328,8 @@ router.post('/scenario', async (req, res) => {
   const opts = { emit, env: mobileEnvForAccount(accountId, row) }
   const deviceIdForRun =
     effectiveAdbSerial(accountId, row) || String(opts.env?.MOBILE_DEVICE_ID ?? '').trim()
+  const appWasOpened = readBooleanBodyFlag(req.body, 'appOpened', 'app_opened', false)
+  const openedPackageFromBody = readStringBodyField(req.body, 'package', 'package')
   const controller = new AbortController()
   let finishRun = () => {}
   const finished = new Promise((resolve) => {
@@ -313,7 +341,30 @@ router.post('/scenario', async (req, res) => {
     if (isMobileAccount) {
       db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('running', accountId)
     }
-    const result = await mobileRunScenario({ ...opts, signal: controller.signal })
+    await ensureMobileAdbReady({
+      adbSerial: deviceIdForRun,
+      emit,
+    })
+    const openedApp =
+      appWasOpened && openedPackageFromBody
+        ? { deviceId: deviceIdForRun, package: openedPackageFromBody }
+        : await openMobileAppAfterLaunch({
+            adbSerial: deviceIdForRun,
+            env: { ...opts.env, MOBILE_DEVICE_ID: deviceIdForRun },
+            emit,
+            attempts: 3,
+          })
+    emit('SCENARIO_STARTED', `device=${openedApp.deviceId} package=${openedApp.package}`)
+    const result = await mobileRunScenario({
+      ...opts,
+      env: { ...opts.env, MOBILE_DEVICE_ID: openedApp.deviceId },
+      signal: controller.signal,
+      skipOpenApp: true,
+      openedApp: {
+        deviceId: openedApp.deviceId,
+        package: openedApp.package,
+      },
+    })
     if (result.stopped) {
       if (isMobileAccount) {
         db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('ready', accountId)
@@ -347,6 +398,10 @@ router.post('/scenario', async (req, res) => {
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    await mobileStop({ emit, env: { ...opts.env, MOBILE_DEVICE_ID: deviceIdForRun } }).catch(() => {})
+    if (isMobileAccount) {
+      db.prepare('UPDATE accounts SET status = ? WHERE id = ?').run('error', accountId)
+    }
     emit('MOBILE_ERROR', `scenario: ${msg}`)
     return sendJsonError(res, 500, msg)
   } finally {

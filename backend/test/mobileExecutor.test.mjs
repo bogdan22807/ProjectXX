@@ -241,6 +241,57 @@ test('mobileRunScenario skips like when random chance does not hit', async () =>
   }
 })
 
+test('mobileRunScenario can reuse already opened TikTok app without reopening it', async () => {
+  const commandLogFile = path.join(os.tmpdir(), `mobile-scenario-preopened-${process.pid}-${Date.now()}.txt`)
+  const { adbPath, tempDir } = makeFakeAdb({
+    monkeyStdout: 'Events injected: 1',
+    commandLogFile,
+  })
+  const emitted = []
+  const sleepCalls = []
+
+  try {
+    const result = await mobileRunScenario({
+      adbPath,
+      env: {
+        MOBILE_SWIPES_COUNT: '1',
+        MOBILE_VIEW_MIN_MS: '1',
+        MOBILE_VIEW_MAX_MS: '1',
+        MOBILE_LIKE_CHANCE: '100',
+      },
+      emit: (action, details = '') => emitted.push({ action, details }),
+      random: () => 0,
+      sleep: async (ms) => {
+        sleepCalls.push(ms)
+      },
+      skipOpenApp: true,
+      openedApp: {
+        deviceId: 'emulator-5554',
+        package: 'com.zhiliaoapp.musically',
+      },
+    })
+
+    assert.equal(result.ok, true)
+    assert.equal(result.deviceId, 'emulator-5554')
+    assert.equal(result.package, 'com.zhiliaoapp.musically')
+    assert.equal(result.likes, 1)
+    assert.deepEqual(sleepCalls, [1, 1])
+
+    const commandLog = fs.readFileSync(commandLogFile, 'utf8')
+    assert.equal((commandLog.match(/shell monkey -p/g) ?? []).length, 0)
+    assert.equal((commandLog.match(/shell input swipe 720 1900 720 600 500/g) ?? []).length, 1)
+    assert.equal((commandLog.match(/shell input tap 1360 1750/g) ?? []).length, 1)
+    assert.deepEqual(
+      emitted.map((entry) => entry.action),
+      ['MOBILE_EXECUTOR_STARTED', 'MOBILE_VIEW', 'MOBILE_SWIPE', 'MOBILE_VIEW', 'MOBILE_LIKE', 'MOBILE_DONE'],
+    )
+  } finally {
+    _resetMobileExecutorSessionForTests()
+    fs.rmSync(tempDir, { recursive: true, force: true })
+    fs.rmSync(commandLogFile, { force: true })
+  }
+})
+
 test('mobileRunScenario stops early when abort signal is triggered during wait', async () => {
   const commandLogFile = path.join(os.tmpdir(), `mobile-scenario-abort-${process.pid}-${Date.now()}.txt`)
   const { adbPath, tempDir } = makeFakeAdb({

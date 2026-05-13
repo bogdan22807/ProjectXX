@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { openMobileAppAfterLaunch } from '../src/executor/mobile/mobileLaunchOpenApp.js'
+import {
+  openMobileAppAfterLaunch,
+  verifyMobileAppOpened,
+} from '../src/executor/mobile/mobileLaunchOpenApp.js'
 
 test('openMobileAppAfterLaunch retries until mobile app opens', async () => {
   const calls = []
@@ -26,6 +29,7 @@ test('openMobileAppAfterLaunch retries until mobile app opens', async () => {
       }
       return { ok: true, deviceId: env.MOBILE_DEVICE_ID, package: env.MOBILE_APP_PACKAGE }
     },
+    verifyAppOpened: async () => ({ ok: true, method: 'activity' }),
   })
 
   assert.equal(result.ok, true)
@@ -39,10 +43,10 @@ test('openMobileAppAfterLaunch retries until mobile app opens', async () => {
   assert.deepEqual(sleepCalls, [25, 25])
   assert.deepEqual(
     emitted.map((entry) => entry.action),
-    ['MOBILE_WARN', 'MOBILE_WARN', 'MOBILE_APP_OPENED_AFTER_LAUNCH'],
+    ['TIKTOK_OPENING', 'MOBILE_WARN', 'TIKTOK_OPENING', 'MOBILE_WARN', 'TIKTOK_OPENING', 'TIKTOK_OPENED'],
   )
-  assert.match(emitted[0].details, /attempt=1\/3/)
-  assert.match(emitted[2].details, /attempt=3 package=com\.example\.tiktok/)
+  assert.match(emitted[0].details, /package=com\.example\.tiktok attempt=1\/3/)
+  assert.match(emitted[5].details, /attempt=3\/3 verify=activity/)
 })
 
 test('openMobileAppAfterLaunch throws after final failed attempt', async () => {
@@ -63,7 +67,29 @@ test('openMobileAppAfterLaunch throws after final failed attempt', async () => {
 
   assert.deepEqual(
     emitted.map((entry) => entry.action),
-    ['MOBILE_WARN'],
+    ['TIKTOK_OPENING', 'MOBILE_WARN', 'TIKTOK_OPENING'],
   )
-  assert.match(emitted[0].details, /attempt=1\/2 device=emulator-5556 failed: launcher unavailable/)
+  assert.match(emitted[1].details, /attempt=1\/2 device=emulator-5556 failed: launcher unavailable/)
+})
+
+test('verifyMobileAppOpened accepts activity dumpsys foreground match', async () => {
+  const commands = []
+
+  const result = await verifyMobileAppOpened({
+    adbSerial: '127.0.0.1:16384',
+    packageName: 'com.zhiliaoapp.musically',
+    verifyRunAdb: async (serial, args) => {
+      commands.push([serial, ...args])
+      return {
+        stdout:
+          'mResumedActivity: ActivityRecord{123 u0 com.zhiliaoapp.musically/com.ss.android.ugc.aweme.splash.SplashActivity t42}',
+      }
+    },
+  })
+
+  assert.equal(result.ok, true)
+  assert.equal(result.method, 'activity')
+  assert.deepEqual(commands, [
+    ['127.0.0.1:16384', 'shell', 'dumpsys', 'activity', 'activities'],
+  ])
 })

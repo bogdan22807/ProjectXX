@@ -313,9 +313,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       setWarmupPending((p) => ({ ...p, [id]: 'start' }))
       try {
         if (isMobile) {
-          await apiPost('/mobile/launch', { accountId: id })
+          const launch = await apiPost<{ ok?: boolean; package?: string }>('/mobile/launch', { accountId: id })
           const data = await apiPost<{ ok?: boolean; error?: string; step?: string }>('/mobile/scenario', {
             accountId: id,
+            appOpened: Boolean(String(launch?.package ?? '').trim()),
+            package: String(launch?.package ?? '').trim() || undefined,
           })
           if (data.ok === false) {
             setLastError(
