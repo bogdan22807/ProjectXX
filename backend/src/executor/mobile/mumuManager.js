@@ -347,6 +347,30 @@ async function resolveMuMuInstanceIndex(instanceLabel, target, opts = {}) {
   return String(instance?.index ?? '').trim()
 }
 
+async function openMuMuInstanceWithBootstrap(instanceIndex, target, opts = {}) {
+  const delayMs = opts.mumuBootstrapDelayMs ?? 1_200
+  try {
+    await runMuMuTool(['open', instanceIndex], target, opts)
+    return { ok: true, bootstrapped: false }
+  } catch (firstErr) {
+    const firstMsg = firstErr instanceof Error ? firstErr.message : String(firstErr)
+    emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} failed on first attempt: ${firstMsg}`)
+
+    // Bootstrap MuMu service first, then retry opening exact instance in the same request.
+    await openMuMuTarget(target, opts)
+    await sleepMs(delayMs)
+
+    try {
+      await runMuMuTool(['open', instanceIndex], target, opts)
+      return { ok: true, bootstrapped: true }
+    } catch (retryErr) {
+      const retryMsg = retryErr instanceof Error ? retryErr.message : String(retryErr)
+      emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} failed after bootstrap: ${retryMsg}`)
+      return { ok: false, bootstrapped: true, error: retryErr }
+    }
+  }
+}
+
 async function listOnlineAdbSerials(opts = {}) {
   const stdout = await runAdbDevices({ adbPath: opts.adbPath, timeoutMs: opts.timeoutMs })
   return filterOnlineDevices(parseAdbDevicesList(stdout)).map((row) => row.id)
@@ -383,26 +407,31 @@ export async function mumuLaunch(instanceLabel, opts = {}) {
   assertMacOsHost()
   let target = await resolveMuMuAppTarget(instanceLabel, opts)
   const instanceIndex = await resolveMuMuInstanceIndex(instanceLabel, target, opts)
+  let appAlreadyOpened = false
   if (instanceIndex) {
-    try {
-      await runMuMuTool(['open', instanceIndex], target, opts)
-      emitLog(opts, 'MUMU_LAUNCHED', `app=${target.appName} instance=${instanceIndex}`)
+    const opened = await openMuMuInstanceWithBootstrap(instanceIndex, target, opts)
+    appAlreadyOpened = opened.bootstrapped === true
+    if (opened.ok) {
+      emitLog(
+        opts,
+        'MUMU_LAUNCHED',
+        `app=${target.appName} instance=${instanceIndex}${opened.bootstrapped ? ' bootstrap=yes' : ''}`,
+      )
       return { appName: target.appName, instanceIndex }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} failed; fallback to open app. ${msg}`)
     }
   }
-  try {
-    await openMuMuTarget(target, opts)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    if (/Unable to find application named/i.test(msg) || /does not exist/i.test(msg)) {
-      cachedMuMuAppTarget = null
-      target = await resolveMuMuAppTarget(instanceLabel, opts)
+  if (!appAlreadyOpened) {
+    try {
       await openMuMuTarget(target, opts)
-    } else {
-      throw new Error(`Failed to launch MuMu app "${target.appName}": ${msg}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/Unable to find application named/i.test(msg) || /does not exist/i.test(msg)) {
+        cachedMuMuAppTarget = null
+        target = await resolveMuMuAppTarget(instanceLabel, opts)
+        await openMuMuTarget(target, opts)
+      } else {
+        throw new Error(`Failed to launch MuMu app "${target.appName}": ${msg}`)
+      }
     }
   }
   emitLog(opts, 'MUMU_LAUNCHED', `app=${target.appName}${instanceIndex ? ` instance=${instanceIndex}` : ''}`)
@@ -413,26 +442,31 @@ export async function mumuShowWindow(instanceLabel, opts = {}) {
   assertMacOsHost()
   let target = await resolveMuMuAppTarget(instanceLabel, opts)
   const instanceIndex = await resolveMuMuInstanceIndex(instanceLabel, target, opts)
+  let appAlreadyOpened = false
   if (instanceIndex) {
-    try {
-      await runMuMuTool(['open', instanceIndex], target, opts)
-      emitLog(opts, 'MUMU_WINDOW_OPENED', `app=${target.appName} instance=${instanceIndex}`)
+    const opened = await openMuMuInstanceWithBootstrap(instanceIndex, target, opts)
+    appAlreadyOpened = opened.bootstrapped === true
+    if (opened.ok) {
+      emitLog(
+        opts,
+        'MUMU_WINDOW_OPENED',
+        `app=${target.appName} instance=${instanceIndex}${opened.bootstrapped ? ' bootstrap=yes' : ''}`,
+      )
       return { appName: target.appName, instanceIndex }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} failed; fallback to open app. ${msg}`)
     }
   }
-  try {
-    await openMuMuTarget(target, opts)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    if (/Unable to find application named/i.test(msg) || /does not exist/i.test(msg)) {
-      cachedMuMuAppTarget = null
-      target = await resolveMuMuAppTarget(instanceLabel, opts)
+  if (!appAlreadyOpened) {
+    try {
       await openMuMuTarget(target, opts)
-    } else {
-      throw err
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/Unable to find application named/i.test(msg) || /does not exist/i.test(msg)) {
+        cachedMuMuAppTarget = null
+        target = await resolveMuMuAppTarget(instanceLabel, opts)
+        await openMuMuTarget(target, opts)
+      } else {
+        throw err
+      }
     }
   }
   emitLog(opts, 'MUMU_WINDOW_OPENED', `app=${target.appName}${instanceIndex ? ` instance=${instanceIndex}` : ''}`)
@@ -490,7 +524,7 @@ export async function startMuMuByEmulatorLabel(instanceLabel, opts = {}) {
   const adbSerial =
     String(instance?.adbPort ?? '').trim() ? `127.0.0.1:${String(instance.adbPort).trim()}` : await waitForLaunchedAdbSerial(onlineBefore, opts)
 
-  const emulatorIndex = String(instance?.index ?? parseIndexFromLabel(label)).trim()
+  const emulatorIndex = String(instance?.index ?? launched.instanceIndex ?? parseIndexFromLabel(label)).trim()
   const emulatorName = String(instance?.name || label || launched.appName).trim()
   emitLog(
     opts,
