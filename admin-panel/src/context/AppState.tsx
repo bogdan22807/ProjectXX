@@ -153,6 +153,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     setLogs(l.map(mapLog))
   }, [])
 
+  const fetchAccounts = useCallback(async () => {
+    const rows = await apiGet<ApiAccount[]>('/accounts')
+    setAccounts(rows.map(mapAccount))
+  }, [])
+
   const refreshAccountsLogsProxies = useCallback(async () => {
     const [a, p, l] = await Promise.all([
       apiGet<ApiAccount[]>('/accounts'),
@@ -338,14 +343,17 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
               )
             }
           }
+          setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, status: 'running' } : a)))
         } else {
           await apiPost<{ ok?: boolean }>('/warmup/start', { accountId: id })
+          // Optimistic update for instant button switch to Stop.
+          setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, status: 'Running' } : a)))
         }
-        await refreshAll()
+        await fetchAccounts()
       } catch (e) {
         console.error('Warmup start failed', e)
         setLastError(formatApiFailure(e))
-        await refreshAll()
+        await fetchAccounts()
       } finally {
         setWarmupPending((p) => {
           const next = { ...p }
@@ -354,7 +362,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         })
       }
     },
-    [accounts, warmupPending, refreshAll],
+    [accounts, warmupPending, fetchAccounts],
   )
 
   const stopAccount = useCallback(
@@ -371,14 +379,16 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       try {
         if (acc.accountType === 'mobile') {
           await apiPost<{ ok?: boolean }>('/mobile/shutdown', { accountId: id })
+          setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, status: 'stopped' } : a)))
         } else {
           await apiPost<{ ok?: boolean }>('/warmup/stop', { accountId: id })
+          setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, status: 'Ready' } : a)))
         }
-        await refreshAll()
+        await fetchAccounts()
       } catch (e) {
         console.error('Warmup stop failed', e)
         setLastError(formatApiFailure(e))
-        await refreshAll()
+        await fetchAccounts()
       } finally {
         setWarmupPending((p) => {
           const next = { ...p }
@@ -387,7 +397,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         })
       }
     },
-    [accounts, warmupPending, refreshAll],
+    [accounts, warmupPending, fetchAccounts],
   )
 
   const deleteSelectedAccounts = useCallback(async () => {
