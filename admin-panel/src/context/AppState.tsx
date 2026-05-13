@@ -314,8 +314,29 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       try {
         if (isMobile) {
           const launch = await apiPost<{ ok?: boolean; package?: string }>('/mobile/launch', { accountId: id })
-          if (!String(launch?.package ?? '').trim()) {
+          const openedPackage = String(launch?.package ?? '').trim()
+          if (!openedPackage) {
             setLastError('Mobile launch did not confirm TikTok opening')
+          } else {
+            const scenario = await apiPost<{
+              ok?: boolean
+              stopped?: boolean
+              error?: string
+              step?: string
+            }>('/mobile/scenario', {
+              accountId: id,
+              app_opened: true,
+              package: openedPackage,
+            })
+            if (scenario?.stopped) {
+              /* user or server stopped mid-run */
+            } else if (!scenario?.ok) {
+              setLastError(
+                scenario?.error?.trim()
+                  ? `Mobile scenario (${scenario.step ?? '?'}): ${scenario.error.trim()}`
+                  : 'Mobile scroll/like scenario failed',
+              )
+            }
           }
         } else {
           await apiPost<{ ok?: boolean }>('/warmup/start', { accountId: id })
