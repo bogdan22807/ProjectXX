@@ -195,6 +195,47 @@ async function openMuMuTarget(target, opts = {}) {
   return runMacProcess('open', ['-a', target.appName], opts)
 }
 
+/**
+ * Cold MuMu: `mumutool open <index>` often fails until the manager process exists.
+ * Open the MuMu app once, then retry `mumutool open` with delays until it succeeds.
+ *
+ * @param {string} instanceIndex
+ * @param {{ appName: string, appPath: string }} target
+ * @param {Record<string, unknown>} opts
+ * @param {{ maxAttempts?: number, delayMs?: number }} [timing]
+ * @returns {Promise<boolean>}
+ */
+async function openMuMuInstanceWithRetries(instanceIndex, target, opts = {}, timing = {}) {
+  const idx = String(instanceIndex ?? '').trim()
+  if (!idx) return false
+  const maxAttempts = Math.max(1, Number.parseInt(String(timing.maxAttempts ?? 8), 10) || 8)
+  const delayMs = Math.max(100, Number.parseInt(String(timing.delayMs ?? 1500), 10) || 1500)
+  let openedShell = false
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await runMuMuTool(['open', idx], target, opts)
+      emitLog(opts, 'MUMU_INSTANCE_OPENED', `instance=${idx} attempt=${attempt}/${maxAttempts}`)
+      return true
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      emitLog(opts, 'MUMU_WARN', `mumutool open ${idx} attempt ${attempt}/${maxAttempts}: ${msg}`)
+    }
+    if (!openedShell) {
+      try {
+        await openMuMuTarget(target, opts)
+        openedShell = true
+        emitLog(opts, 'MUMU_SHELL_OPENED', `app=${target.appName}`)
+      } catch (shellErr) {
+        const msg = shellErr instanceof Error ? shellErr.message : String(shellErr)
+        emitLog(opts, 'MUMU_WARN', `open MuMu shell failed: ${msg}`)
+      }
+    }
+    if (attempt < maxAttempts) await sleepMs(delayMs)
+  }
+  return false
+}
+
 function buildMuMuToolCandidates(target, opts = {}) {
   const env = opts.env ?? process.env
   const explicit = String(env.MUMU_TOOL_PATH ?? opts.mumuToolPath ?? '').trim()
@@ -383,16 +424,30 @@ export async function mumuLaunch(instanceLabel, opts = {}) {
   assertMacOsHost()
   let target = await resolveMuMuAppTarget(instanceLabel, opts)
   const instanceIndex = await resolveMuMuInstanceIndex(instanceLabel, target, opts)
+  const timing = {
+    maxAttempts: Math.max(
+      1,
+      Number.parseInt(String(opts.mumuOpenMaxAttempts ?? process.env.MUMU_OPEN_MAX_ATTEMPTS ?? 8), 10) || 8,
+    ),
+    delayMs: Math.max(
+      100,
+      Number.parseInt(String(opts.mumuOpenDelayMs ?? process.env.MUMU_OPEN_DELAY_MS ?? 1500), 10) || 1500,
+    ),
+  }
+
   if (instanceIndex) {
-    try {
-      await runMuMuTool(['open', instanceIndex], target, opts)
+    const ok = await openMuMuInstanceWithRetries(instanceIndex, target, opts, timing)
+    if (ok) {
       emitLog(opts, 'MUMU_LAUNCHED', `app=${target.appName} instance=${instanceIndex}`)
       return { appName: target.appName, instanceIndex }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} failed; fallback to open app. ${msg}`)
     }
+    emitLog(
+      opts,
+      'MUMU_WARN',
+      `mumutool open ${instanceIndex} failed after ${timing.maxAttempts} attempts; opening MuMu shell only`,
+    )
   }
+
   try {
     await openMuMuTarget(target, opts)
   } catch (err) {
@@ -414,14 +469,20 @@ export async function mumuShowWindow(instanceLabel, opts = {}) {
   let target = await resolveMuMuAppTarget(instanceLabel, opts)
   const instanceIndex = await resolveMuMuInstanceIndex(instanceLabel, target, opts)
   if (instanceIndex) {
-    try {
-      await runMuMuTool(['open', instanceIndex], target, opts)
-      emitLog(opts, 'MUMU_WINDOW_OPENED', `app=${target.appName} instance=${instanceIndex}`)
-      return { appName: target.appName, instanceIndex }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} failed; fallback to open app. ${msg}`)
+    const maxAttempts = Math.max(1, Number.parseInt(String(opts.mumuShowMaxAttempts ?? 6), 10) || 6)
+    const delayMs = Math.max(100, Number.parseInt(String(opts.mumuShowDelayMs ?? 500), 10) || 500)
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await runMuMuTool(['open', instanceIndex], target, opts)
+        emitLog(opts, 'MUMU_WINDOW_OPENED', `app=${target.appName} instance=${instanceIndex} attempt=${attempt}`)
+        return { appName: target.appName, instanceIndex }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} attempt ${attempt}/${maxAttempts}: ${msg}`)
+      }
+      if (attempt < maxAttempts) await sleepMs(delayMs)
     }
+    emitLog(opts, 'MUMU_WARN', `mumutool open ${instanceIndex} failed after ${maxAttempts} attempts; fallback to open app`)
   }
   try {
     await openMuMuTarget(target, opts)
@@ -489,6 +550,17 @@ export async function startMuMuByEmulatorLabel(instanceLabel, opts = {}) {
     pickMuMuInstance(sync.instances ?? [], label) ?? (await resolveMuMuInstance(label, target, opts).catch(() => null))
   const adbSerial =
     String(instance?.adbPort ?? '').trim() ? `127.0.0.1:${String(instance.adbPort).trim()}` : await waitForLaunchedAdbSerial(onlineBefore, opts)
+
+  const focusIndex = String(instance?.index ?? parseIndexFromLabel(label) ?? '').trim()
+  if (focusIndex) {
+    try {
+      await runMuMuTool(['open', focusIndex], target, opts)
+      emitLog(opts, 'MUMU_INSTANCE_FOCUS', `index=${focusIndex} after_adb_serial=${adbSerial}`)
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      emitLog(opts, 'MUMU_WARN', `post-adb mumutool open ${focusIndex} failed: ${msg}`)
+    }
+  }
 
   const emulatorIndex = String(instance?.index ?? parseIndexFromLabel(label)).trim()
   const emulatorName = String(instance?.name || label || launched.appName).trim()
