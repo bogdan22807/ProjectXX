@@ -621,7 +621,7 @@ export function DashboardPage() {
                           onClick={() => startAccount(a.id)}
                           title={
                             a.accountType === 'mobile'
-                              ? 'Запустить MuMu, найти adb serial и выполнить сценарий'
+                              ? 'Запустить MuMu, найти adb serial и открыть TikTok'
                               : 'Фоновый запуск (headless)'
                           }
                         >
@@ -639,7 +639,7 @@ export function DashboardPage() {
                           onClick={() => stopAccount(a.id)}
                           title={
                             a.accountType === 'mobile'
-                              ? 'Остановить сценарий (если активен) и закрыть MuMu'
+                              ? 'Закрыть TikTok и остановить MuMu'
                               : undefined
                           }
                         >
