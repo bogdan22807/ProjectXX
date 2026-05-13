@@ -157,8 +157,8 @@ function getMobileGestureConfig(env) {
   const swipeX2 = readMobileEnvInt(env, 'MOBILE_SWIPE_X2', 720)
   const swipeY2 = readMobileEnvInt(env, 'MOBILE_SWIPE_Y2', 600)
   const swipeDurationMs = readMobileEnvInt(env, 'MOBILE_SWIPE_DURATION_MS', 500, { min: 1 })
-  const likeX = readMobileEnvInt(env, 'MOBILE_LIKE_X', 1332)
-  const likeY = readMobileEnvInt(env, 'MOBILE_LIKE_Y', 1438)
+  const likeX = readMobileEnvInt(env, 'MOBILE_LIKE_X', 1341)
+  const likeY = readMobileEnvInt(env, 'MOBILE_LIKE_Y', 1555)
   return {
     swipeArgs: [
       'shell',
@@ -244,9 +244,9 @@ function randomBetween(minMs, maxMs, random) {
  */
 function getMobileScenarioConfig(env) {
   const swipesCount = readMobileEnvInt(env, 'MOBILE_SWIPES_COUNT', 20, { min: 1 })
-  const viewMinMs = readMobileEnvInt(env, 'MOBILE_VIEW_MIN_MS', 5000, { min: 0 })
-  const viewMaxMs = readMobileEnvInt(env, 'MOBILE_VIEW_MAX_MS', 10000, { min: 0 })
-  const likeChance = readMobileEnvInt(env, 'MOBILE_LIKE_CHANCE', 10, { min: 0, max: 100 })
+  const viewMinMs = readMobileEnvInt(env, 'MOBILE_VIEW_MIN_MS', 6500, { min: 0 })
+  const viewMaxMs = readMobileEnvInt(env, 'MOBILE_VIEW_MAX_MS', 13000, { min: 0 })
+  const likeChance = readMobileEnvInt(env, 'MOBILE_LIKE_CHANCE', 13, { min: 0, max: 100 })
   const gestures = getMobileGestureConfig(env)
   if (viewMaxMs < viewMinMs) {
     throw new Error('MOBILE_VIEW_MAX_MS must be >= MOBILE_VIEW_MIN_MS')
