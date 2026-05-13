@@ -381,12 +381,17 @@ export function DashboardPage() {
     return a.mode === 'manual' ? 'Manual' : 'MuMu'
   }
 
-  function accountEmulatorLabel(a: Account) {
-    if (a.accountType !== 'mobile') return '—'
-    return a.emulatorName?.trim() ? a.emulatorName : '—'
-  }
+function accountEmulatorLabel(a: Account) {
+  if (a.accountType !== 'mobile') return '—'
+  return a.emulatorName?.trim() ? a.emulatorName : '—'
+}
 
-  function isBrowserStartable(a: Account) {
+function mobileAccountStartableStatus(status: Account['status']): boolean {
+  const s = String(status ?? '').trim().toLowerCase()
+  return s === 'ready' || s === 'error' || s === 'stopped'
+}
+
+function isBrowserStartable(a: Account) {
     return (
       a.accountType === 'browser' &&
       (a.status === 'New' ||
@@ -403,7 +408,7 @@ export function DashboardPage() {
   function isMobileStartable(a: Account) {
     return (
       a.accountType === 'mobile' &&
-      (a.status === 'ready' || a.status === 'error' || a.status === 'stopped') &&
+      mobileAccountStartableStatus(a.status) &&
       Boolean(a.emulatorName?.trim()) &&
       a.mode !== 'manual'
     )

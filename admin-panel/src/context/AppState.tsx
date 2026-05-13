@@ -292,21 +292,34 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     async (id: string) => {
       const acc = accounts.find((a) => a.id === id)
       if (!acc) return
+
+      let eff = acc
+      if (acc.accountType === 'mobile') {
+        try {
+          const rows = await apiGet<ApiAccount[]>('/accounts')
+          const fresh = rows.find((r) => String(r.id) === String(id))
+          if (fresh) eff = mapAccount(fresh)
+        } catch {
+          /* use cached acc */
+        }
+      }
+
       if (
-        (!acc.accountType || acc.accountType === 'browser') &&
-        (acc.status === 'Running' || acc.status === 'Starting')
+        (!eff.accountType || eff.accountType === 'browser') &&
+        (eff.status === 'Running' || eff.status === 'Starting')
       )
         return
-      const isMobile = acc.accountType === 'mobile'
+      const isMobile = eff.accountType === 'mobile'
+      const statusLc = String(eff.status ?? '').trim().toLowerCase()
       if (
         (!isMobile &&
-          acc.status !== 'New' &&
-          acc.status !== 'Ready' &&
-          acc.status !== 'challenge_detected' &&
-          acc.status !== 'auth_required') ||
+          eff.status !== 'New' &&
+          eff.status !== 'Ready' &&
+          eff.status !== 'challenge_detected' &&
+          eff.status !== 'auth_required') ||
         (isMobile &&
-          (!String(acc.emulatorName ?? '').trim() ||
-            (acc.status !== 'ready' && acc.status !== 'error' && acc.status !== 'stopped')))
+          (!String(eff.emulatorName ?? '').trim() ||
+            (statusLc !== 'ready' && statusLc !== 'error' && statusLc !== 'stopped')))
       )
         return
       if (warmupPending[id]) return
