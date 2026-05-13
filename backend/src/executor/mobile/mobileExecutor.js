@@ -157,8 +157,8 @@ function getMobileGestureConfig(env) {
   const swipeX2 = readMobileEnvInt(env, 'MOBILE_SWIPE_X2', 720)
   const swipeY2 = readMobileEnvInt(env, 'MOBILE_SWIPE_Y2', 600)
   const swipeDurationMs = readMobileEnvInt(env, 'MOBILE_SWIPE_DURATION_MS', 500, { min: 1 })
-  const likeX = readMobileEnvInt(env, 'MOBILE_LIKE_X', 1360)
-  const likeY = readMobileEnvInt(env, 'MOBILE_LIKE_Y', 1750)
+  const likeX = readMobileEnvInt(env, 'MOBILE_LIKE_X', 1332)
+  const likeY = readMobileEnvInt(env, 'MOBILE_LIKE_Y', 1438)
   return {
     swipeArgs: [
       'shell',
