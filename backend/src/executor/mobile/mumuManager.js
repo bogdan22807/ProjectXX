@@ -5,7 +5,7 @@ import path from 'node:path'
 import { promisify } from 'node:util'
 
 import { filterOnlineDevices, parseAdbDevicesList } from './adbDevices.js'
-import { runAdbDevices } from './adbRunner.js'
+import { runAdbConnect, runAdbDevices } from './adbRunner.js'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_MUMU_APP_NAME = 'MuMuPlayer'
@@ -274,6 +274,17 @@ function pickMuMuInstance(instances, label) {
   return instances.find((row) => String(row.index) === direct) ?? null
 }
 
+function buildMuMuRunningAdbSerials(instances) {
+  const serials = []
+  for (const row of instances) {
+    if (normalizeMuMuLabel(row.state) !== 'running') continue
+    const adbPort = String(row.adbPort ?? '').trim()
+    if (!/^\d+$/.test(adbPort)) continue
+    serials.push(`127.0.0.1:${adbPort}`)
+  }
+  return uniqueNonEmpty(serials)
+}
+
 async function readMuMuInfoAll(target, opts = {}) {
   const info = await runMuMuTool(['info', 'all'], target, { ...opts, timeoutMs: 25_000 })
   return parseMuMuInfoAll(info.stdout)
@@ -309,6 +320,26 @@ async function resolveMuMuInstance(instanceLabel, target, opts = {}) {
     }
   }
   return null
+}
+
+async function syncMuMuRunningAdbConnections(target, opts = {}) {
+  const instances = await readMuMuInfoAll(target, opts)
+  const serials = buildMuMuRunningAdbSerials(instances)
+  if (serials.length === 0) {
+    emitLog(opts, 'MUMU_ADB_SYNC', 'running=0')
+    return { instances, serials }
+  }
+
+  for (const serial of serials) {
+    try {
+      await runAdbConnect(serial, { adbPath: opts.adbPath, timeoutMs: opts.timeoutMs })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      emitLog(opts, 'MUMU_WARN', `adb connect ${serial} failed during sync. ${msg}`)
+    }
+  }
+  emitLog(opts, 'MUMU_ADB_SYNC', `running=${serials.length} serials=${serials.join(',')}`)
+  return { instances, serials }
 }
 
 async function resolveMuMuInstanceIndex(instanceLabel, target, opts = {}) {
@@ -453,7 +484,9 @@ export async function startMuMuByEmulatorLabel(instanceLabel, opts = {}) {
   const onlineBefore = await listOnlineAdbSerials(opts).catch(() => [])
   const launched = await mumuLaunch(label, opts)
   await mumuShowWindow(label, opts)
-  const instance = await resolveMuMuInstance(label, target, opts).catch(() => null)
+  const sync = await syncMuMuRunningAdbConnections(target, opts).catch(() => ({ instances: [], serials: [] }))
+  const instance =
+    pickMuMuInstance(sync.instances ?? [], label) ?? (await resolveMuMuInstance(label, target, opts).catch(() => null))
   const adbSerial =
     String(instance?.adbPort ?? '').trim() ? `127.0.0.1:${String(instance.adbPort).trim()}` : await waitForLaunchedAdbSerial(onlineBefore, opts)
 
@@ -477,4 +510,8 @@ export function _parseMuMuInfoAllForTests(raw) {
 
 export function _pickMuMuInstanceForTests(instances, label) {
   return pickMuMuInstance(instances, label)
+}
+
+export function _buildMuMuRunningAdbSerialsForTests(instances) {
+  return buildMuMuRunningAdbSerials(instances)
 }
