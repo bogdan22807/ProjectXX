@@ -15,6 +15,7 @@ import {
   openMobileAppAfterLaunch,
   verifyMobileAppOpened,
 } from '../executor/mobile/mobileLaunchOpenApp.js'
+import { applyMobileProxyToDevice } from '../executor/mobile/mobileProxySetup.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
@@ -37,6 +38,12 @@ function insertLog(accountId, action, details = '') {
 
 function getAccountById(accountId) {
   return db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId)
+}
+
+function getProxyById(proxyId) {
+  const id = String(proxyId ?? '').trim()
+  if (!id) return null
+  return db.prepare('SELECT * FROM proxies WHERE id = ?').get(id) ?? null
 }
 
 function getMobileAccountOrError(accountId, res) {
@@ -142,6 +149,12 @@ router.post('/launch', async (req, res) => {
     emit('EMULATOR_STARTED', `label=${label} adb_serial=${launched.adbSerial}`)
     await ensureMobileAdbReady({
       adbSerial: launched.adbSerial,
+      emit,
+    })
+    const mobileProxyRow = getProxyById(account.mobile_proxy_id)
+    await applyMobileProxyToDevice({
+      adbSerial: launched.adbSerial,
+      proxyRow: mobileProxyRow,
       emit,
     })
     ephemeralAdbSerial.set(accountId, launched.adbSerial)
