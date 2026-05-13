@@ -208,8 +208,8 @@ async function openMuMuTarget(target, opts = {}) {
 async function openMuMuInstanceWithRetries(instanceIndex, target, opts = {}, timing = {}) {
   const idx = String(instanceIndex ?? '').trim()
   if (!idx) return false
-  const maxAttempts = Math.max(1, Number.parseInt(String(timing.maxAttempts ?? 25), 10) || 25)
-  const delayMs = Math.max(100, Number.parseInt(String(timing.delayMs ?? 2000), 10) || 2000)
+  const maxAttempts = Math.max(1, Number.parseInt(String(timing.maxAttempts ?? 8), 10) || 8)
+  const delayMs = Math.max(100, Number.parseInt(String(timing.delayMs ?? 1500), 10) || 1500)
   let openedShell = false
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -427,11 +427,11 @@ export async function mumuLaunch(instanceLabel, opts = {}) {
   const timing = {
     maxAttempts: Math.max(
       1,
-      Number.parseInt(String(opts.mumuOpenMaxAttempts ?? process.env.MUMU_OPEN_MAX_ATTEMPTS ?? 25), 10) || 25,
+      Number.parseInt(String(opts.mumuOpenMaxAttempts ?? process.env.MUMU_OPEN_MAX_ATTEMPTS ?? 8), 10) || 8,
     ),
     delayMs: Math.max(
       100,
-      Number.parseInt(String(opts.mumuOpenDelayMs ?? process.env.MUMU_OPEN_DELAY_MS ?? 2000), 10) || 2000,
+      Number.parseInt(String(opts.mumuOpenDelayMs ?? process.env.MUMU_OPEN_DELAY_MS ?? 1500), 10) || 1500,
     ),
   }
 
@@ -469,8 +469,8 @@ export async function mumuShowWindow(instanceLabel, opts = {}) {
   let target = await resolveMuMuAppTarget(instanceLabel, opts)
   const instanceIndex = await resolveMuMuInstanceIndex(instanceLabel, target, opts)
   if (instanceIndex) {
-    const maxAttempts = Math.max(1, Number.parseInt(String(opts.mumuShowMaxAttempts ?? 12), 10) || 12)
-    const delayMs = Math.max(100, Number.parseInt(String(opts.mumuShowDelayMs ?? 600), 10) || 600)
+    const maxAttempts = Math.max(1, Number.parseInt(String(opts.mumuShowMaxAttempts ?? 6), 10) || 6)
+    const delayMs = Math.max(100, Number.parseInt(String(opts.mumuShowDelayMs ?? 500), 10) || 500)
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       try {
         await runMuMuTool(['open', instanceIndex], target, opts)
