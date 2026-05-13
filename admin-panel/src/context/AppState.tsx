@@ -85,6 +85,7 @@ interface AppStateValue {
   runMobileQaOpen: (accountId: string) => Promise<void>
   openMobileEmulator: (accountId: string) => Promise<void>
   stopMobileSession: (accountId: string) => Promise<void>
+  setMobileProxyForAccount: (accountId: string, proxyLine: string) => Promise<void>
   addProxy: (input: {
     provider: string
     host: string
@@ -122,6 +123,52 @@ function formatApiFailure(e: unknown): string {
   if (e instanceof ApiError) return e.message
   if (e instanceof Error) return e.message
   return 'Something went wrong'
+}
+
+function parseMobileProxyLine(proxyLine: string): {
+  host: string
+  port: string
+  username: string
+  password: string
+  proxyScheme: string
+} {
+  const raw = String(proxyLine ?? '').trim()
+  if (!raw) throw new Error('Укажите прокси в формате login:pass@host:port')
+
+  let proxyScheme = ''
+  let value = raw
+  const schemeMatch = value.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):\/\//)
+  if (schemeMatch) {
+    proxyScheme = schemeMatch[1].toLowerCase()
+    value = value.slice(schemeMatch[0].length)
+  }
+
+  const atIdx = value.lastIndexOf('@')
+  const authPart = atIdx >= 0 ? value.slice(0, atIdx) : ''
+  const hostPortPart = atIdx >= 0 ? value.slice(atIdx + 1) : value
+
+  const hostPortMatch = hostPortPart.match(/^(?<host>\[[^\]]+\]|[^:]+):(?<port>\d+)$/)
+  if (!hostPortMatch?.groups?.host || !hostPortMatch.groups.port) {
+    throw new Error('Неверный формат прокси. Используйте login:pass@host:port')
+  }
+
+  const host = hostPortMatch.groups.host.replace(/^\[(.*)\]$/, '$1').trim()
+  const port = hostPortMatch.groups.port.trim()
+  if (!host || !port) {
+    throw new Error('Неверный host/port в прокси')
+  }
+
+  let username = ''
+  let password = ''
+  if (authPart) {
+    const colonIdx = authPart.indexOf(':')
+    if (colonIdx <= 0) throw new Error('Для авторизации используйте login:pass@host:port')
+    username = authPart.slice(0, colonIdx).trim()
+    password = authPart.slice(colonIdx + 1).trim()
+    if (!username || !password) throw new Error('Логин и пароль прокси обязательны')
+  }
+
+  return { host, port, username, password, proxyScheme }
 }
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
@@ -459,6 +506,59 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
     [appendLog],
   )
 
+  const setMobileProxyForAccount = useCallback(
+    async (accountId: string, proxyLine: string) => {
+      const account = accounts.find((a) => a.id === accountId)
+      if (!account || account.accountType !== 'mobile') return
+      const raw = String(proxyLine ?? '').trim()
+      try {
+        if (!raw) {
+          const row = await apiPatch<ApiAccount>(`/accounts/${accountId}`, { mobile_proxy_id: '' })
+          setAccounts((prev) => prev.map((a) => (a.id === accountId ? mapAccount(row) : a)))
+          await appendLog('Mobile proxy', `Cleared proxy for "${account.name}"`)
+          return
+        }
+
+        const parsed = parseMobileProxyLine(raw)
+        const scheme = parsed.proxyScheme || 'http'
+        const existing = proxies.find(
+          (p) =>
+            p.host === parsed.host &&
+            String(p.port ?? '') === parsed.port &&
+            String(p.username ?? '') === parsed.username &&
+            String(p.password ?? '') === parsed.password &&
+            String(p.proxyScheme ?? 'http') === scheme,
+        )
+
+        let proxyId = existing?.id ?? ''
+        if (!proxyId) {
+          const created = await apiPost<ApiProxy>('/proxies', {
+            provider: 'mobile-manual',
+            host: parsed.host,
+            port: parsed.port,
+            username: parsed.username,
+            password: parsed.password,
+            proxy_scheme: scheme,
+          })
+          proxyId = created.id
+          setProxies((prev) => [mapProxy(created), ...prev])
+        }
+
+        const row = await apiPatch<ApiAccount>(`/accounts/${accountId}`, { mobile_proxy_id: proxyId })
+        setAccounts((prev) => prev.map((a) => (a.id === accountId ? mapAccount(row) : a)))
+        await appendLog(
+          'Mobile proxy',
+          `Saved proxy for "${account.name}" (${parsed.host}:${parsed.port})`,
+        )
+      } catch (e) {
+        console.error('setMobileProxyForAccount failed', e)
+        setLastError(formatApiFailure(e))
+        throw e
+      }
+    },
+    [accounts, proxies, appendLog],
+  )
+
   const deleteSelectedProxies = useCallback(async () => {
     const ids =
       selectedProxyIds.size > 0
@@ -697,6 +797,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       runMobileQaOpen,
       openMobileEmulator,
       stopMobileSession,
+      setMobileProxyForAccount,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,
@@ -729,6 +830,7 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
       runMobileQaOpen,
       openMobileEmulator,
       stopMobileSession,
+      setMobileProxyForAccount,
       addProxy,
       deleteSelectedProxies,
       checkSelectedProxies,
