@@ -9,6 +9,13 @@ import { runAdbDevices } from './adbRunner.js'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_MUMU_APP_NAME = 'MuMuPlayer'
+const DEFAULT_MUMU_APP_NAMES = [
+  DEFAULT_MUMU_APP_NAME,
+  'MuMuPlayer Pro',
+  'MuMuPlayer Global',
+  'MuMuPlayerGlobal',
+  'NemuPlayer',
+]
 /** @type {{ appName: string, appPath: string } | null} */
 let cachedMuMuAppTarget = null
 
@@ -56,6 +63,10 @@ function uniqueNonEmpty(items) {
   return out
 }
 
+function normalizeMuMuLabel(value) {
+  return String(value ?? '').trim().toLowerCase()
+}
+
 function buildMuMuAppCandidates(instanceLabel, opts = {}) {
   const env = opts.env ?? process.env
   const fromEnv = String(env.MUMU_APP_NAME ?? '').trim()
@@ -74,10 +85,7 @@ function buildMuMuAppCandidates(instanceLabel, opts = {}) {
     cachedName,
     withoutExtension,
     withoutVmTail,
-    DEFAULT_MUMU_APP_NAME,
-    'MuMuPlayer Global',
-    'MuMuPlayerGlobal',
-    'NemuPlayer',
+    ...DEFAULT_MUMU_APP_NAMES,
   ])
 }
 
@@ -225,48 +233,87 @@ async function runMuMuTool(args, target, opts = {}) {
   )
 }
 
-function parseIndexFromMuMuInfo(raw, label) {
-  const wanted = String(label ?? '').trim().toLowerCase()
-  if (!wanted) return ''
+function parseMuMuInfoAll(raw) {
   const text = String(raw ?? '')
-  if (!text.trim()) return ''
+  if (!text.trim()) return []
 
   try {
     const parsed = JSON.parse(text)
-    const rows = Array.isArray(parsed) ? parsed : [parsed]
+    const rows = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.return?.results)
+        ? parsed.return.results
+        : Array.isArray(parsed?.results)
+          ? parsed.results
+          : [parsed]
+    const out = []
     for (const row of rows) {
       if (!row || typeof row !== 'object') continue
       const r = /** @type {Record<string, unknown>} */ (row)
-      const vmName = String(r.vmName ?? r.name ?? '').trim().toLowerCase()
       const index = String(r.index ?? r.id ?? '').trim()
-      if (vmName && vmName === wanted && index) return index
+      const name = String(r.vmName ?? r.name ?? '').trim()
+      const adbPort = String(r.adb_port ?? r.adbPort ?? '').trim()
+      const pid = String(r.pid ?? '').trim()
+      const state = String(r.state ?? '').trim()
+      if (!index && !name && !adbPort && !pid && !state) continue
+      out.push({ index, name, adbPort, pid, state })
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+function pickMuMuInstance(instances, label) {
+  const wanted = normalizeMuMuLabel(label)
+  if (!wanted) return null
+  const exact = instances.find((row) => normalizeMuMuLabel(row.name) === wanted)
+  if (exact) return exact
+  const direct = parseIndexFromLabel(label)
+  if (!direct) return null
+  return instances.find((row) => String(row.index) === direct) ?? null
+}
+
+async function readMuMuInfoAll(target, opts = {}) {
+  const info = await runMuMuTool(['info', 'all'], target, { ...opts, timeoutMs: 25_000 })
+  return parseMuMuInfoAll(info.stdout)
+}
+
+async function resolveMuMuInstance(instanceLabel, target, opts = {}) {
+  const fallbackIndex = parseIndexFromLabel(instanceLabel)
+  const fallbackName = String(instanceLabel ?? '').trim()
+  try {
+    const instances = await readMuMuInfoAll(target, opts)
+    const matched = pickMuMuInstance(instances, instanceLabel)
+    if (matched) return matched
+    if (fallbackIndex) {
+      return (
+        instances.find((row) => String(row.index) === fallbackIndex) ?? {
+          index: fallbackIndex,
+          name: fallbackName,
+          adbPort: '',
+          pid: '',
+          state: '',
+        }
+      )
     }
   } catch {
-    /* ignore non-JSON output */
+    if (fallbackIndex) {
+      return {
+        index: fallbackIndex,
+        name: fallbackName,
+        adbPort: '',
+        pid: '',
+        state: '',
+      }
+    }
   }
-
-  const lines = text.split(/\r?\n/).map((line) => line.trim())
-  for (const line of lines) {
-    if (!line || !line.toLowerCase().includes(wanted)) continue
-    const mNo = line.match(/NO\.?\s*(\d+)/i)
-    if (mNo?.[1]) return mNo[1]
-    const mIdx = line.match(/\bindex\s*[:=]\s*(\d+)/i)
-    if (mIdx?.[1]) return mIdx[1]
-    const mAny = line.match(/\b(\d+)\b/)
-    if (mAny?.[1]) return mAny[1]
-  }
-  return ''
+  return null
 }
 
 async function resolveMuMuInstanceIndex(instanceLabel, target, opts = {}) {
-  const direct = parseIndexFromLabel(instanceLabel)
-  if (direct) return direct
-  try {
-    const info = await runMuMuTool(['info', 'all'], target, { ...opts, timeoutMs: 25_000 })
-    return parseIndexFromMuMuInfo(info.stdout, instanceLabel)
-  } catch {
-    return ''
-  }
+  const instance = await resolveMuMuInstance(instanceLabel, target, opts)
+  return String(instance?.index ?? '').trim()
 }
 
 async function listOnlineAdbSerials(opts = {}) {
@@ -395,23 +442,39 @@ export async function mumuShutdown(instanceLabel, opts = {}) {
 
 /**
  * Launch MuMu by emulator label for account UX, then resolve ADB serial.
- * On macOS there is no MuMuManager VM API, so serial is detected via adb polling.
+ * Prefer MuMu's own `adb_port` from `mumutool info all`, because MuMu Pro may
+ * expose ADB only after an explicit `adb connect 127.0.0.1:<port>`.
  */
 export async function startMuMuByEmulatorLabel(instanceLabel, opts = {}) {
   const label = String(instanceLabel ?? '').trim()
   if (!label) throw new Error('mobile_emulator_name is required')
 
+  const target = await resolveMuMuAppTarget(label, opts)
   const onlineBefore = await listOnlineAdbSerials(opts).catch(() => [])
   const launched = await mumuLaunch(label, opts)
   await mumuShowWindow(label, opts)
-  const adbSerial = await waitForLaunchedAdbSerial(onlineBefore, opts)
+  const instance = await resolveMuMuInstance(label, target, opts).catch(() => null)
+  const adbSerial =
+    String(instance?.adbPort ?? '').trim() ? `127.0.0.1:${String(instance.adbPort).trim()}` : await waitForLaunchedAdbSerial(onlineBefore, opts)
 
-  const emulatorIndex = parseIndexFromLabel(label)
-  const emulatorName = label || launched.appName
-  emitLog(opts, 'MUMU_EMULATOR_OPENED', `name=${emulatorName} adb_serial=${adbSerial}`)
+  const emulatorIndex = String(instance?.index ?? parseIndexFromLabel(label)).trim()
+  const emulatorName = String(instance?.name || label || launched.appName).trim()
+  emitLog(
+    opts,
+    'MUMU_EMULATOR_OPENED',
+    `name=${emulatorName} adb_serial=${adbSerial}${instance?.adbPort ? ` adb_port=${instance.adbPort}` : ''}`,
+  )
   return {
     emulatorIndex,
     emulatorName,
     adbSerial,
   }
+}
+
+export function _parseMuMuInfoAllForTests(raw) {
+  return parseMuMuInfoAll(raw)
+}
+
+export function _pickMuMuInstanceForTests(instances, label) {
+  return pickMuMuInstance(instances, label)
 }
