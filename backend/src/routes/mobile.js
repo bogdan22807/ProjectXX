@@ -11,6 +11,7 @@ import {
   mumuShowWindow,
   startMuMuByEmulatorLabel,
 } from '../executor/mobile/mumuManager.js'
+import { openMobileAppAfterLaunch } from '../executor/mobile/mobileLaunchOpenApp.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
@@ -72,6 +73,19 @@ function mobileEnvForAccount(accountId, accountRow) {
   return env
 }
 
+function readBooleanBodyFlag(body, camelKey, snakeKey, defaultValue) {
+  const raw = body && typeof body === 'object'
+    ? body[camelKey] ?? body[snakeKey]
+    : undefined
+  if (raw == null) return defaultValue
+  if (typeof raw === 'boolean') return raw
+  const normalized = String(raw).trim().toLowerCase()
+  if (!normalized) return defaultValue
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false
+  return defaultValue
+}
+
 async function handleMuMuOpenWindow(req, res) {
   const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
   if (!accountId) return sendJsonError(res, 400, 'accountId is required')
@@ -95,7 +109,8 @@ async function handleMuMuOpenWindow(req, res) {
 }
 
 /**
- * POST { accountId } — MuMu: launch VM by `mobile_emulator_name`, discover adb serial, keep in memory only.
+ * POST { accountId, openApp? } — MuMu: launch VM by `mobile_emulator_name`,
+ * discover adb serial, keep it in memory, and by default auto-open TikTok.
  */
 router.post('/launch', async (req, res) => {
   const accountId = req.body?.accountId != null ? String(req.body.accountId).trim() : ''
@@ -109,6 +124,7 @@ router.post('/launch', async (req, res) => {
   if (!label) {
     return sendJsonError(res, 400, 'mobile_emulator_name is required (e.g. MuMuPlayer-2)')
   }
+  const openAppAfterLaunch = readBooleanBodyFlag(req.body, 'openApp', 'open_app', true)
   const emit = (action, details) => insertLog(accountId, action, details)
   try {
     const launched = await startMuMuByEmulatorLabel(label, { emit })
@@ -122,14 +138,25 @@ router.post('/launch', async (req, res) => {
         WHERE id = ?`,
     ).run(String(launched.emulatorIndex ?? ''), String(launched.emulatorName ?? label), accountId)
     emit('MOBILE_LAUNCH', `label=${label} adb_serial=${launched.adbSerial}`)
+    let openedPackage = ''
+    if (openAppAfterLaunch) {
+      const open = await openMobileAppAfterLaunch({
+        adbSerial: launched.adbSerial,
+        env: { ...process.env, MOBILE_DEVICE_ID: launched.adbSerial },
+        emit,
+      })
+      openedPackage = String(open.package ?? '').trim()
+    }
     return sendJsonData(res, 200, {
       ok: true,
       adb_serial: launched.adbSerial,
       emulator_index: launched.emulatorIndex,
       emulator_name: launched.emulatorName,
+      package: openedPackage || undefined,
     })
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    db.prepare(`UPDATE accounts SET status = 'error' WHERE id = ?`).run(accountId)
     emit('MOBILE_ERROR', `launch: ${msg}`)
     return sendJsonError(res, 500, msg)
   }
