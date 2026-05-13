@@ -281,6 +281,29 @@ function assertMonkeyLaunchOk(result) {
 }
 
 /**
+ * `adb shell am start ...` may print launch failures in stdout while still exiting with code 0.
+ * Treat these markers as hard failures.
+ *
+ * @param {{ stdout?: string; stderr?: string }} result
+ */
+function assertAmStartOk(result) {
+  assertAdbOk(result)
+  const combined = [String(result.stdout ?? '').trim(), String(result.stderr ?? '').trim()]
+    .filter(Boolean)
+    .join('\n')
+  if (
+    /(^|\n)error:/i.test(combined) ||
+    /activity (class|not found|does not exist)/i.test(combined) ||
+    /unable to resolve intent/i.test(combined) ||
+    /no activities found to run/i.test(combined) ||
+    /monkey aborted/i.test(combined) ||
+    /exception/i.test(combined)
+  ) {
+    throw new Error(combined || 'adb am start failed')
+  }
+}
+
+/**
  * @param {{ env?: NodeJS.ProcessEnv; adbPath?: string; timeoutMs?: number }} [opts]
  * @returns {Promise<{ deviceId: string, rows: import('./adbDevices.js').AdbDeviceRow[] }>}
  */
@@ -366,19 +389,30 @@ export async function mobileOpenApp(opts = {}) {
     for (let i = 0; i < packages.length; i += 1) {
       const pkg = packages[i]
       try {
-        const result = await runAdb(
+        const monkeyResult = await runAdb(
           deviceId,
           ['shell', 'monkey', '-p', pkg, '-c', 'android.intent.category.LAUNCHER', '1'],
           opts,
         )
-        assertMonkeyLaunchOk(result)
-        mobileLog(opts, 'MOBILE_APP_OPENED', `package=${pkg} device=${deviceId}`)
+        assertMonkeyLaunchOk(monkeyResult)
+        mobileLog(opts, 'MOBILE_APP_OPENED', `package=${pkg} device=${deviceId} launch=monkey`)
         return { ok: true, deviceId, package: pkg }
       } catch (err) {
-        lastError = err
-        if (i < packages.length - 1) {
-          const msg = err instanceof Error ? err.message : String(err)
-          mobileLog(opts, 'MOBILE_WARN', `open_app fallback package=${pkg} failed: ${msg}`)
+        try {
+          const amResult = await runAdb(
+            deviceId,
+            ['shell', 'am', 'start', '-a', 'android.intent.action.MAIN', '-c', 'android.intent.category.LAUNCHER', '-p', pkg],
+            opts,
+          )
+          assertAmStartOk(amResult)
+          mobileLog(opts, 'MOBILE_APP_OPENED', `package=${pkg} device=${deviceId} launch=am`)
+          return { ok: true, deviceId, package: pkg }
+        } catch (amErr) {
+          lastError = amErr
+          if (i < packages.length - 1) {
+            const msg = amErr instanceof Error ? amErr.message : String(amErr)
+            mobileLog(opts, 'MOBILE_WARN', `open_app fallback package=${pkg} failed: ${msg}`)
+          }
         }
       }
     }
