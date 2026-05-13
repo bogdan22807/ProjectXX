@@ -621,7 +621,7 @@ export function DashboardPage() {
                           onClick={() => startAccount(a.id)}
                           title={
                             a.accountType === 'mobile'
-                              ? 'Запустить MuMu, найти adb serial и открыть TikTok'
+                              ? 'MuMu: нужный эмулятор, adb, TikTok, затем сценарий свайпов и лайков (один запрос)'
                               : 'Фоновый запуск (headless)'
                           }
                         >
