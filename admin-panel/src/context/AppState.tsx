@@ -320,30 +320,38 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
         if (isMobile) {
           const launch = await apiPost<{ ok?: boolean; package?: string }>('/mobile/launch', { accountId: id })
           const openedPackage = String(launch?.package ?? '').trim()
-          if (!openedPackage) {
-            setLastError('Mobile launch did not confirm TikTok opening')
-          } else {
-            const scenario = await apiPost<{
-              ok?: boolean
-              stopped?: boolean
-              error?: string
-              step?: string
-            }>('/mobile/scenario', {
-              accountId: id,
-              app_opened: true,
-              package: openedPackage,
-            })
-            if (scenario?.stopped) {
-              /* user or server stopped mid-run */
-            } else if (!scenario?.ok) {
-              setLastError(
-                scenario?.error?.trim()
-                  ? `Mobile scenario (${scenario.step ?? '?'}): ${scenario.error.trim()}`
-                  : 'Mobile scroll/like scenario failed',
-              )
-            }
-          }
           setAccounts((prev) => prev.map((a) => (a.id === id ? { ...a, status: 'running' } : a)))
+          // Do not block the Start button on long-running mobile scenario request.
+          void (async () => {
+            try {
+              const scenario = await apiPost<{
+                ok?: boolean
+                stopped?: boolean
+                error?: string
+                step?: string
+              }>('/mobile/scenario', {
+                accountId: id,
+                app_opened: Boolean(openedPackage),
+                package: openedPackage || undefined,
+              })
+              if (scenario?.stopped) {
+                /* user or server stopped mid-run */
+              } else if (!scenario?.ok) {
+                setLastError(
+                  scenario?.error?.trim()
+                    ? `Mobile scenario (${scenario.step ?? '?'}): ${scenario.error.trim()}`
+                    : 'Mobile scroll/like scenario failed',
+                )
+              }
+            } catch (scenarioErr) {
+              console.error('Mobile scenario failed', scenarioErr)
+              setLastError(formatApiFailure(scenarioErr))
+            } finally {
+              await fetchAccounts().catch((e) => {
+                console.error('fetchAccounts after mobile scenario failed', e)
+              })
+            }
+          })()
         } else {
           await apiPost<{ ok?: boolean }>('/warmup/start', { accountId: id })
           // Optimistic update for instant button switch to Stop.
