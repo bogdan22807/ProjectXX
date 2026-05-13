@@ -92,6 +92,22 @@ export async function runAdbDevices(opts = {}) {
 }
 
 /**
+ * @param {string[]} adbArgs
+ * @param {{ adbPath?: string; timeoutMs?: number }} [opts]
+ */
+export async function runAdbRaw(adbArgs, opts = {}) {
+  return runAdbCommand(adbArgs, opts, 60_000)
+}
+
+/**
+ * @param {string} adbSerial
+ * @param {{ adbPath?: string; timeoutMs?: number }} [opts]
+ */
+export async function runAdbConnect(adbSerial, opts = {}) {
+  return runAdbCommand(['connect', adbSerial], opts, 30_000)
+}
+
+/**
  * @param {string} adbSerial
  * @param {string[]} adbArgs
  * @param {{ adbPath?: string; timeoutMs?: number }} [opts]

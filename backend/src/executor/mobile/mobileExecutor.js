@@ -19,6 +19,8 @@ export { runAdb, runAdbDevices } from './adbRunner.js'
  * @property {() => number} [random]
  * @property {(ms: number) => Promise<void>} [sleep]
  * @property {AbortSignal} [signal]
+ * @property {boolean} [skipOpenApp]
+ * @property {{ deviceId: string, package: string }} [openedApp]
  */
 
 let sessionStarted = false
@@ -435,7 +437,15 @@ export async function mobileRunScenario(opts = {}) {
   const random = opts.random ?? Math.random
   try {
     const config = getMobileScenarioConfig(env)
-    const open = await mobileOpenApp(opts)
+    const preopened =
+      opts.skipOpenApp && opts.openedApp?.deviceId && opts.openedApp?.package
+        ? {
+            ok: true,
+            deviceId: String(opts.openedApp.deviceId).trim(),
+            package: String(opts.openedApp.package).trim(),
+          }
+        : null
+    const open = preopened ?? (await mobileOpenApp(opts))
     if (!open.ok) {
       return { ok: false, step: 'open_app', error: open.error ?? 'open_app failed' }
     }
