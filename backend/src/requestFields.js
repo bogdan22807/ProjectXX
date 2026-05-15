@@ -12,6 +12,32 @@ function normalizeNullableId(v) {
   return s ? s : null
 }
 
+function parseProxyEndpointInput(raw) {
+  const value = trimStr(raw) ?? ''
+  if (!value) return null
+  if (!value.includes('@') && !/^[a-z][a-z0-9+.-]*:\/\//i.test(value)) return null
+  try {
+    const parsed = /^[a-z][a-z0-9+.-]*:\/\//i.test(value) ? new URL(value) : new URL(`http://${value}`)
+    const host = trimStr(parsed.hostname) ?? ''
+    if (!host) return null
+    return {
+      host,
+      port: trimStr(parsed.port) ?? '',
+      username: parsed.username ? decodeURIComponent(parsed.username).trim() : '',
+      password: parsed.password ? decodeURIComponent(parsed.password).trim() : '',
+      scheme: trimStr(parsed.protocol.replace(':', '')) ?? '',
+    }
+  } catch {
+    return null
+  }
+}
+
+function missingProxyBodyValue(body, key) {
+  if (!has(body, key)) return true
+  const value = body?.[key]
+  return value == null || String(value).trim() === ''
+}
+
 /** @param {Record<string, unknown> | null | undefined} body */
 export function accountFieldsFromBody(body) {
   const b = body ?? {}
@@ -119,6 +145,23 @@ export function proxyFieldsFromBody(body) {
   else if (has(b, 'assignedTo')) out.assigned_to = trimStr(b.assignedTo)
   if (has(b, 'last_check')) out.last_check = b.last_check == null ? b.last_check : trimStr(b.last_check)
   else if (has(b, 'lastCheck')) out.last_check = b.lastCheck == null ? b.lastCheck : trimStr(b.lastCheck)
+
+  const parsedEndpoint = parseProxyEndpointInput(
+    has(b, 'host')
+      ? b.host
+      : has(b, 'proxy_host')
+        ? b.proxy_host
+        : undefined,
+  )
+  if (parsedEndpoint) {
+    out.host = parsedEndpoint.host
+    if (missingProxyBodyValue(b, 'port')) out.port = parsedEndpoint.port
+    if (missingProxyBodyValue(b, 'username')) out.username = parsedEndpoint.username
+    if (missingProxyBodyValue(b, 'password')) out.password = parsedEndpoint.password
+    if (missingProxyBodyValue(b, 'proxy_scheme') && missingProxyBodyValue(b, 'proxyScheme') && parsedEndpoint.scheme) {
+      out.proxy_scheme = parsedEndpoint.scheme
+    }
+  }
   return out
 }
 
@@ -134,8 +177,7 @@ export function proxyCreatePayload(body) {
     last_check: null,
   }
   const fromBody = proxyFieldsFromBody(body)
-  const b = body ?? {}
-  const host = trimStr(has(b, 'host') ? b.host : fromBody.host)
+  const host = trimStr(fromBody.host ?? '')
   const port = trimStr(fromBody.port ?? '')
   const username = trimStr(fromBody.username ?? '')
   const password = trimStr(fromBody.password ?? '')

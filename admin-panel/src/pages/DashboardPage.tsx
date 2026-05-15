@@ -39,6 +39,7 @@ type FormState = {
   login: string
   cookies: string
   proxyId: string
+  mobileProxyId: string
   profileId: string
   browserEngine: BrowserEngine
   deviceId: string
@@ -51,6 +52,7 @@ type ManualMobileFormState = {
   name: string
   login: string
   emulatorName: string
+  mobileProxyId: string
 }
 
 const emptyForm = (): FormState => ({
@@ -58,6 +60,7 @@ const emptyForm = (): FormState => ({
   login: '',
   cookies: '',
   proxyId: '',
+  mobileProxyId: '',
   profileId: '',
   browserEngine: 'fox',
   deviceId: '',
@@ -70,6 +73,7 @@ const emptyManualMobileForm = (): ManualMobileFormState => ({
   name: '',
   login: '',
   emulatorName: '',
+  mobileProxyId: '',
 })
 
 function formFromAccount(a: Account): FormState {
@@ -78,6 +82,7 @@ function formFromAccount(a: Account): FormState {
     login: a.login,
     cookies: a.cookies,
     proxyId: a.accountType === 'mobile' ? '' : a.proxyId ?? '',
+    mobileProxyId: a.accountType === 'mobile' ? a.mobileProxyId ?? '' : '',
     profileId: a.accountType === 'mobile' ? '' : a.profileId ?? '',
     browserEngine: a.browserEngine,
     deviceId: a.deviceId ?? '',
@@ -137,8 +142,26 @@ function AccountFields({
       </p>
       {accountType === 'mobile' ? (
         <>
+          <label className="block text-xs font-medium text-zinc-400">
+            Mobile proxy (mobile_proxy_id)
+            <select
+              className={fieldClass}
+              value={form.mobileProxyId}
+              onChange={(e) => setForm((f) => ({ ...f, mobileProxyId: e.target.value }))}
+            >
+              <option value="">Без прокси</option>
+              {proxies.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.provider} · {p.host}
+                  {p.port ? `:${p.port}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
           <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs leading-relaxed text-zinc-400">
-            Прокси для mobile account задаётся в таблице аккаунтов кнопкой «Прокси» и сохраняется для следующих запусков.
+            Прокси для mobile account можно задать здесь или кнопкой «Прокси» в таблице аккаунтов. Backend поднимает
+            локальный bridge и применяет Android global HTTP proxy через ADB; поддерживается авторизация в формате
+            user:pass@host:port.
           </div>
           <label className="block text-xs font-medium text-zinc-400">
             Имя приложения MuMu (macOS)
@@ -281,6 +304,7 @@ export function DashboardPage() {
       cookies: editForm.cookies,
       platform: 'TikTok',
       proxyId: account?.accountType === 'mobile' ? null : editForm.proxyId || null,
+      mobileProxyId: account?.accountType === 'mobile' ? editForm.mobileProxyId || null : null,
       profileId: account?.accountType === 'mobile' ? null : editForm.profileId || null,
       browserEngine: editForm.browserEngine,
       status: editForm.status,
@@ -345,7 +369,7 @@ export function DashboardPage() {
         accountType: 'mobile',
         mode: 'mumu',
         proxyId: null,
-        mobileProxyId: null,
+        mobileProxyId: manualMobileForm.mobileProxyId || null,
         profileId: null,
         browserEngine: 'chromium',
         deviceId: null,
@@ -410,9 +434,7 @@ export function DashboardPage() {
   }
 
   function accountProxyLabel(a: Account) {
-    if (a.accountType !== 'mobile') return proxyLabel(a.proxyId)
-    if (!a.mobileProxyId) return '—'
-    return proxyLabel(a.mobileProxyId)
+    return a.accountType === 'mobile' ? proxyLabel(a.mobileProxyId) : proxyLabel(a.proxyId)
   }
 
   function accountTypeLabel(a: Account) {
@@ -883,9 +905,25 @@ export function DashboardPage() {
               placeholder="MuMuPlayer-2"
             />
           </label>
+          <label className="block text-xs font-medium text-zinc-400">
+            Mobile proxy
+            <select
+              className={fieldClass}
+              value={manualMobileForm.mobileProxyId}
+              onChange={(e) => setManualMobileForm((f) => ({ ...f, mobileProxyId: e.target.value }))}
+            >
+              <option value="">Без прокси</option>
+              {proxies.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.provider} · {p.host}
+                  {p.port ? `:${p.port}` : ''}
+                </option>
+              ))}
+            </select>
+          </label>
           <p className="text-xs leading-relaxed text-zinc-500">
-            В базе сохраняются только имя, логин и имя экземпляра. ADB serial подставляется в памяти сервера после кнопки
-            «Запустить».
+            В базе сохраняются имя, логин, имя экземпляра и mobile proxy. ADB serial подставляется в памяти сервера после
+            кнопки «Запустить».
           </p>
           {manualMobileError ? <p className="text-sm text-rose-300">{manualMobileError}</p> : null}
         </div>

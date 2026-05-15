@@ -6,6 +6,10 @@ import {
   mobileStop,
 } from '../executor/mobile/mobileExecutor.js'
 import {
+  clearMobileProxyApplied,
+  ensureMobileProxyApplied,
+} from '../executor/mobile/mobileProxyBridge.js'
+import {
   mumuShutdown,
   mumuShowWindow,
   startMuMuByEmulatorLabel,
@@ -15,7 +19,6 @@ import {
   openMobileAppAfterLaunch,
   verifyMobileAppOpened,
 } from '../executor/mobile/mobileLaunchOpenApp.js'
-import { applyMobileProxyToDevice } from '../executor/mobile/mobileProxySetup.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
@@ -38,12 +41,6 @@ function insertLog(accountId, action, details = '') {
 
 function getAccountById(accountId) {
   return db.prepare('SELECT * FROM accounts WHERE id = ?').get(accountId)
-}
-
-function getProxyById(proxyId) {
-  const id = String(proxyId ?? '').trim()
-  if (!id) return null
-  return db.prepare('SELECT * FROM proxies WHERE id = ?').get(id) ?? null
 }
 
 function getMobileAccountOrError(accountId, res) {
@@ -151,12 +148,7 @@ router.post('/launch', async (req, res) => {
       adbSerial: launched.adbSerial,
       emit,
     })
-    const mobileProxyRow = getProxyById(account.mobile_proxy_id)
-    await applyMobileProxyToDevice({
-      adbSerial: launched.adbSerial,
-      proxyRow: mobileProxyRow,
-      emit,
-    })
+    await ensureMobileProxyApplied(accountId, account, launched.adbSerial, { emit })
     ephemeralAdbSerial.set(accountId, launched.adbSerial)
     db.prepare(
       `UPDATE accounts
@@ -214,6 +206,7 @@ router.post('/shutdown', async (req, res) => {
     }
     if (serial) {
       try {
+        await clearMobileProxyApplied(accountId, serial, { emit })
         await mobileStop({ emit, env: { ...process.env, MOBILE_DEVICE_ID: serial } })
       } catch {
         /* ignore */
@@ -270,6 +263,7 @@ router.post('/qa-open', async (req, res) => {
         adbSerial: serial,
         emit,
       })
+      await ensureMobileProxyApplied(accountId, row, serial, { emit })
     }
     const check = await mobileCheckDevice(opts)
     if (!check.ok) {
@@ -361,6 +355,7 @@ router.post('/scenario', async (req, res) => {
       adbSerial: deviceIdForRun,
       emit,
     })
+    await ensureMobileProxyApplied(accountId, row, deviceIdForRun, { emit })
     let openedApp
     if (appWasOpened && openedPackageFromBody) {
       openedApp = { deviceId: deviceIdForRun, package: openedPackageFromBody }
@@ -459,6 +454,7 @@ router.post('/stop', async (req, res) => {
     if (active) {
       active.controller.abort()
     }
+    await clearMobileProxyApplied(accountId, effectiveAdbSerial(accountId, row), { emit })
     await mobileStop({ emit, env: mobileEnvForAccount(accountId, row) })
     if (active) {
       await Promise.race([
