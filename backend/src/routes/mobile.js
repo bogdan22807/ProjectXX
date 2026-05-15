@@ -15,7 +15,10 @@ import {
   startMuMuByEmulatorLabel,
 } from '../executor/mobile/mumuManager.js'
 import { ensureMobileAdbReady } from '../executor/mobile/mobileAdbReady.js'
-import { openMobileAppAfterLaunch } from '../executor/mobile/mobileLaunchOpenApp.js'
+import {
+  openMobileAppAfterLaunch,
+  verifyMobileAppOpened,
+} from '../executor/mobile/mobileLaunchOpenApp.js'
 import { sendJsonData, sendJsonError } from '../sendJson.js'
 
 const router = Router()
@@ -353,15 +356,25 @@ router.post('/scenario', async (req, res) => {
       emit,
     })
     await ensureMobileProxyApplied(accountId, row, deviceIdForRun, { emit })
-    const openedApp =
-      appWasOpened && openedPackageFromBody
-        ? { deviceId: deviceIdForRun, package: openedPackageFromBody }
-        : await openMobileAppAfterLaunch({
-            adbSerial: deviceIdForRun,
-            env: { ...opts.env, MOBILE_DEVICE_ID: deviceIdForRun },
-            emit,
-            attempts: 3,
-          })
+    let openedApp
+    if (appWasOpened && openedPackageFromBody) {
+      openedApp = { deviceId: deviceIdForRun, package: openedPackageFromBody }
+      await verifyMobileAppOpened({
+        adbSerial: openedApp.deviceId,
+        packageName: openedApp.package,
+      })
+      emit(
+        'MOBILE_APP_FOREGROUND',
+        `device=${openedApp.deviceId} package=${openedApp.package} before_scenario=client_opened`,
+      )
+    } else {
+      openedApp = await openMobileAppAfterLaunch({
+        adbSerial: deviceIdForRun,
+        env: { ...opts.env, MOBILE_DEVICE_ID: deviceIdForRun },
+        emit,
+        attempts: 3,
+      })
+    }
     emit('SCENARIO_STARTED', `device=${openedApp.deviceId} package=${openedApp.package}`)
     const result = await mobileRunScenario({
       ...opts,

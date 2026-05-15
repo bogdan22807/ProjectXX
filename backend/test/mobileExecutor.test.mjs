@@ -169,7 +169,7 @@ test('mobileRunScenario performs configured swipes and like logging through adb'
     const commandLog = fs.readFileSync(commandLogFile, 'utf8')
     assert.match(commandLog, /-s emulator-5554 shell monkey -p com\.example\.app -c android\.intent\.category\.LAUNCHER 1/)
     assert.equal((commandLog.match(/shell input swipe 720 1900 720 600 500/g) ?? []).length, 2)
-    assert.equal((commandLog.match(/shell input tap 1360 1750/g) ?? []).length, 2)
+    assert.equal((commandLog.match(/shell input tap 1341 1555/g) ?? []).length, 2)
 
     assert.deepEqual(
       emitted.map((entry) => entry.action),
@@ -190,7 +190,7 @@ test('mobileRunScenario performs configured swipes and like logging through adb'
     assert.match(emitted[2].details, /iteration=1 stage=before_swipe waitMs=1/)
     assert.match(emitted[3].details, /iteration=1/)
     assert.match(emitted[4].details, /iteration=1 stage=after_swipe waitMs=1/)
-    assert.match(emitted[5].details, /iteration=1 x=1360 y=1750/)
+    assert.match(emitted[5].details, /iteration=1 x=1341 y=1555/)
     assert.match(emitted[10].details, /device=emulator-5554 package=com\.example\.app swipes=2 likes=2/)
   } finally {
     _resetMobileExecutorSessionForTests()
@@ -233,7 +233,7 @@ test('mobileRunScenario skips like when random chance does not hit', async () =>
 
     const commandLog = fs.readFileSync(commandLogFile, 'utf8')
     assert.equal((commandLog.match(/shell input swipe 720 1900 720 600 500/g) ?? []).length, 1)
-    assert.equal((commandLog.match(/shell input tap 1360 1750/g) ?? []).length, 0)
+    assert.equal((commandLog.match(/shell input tap 1341 1555/g) ?? []).length, 0)
   } finally {
     _resetMobileExecutorSessionForTests()
     fs.rmSync(tempDir, { recursive: true, force: true })
@@ -280,7 +280,7 @@ test('mobileRunScenario can reuse already opened TikTok app without reopening it
     const commandLog = fs.readFileSync(commandLogFile, 'utf8')
     assert.equal((commandLog.match(/shell monkey -p/g) ?? []).length, 0)
     assert.equal((commandLog.match(/shell input swipe 720 1900 720 600 500/g) ?? []).length, 1)
-    assert.equal((commandLog.match(/shell input tap 1360 1750/g) ?? []).length, 1)
+    assert.equal((commandLog.match(/shell input tap 1341 1555/g) ?? []).length, 1)
     assert.deepEqual(
       emitted.map((entry) => entry.action),
       ['MOBILE_EXECUTOR_STARTED', 'MOBILE_VIEW', 'MOBILE_SWIPE', 'MOBILE_VIEW', 'MOBILE_LIKE', 'MOBILE_DONE'],
@@ -328,7 +328,7 @@ test('mobileRunScenario stops early when abort signal is triggered during wait',
     const commandLog = fs.readFileSync(commandLogFile, 'utf8')
     assert.match(commandLog, /shell monkey -p com\.example\.app/)
     assert.equal((commandLog.match(/shell input swipe 720 1900 720 600 500/g) ?? []).length, 0)
-    assert.equal((commandLog.match(/shell input tap 1360 1750/g) ?? []).length, 0)
+    assert.equal((commandLog.match(/shell input tap 1341 1555/g) ?? []).length, 0)
     assert.deepEqual(sleepCalls, [400])
     assert.deepEqual(
       emitted.map((entry) => entry.action),

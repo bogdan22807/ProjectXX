@@ -159,8 +159,9 @@ function AccountFields({
             </select>
           </label>
           <div className="rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs leading-relaxed text-zinc-400">
-            Для mobile account backend поднимает локальный bridge и применяет Android global HTTP proxy через ADB.
-            Поддерживается авторизация в формате user:pass@host:port.
+            Прокси для mobile account можно задать здесь или кнопкой «Прокси» в таблице аккаунтов. Backend поднимает
+            локальный bridge и применяет Android global HTTP proxy через ADB; поддерживается авторизация в формате
+            user:pass@host:port.
           </div>
           <label className="block text-xs font-medium text-zinc-400">
             Имя приложения MuMu (macOS)
@@ -261,6 +262,7 @@ export function DashboardPage() {
     testRunPending,
     mobileQaPending,
     startPlaywrightTestRun,
+    setMobileProxyForAccount,
   } = useAppState()
 
   const recentLogs = logs.slice(0, 8)
@@ -271,6 +273,10 @@ export function DashboardPage() {
   const [manualMobileForm, setManualMobileForm] = useState<ManualMobileFormState>(emptyManualMobileForm)
   const [manualMobileSubmitting, setManualMobileSubmitting] = useState(false)
   const [manualMobileError, setManualMobileError] = useState<string | null>(null)
+  const [mobileProxyAccount, setMobileProxyAccount] = useState<Account | null>(null)
+  const [mobileProxyInput, setMobileProxyInput] = useState('')
+  const [mobileProxySubmitting, setMobileProxySubmitting] = useState(false)
+  const [mobileProxyError, setMobileProxyError] = useState<string | null>(null)
 
   const [editOpen, setEditOpen] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
@@ -381,6 +387,44 @@ export function DashboardPage() {
 
   function handleAddMobileClick() {
     openManualMobileModal()
+  }
+
+  function formatMobileProxyInput(account: Account) {
+    if (!account.mobileProxyId) return ''
+    const proxy = proxies.find((x) => x.id === account.mobileProxyId)
+    if (!proxy) return ''
+    const withAuth =
+      proxy.username && proxy.password
+        ? `${proxy.username}:${proxy.password}@${proxy.host}`
+        : proxy.host
+    return proxy.port ? `${withAuth}:${proxy.port}` : withAuth
+  }
+
+  function openMobileProxyModal(account: Account) {
+    setMobileProxyError(null)
+    setMobileProxyInput(formatMobileProxyInput(account))
+    setMobileProxyAccount(account)
+  }
+
+  function closeMobileProxyModal() {
+    setMobileProxyAccount(null)
+    setMobileProxyInput('')
+    setMobileProxyError(null)
+  }
+
+  async function saveMobileProxy() {
+    if (!mobileProxyAccount || mobileProxySubmitting) return
+    setMobileProxySubmitting(true)
+    setMobileProxyError(null)
+    try {
+      await setMobileProxyForAccount(mobileProxyAccount.id, mobileProxyInput)
+      closeMobileProxyModal()
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'Не удалось сохранить прокси'
+      setMobileProxyError(message)
+    } finally {
+      setMobileProxySubmitting(false)
+    }
   }
 
   function proxyLabel(id: string | null) {
@@ -643,7 +687,7 @@ export function DashboardPage() {
                           onClick={() => startAccount(a.id)}
                           title={
                             a.accountType === 'mobile'
-                              ? 'Запустить MuMu, найти adb serial и выполнить сценарий'
+                              ? 'MuMu: нужный эмулятор, adb, TikTok, затем сценарий свайпов и лайков (один запрос)'
                               : 'Фоновый запуск (headless)'
                           }
                         >
@@ -661,11 +705,21 @@ export function DashboardPage() {
                           onClick={() => stopAccount(a.id)}
                           title={
                             a.accountType === 'mobile'
-                              ? 'Остановить сценарий (если активен) и закрыть MuMu'
+                              ? 'Закрыть TikTok и остановить MuMu'
                               : undefined
                           }
                         >
                           {warmupPending[a.id] === 'stop' ? 'Стоп…' : 'Стоп'}
+                        </Button>
+                      ) : null}
+                      {a.accountType === 'mobile' ? (
+                        <Button
+                          className={tableActionButtonClass}
+                          variant="secondary"
+                          onClick={() => openMobileProxyModal(a)}
+                          title="Привязать прокси к этому эмулятору"
+                        >
+                          Прокси
                         </Button>
                       ) : null}
                       {a.accountType === 'mobile' ? null : (
@@ -905,6 +959,42 @@ export function DashboardPage() {
             без возможности восстановления.
           </p>
         ) : null}
+      </Modal>
+
+      <Modal
+        open={mobileProxyAccount !== null}
+        title="Прокси для MuMu аккаунта"
+        onClose={closeMobileProxyModal}
+        footer={
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={closeMobileProxyModal}>
+              Отмена
+            </Button>
+            <Button variant="primary" disabled={mobileProxySubmitting} onClick={() => void saveMobileProxy()}>
+              {mobileProxySubmitting ? 'Сохранение…' : 'Сохранить'}
+            </Button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Формат: <span className="font-mono text-zinc-300">login:pass@host:port</span>. Пример:{' '}
+            <span className="font-mono text-zinc-300">dont1:takeit32@77.47.147.216:50100</span>.
+          </p>
+          <label className="block text-xs font-medium text-zinc-400">
+            Прокси
+            <input
+              className={fieldClassMono}
+              value={mobileProxyInput}
+              onChange={(e) => setMobileProxyInput(e.target.value)}
+              placeholder="login:pass@host:port"
+            />
+          </label>
+          <p className="text-xs leading-relaxed text-zinc-500">
+            Пустое поле удалит текущую привязку. Сохранённый прокси будет автоматически применяться при каждом «Запустить».
+          </p>
+          {mobileProxyError ? <p className="text-sm text-rose-300">{mobileProxyError}</p> : null}
+        </div>
       </Modal>
 
       <Modal
