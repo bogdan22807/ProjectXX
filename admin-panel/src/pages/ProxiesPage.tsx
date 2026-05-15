@@ -234,6 +234,12 @@ export function ProxiesPage() {
             <span className="font-mono text-zinc-400">dont1:takeit32@77.47.147.216:50101</span>. Если Port /
             Username / Password пустые, backend разберёт их автоматически.
           </p>
+          <p className="text-xs text-zinc-500">
+            Для мобильного аккаунта (MuMu) сервер поднимает **HTTP-bridge** к upstream: выбирайте схему{' '}
+            <strong className="text-zinc-300">http</strong> и провайдера с HTTP CONNECT. Запись только с{' '}
+            <strong className="text-zinc-300">socks5</strong> для mobile bridge сейчас не подходит — в эмуляторе
+            интернет может не появиться.
+          </p>
           <label className="block text-xs font-medium text-zinc-400">
             Схема (proxy_scheme)
             <select
