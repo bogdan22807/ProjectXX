@@ -62,6 +62,18 @@ test('credentials only in URL host field → split to server + username/password
   assert.equal(p?.password, 'secret')
 })
 
+test('user:pass@host:port without scheme is parsed correctly', () => {
+  const p = buildPlaywrightProxyConfig({
+    host: 'dont1:takeit32@77.47.147.216:50101',
+    port: '',
+    username: '',
+    password: '',
+  })
+  assert.equal(p?.server, 'http://77.47.147.216:50101')
+  assert.equal(p?.username, 'dont1')
+  assert.equal(p?.password, 'takeit32')
+})
+
 test('socks5 scheme preserved', () => {
   const p = buildPlaywrightProxyConfig({
     host: 'socks5://127.0.0.1:1080',

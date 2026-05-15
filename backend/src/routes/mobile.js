@@ -6,6 +6,10 @@ import {
   mobileStop,
 } from '../executor/mobile/mobileExecutor.js'
 import {
+  clearMobileProxyApplied,
+  ensureMobileProxyApplied,
+} from '../executor/mobile/mobileProxyBridge.js'
+import {
   mumuShutdown,
   mumuShowWindow,
   startMuMuByEmulatorLabel,
@@ -141,6 +145,7 @@ router.post('/launch', async (req, res) => {
       adbSerial: launched.adbSerial,
       emit,
     })
+    await ensureMobileProxyApplied(accountId, account, launched.adbSerial, { emit })
     ephemeralAdbSerial.set(accountId, launched.adbSerial)
     db.prepare(
       `UPDATE accounts
@@ -198,6 +203,7 @@ router.post('/shutdown', async (req, res) => {
     }
     if (serial) {
       try {
+        await clearMobileProxyApplied(accountId, serial, { emit })
         await mobileStop({ emit, env: { ...process.env, MOBILE_DEVICE_ID: serial } })
       } catch {
         /* ignore */
@@ -254,6 +260,7 @@ router.post('/qa-open', async (req, res) => {
         adbSerial: serial,
         emit,
       })
+      await ensureMobileProxyApplied(accountId, row, serial, { emit })
     }
     const check = await mobileCheckDevice(opts)
     if (!check.ok) {
@@ -345,6 +352,7 @@ router.post('/scenario', async (req, res) => {
       adbSerial: deviceIdForRun,
       emit,
     })
+    await ensureMobileProxyApplied(accountId, row, deviceIdForRun, { emit })
     const openedApp =
       appWasOpened && openedPackageFromBody
         ? { deviceId: deviceIdForRun, package: openedPackageFromBody }
@@ -433,6 +441,7 @@ router.post('/stop', async (req, res) => {
     if (active) {
       active.controller.abort()
     }
+    await clearMobileProxyApplied(accountId, effectiveAdbSerial(accountId, row), { emit })
     await mobileStop({ emit, env: mobileEnvForAccount(accountId, row) })
     if (active) {
       await Promise.race([

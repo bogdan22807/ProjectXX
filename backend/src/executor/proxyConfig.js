@@ -11,6 +11,74 @@ export function resolvePlaywrightProxyScheme(proxy) {
 }
 
 /**
+ * Normalize a proxy row / form input into explicit connection fields.
+ * Supports:
+ * - split fields: host + port + username + password
+ * - URL-like host values: http://user:pass@host:port
+ * - auth host values without scheme: user:pass@host:port
+ *
+ * @param {ProxyLike | null | undefined} proxy
+ * @returns {{ scheme: string, host: string, port: string, username: string, password: string } | undefined}
+ */
+export function normalizeProxyEndpoint(proxy) {
+  if (!proxy) return undefined
+
+  let rawHost = String(proxy.host ?? '').trim()
+  const rawPort = String(proxy.port ?? '').trim()
+  let username = String(proxy.username ?? '').trim()
+  let password = String(proxy.password ?? '').trim()
+  if (!rawHost) return undefined
+
+  let explicitScheme = ''
+  let parsedFromUrl = null
+
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawHost)) {
+    try {
+      const u = new URL(rawHost)
+      explicitScheme = u.protocol.replace(':', '').toLowerCase()
+      parsedFromUrl = u
+      rawHost = u.hostname + (u.pathname && u.pathname !== '/' ? u.pathname : '')
+    } catch {
+      return undefined
+    }
+  } else {
+    try {
+      parsedFromUrl = new URL(`http://${rawHost}`)
+    } catch {
+      return undefined
+    }
+  }
+
+  const host = String(parsedFromUrl.hostname ?? '').trim()
+  if (!host) return undefined
+
+  let port = rawPort
+  if (!port && parsedFromUrl.port) {
+    port = parsedFromUrl.port
+  }
+
+  if (!username && parsedFromUrl.username) {
+    username = decodeURIComponent(parsedFromUrl.username)
+  }
+  if (!password && parsedFromUrl.password) {
+    password = decodeURIComponent(parsedFromUrl.password)
+  }
+
+  const scheme =
+    explicitScheme && PLAYWRIGHT_SCHEMES.has(explicitScheme)
+      ? explicitScheme
+      : schemeFromRow(proxy)
+
+  return {
+    scheme,
+    host,
+    port,
+    username,
+    password,
+  }
+}
+
+/**
  * Scheme label for logs: DB row when present, otherwise parsed from `launchProxy.server`.
  * @param {ProxyLike | null | undefined} proxyRow
  * @param {import('playwright').LaunchOptions['proxy'] | null | undefined} launchProxy
@@ -62,61 +130,19 @@ function hostForProxyServerUrl(hostname) {
  * @returns {import('playwright').LaunchOptions['proxy'] | undefined}
  */
 export function buildPlaywrightProxyConfig(proxy) {
-  if (!proxy) return undefined
+  const endpoint = normalizeProxyEndpoint(proxy)
+  if (!endpoint) return undefined
 
-  let rawHost = String(proxy.host ?? '').trim()
-  const rawPort = String(proxy.port ?? '').trim()
-  let username = String(proxy.username ?? '').trim()
-  let password = String(proxy.password ?? '').trim()
-  if (!rawHost) return undefined
-
-  let explicitScheme = ''
-  let parsedFromUrl = null
-
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawHost)) {
-    try {
-      const u = new URL(rawHost)
-      explicitScheme = u.protocol.replace(':', '').toLowerCase()
-      parsedFromUrl = u
-      rawHost = u.hostname + (u.pathname && u.pathname !== '/' ? u.pathname : '')
-    } catch {
-      return undefined
-    }
-  } else {
-    try {
-      parsedFromUrl = new URL(`http://${rawHost}`)
-    } catch {
-      return undefined
-    }
-  }
-
-  const hostname = parsedFromUrl.hostname
-  if (!hostname) return undefined
-
-  let port = rawPort
-  if (!port && parsedFromUrl.port) {
-    port = parsedFromUrl.port
-  }
-
-  if (!username && parsedFromUrl.username) {
-    username = decodeURIComponent(parsedFromUrl.username)
-  }
-  if (!password && parsedFromUrl.password) {
-    password = decodeURIComponent(parsedFromUrl.password)
-  }
-
-  const scheme = explicitScheme && PLAYWRIGHT_SCHEMES.has(explicitScheme)
-    ? explicitScheme
-    : schemeFromRow(proxy)
-
-  const hostPart = hostForProxyServerUrl(hostname)
-  const server = port ? `${scheme}://${hostPart}:${port}` : `${scheme}://${hostPart}`
+  const hostPart = hostForProxyServerUrl(endpoint.host)
+  const server = endpoint.port
+    ? `${endpoint.scheme}://${hostPart}:${endpoint.port}`
+    : `${endpoint.scheme}://${hostPart}`
 
   /** @type {import('playwright').LaunchOptions['proxy']} */
   const out = { server }
-  if (username || password) {
-    if (username) out.username = username
-    if (password) out.password = password
+  if (endpoint.username || endpoint.password) {
+    if (endpoint.username) out.username = endpoint.username
+    if (endpoint.password) out.password = endpoint.password
   }
   return out
 }

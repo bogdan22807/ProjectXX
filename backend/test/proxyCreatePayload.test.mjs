@@ -38,3 +38,16 @@ test('four-colon host string is not split (literal host)', () => {
   assert.equal(p.host, '95.134.185.60:50100:dont1:takeit32')
   assert.equal(p.port, '80')
 })
+
+test('user:pass@host:port host string is normalized into split proxy fields', () => {
+  const p = proxyCreatePayload({
+    host: 'dont1:takeit32@77.47.147.216:50101',
+    port: '',
+    username: '',
+    password: '',
+  })
+  assert.equal(p.host, '77.47.147.216')
+  assert.equal(p.port, '50101')
+  assert.equal(p.username, 'dont1')
+  assert.equal(p.password, 'takeit32')
+})

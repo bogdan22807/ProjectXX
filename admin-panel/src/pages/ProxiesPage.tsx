@@ -229,6 +229,11 @@ export function ProxiesPage() {
             Для Playwright обычно выбирайте <strong className="text-zinc-300">http</strong>. SOCKS5 с логином в
             Chromium может не поддерживаться.
           </p>
+          <p className="text-xs text-zinc-500">
+            Можно вставить полный формат прокси прямо в поле Host, например{' '}
+            <span className="font-mono text-zinc-400">dont1:takeit32@77.47.147.216:50101</span>. Если Port /
+            Username / Password пустые, backend разберёт их автоматически.
+          </p>
           <label className="block text-xs font-medium text-zinc-400">
             Схема (proxy_scheme)
             <select
