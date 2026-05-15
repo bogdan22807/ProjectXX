@@ -923,7 +923,8 @@ export function DashboardPage() {
           </label>
           <p className="text-xs leading-relaxed text-zinc-500">
             В базе сохраняются имя, логин, имя экземпляра и mobile proxy. ADB serial подставляется в памяти сервера после
-            кнопки «Запустить».
+            кнопки «Запустить». Прокси для MuMu должен быть <span className="text-zinc-300">http</span> (не socks5-only):
+            backend поднимает локальный HTTP-bridge к upstream.
           </p>
           {manualMobileError ? <p className="text-sm text-rose-300">{manualMobileError}</p> : null}
         </div>

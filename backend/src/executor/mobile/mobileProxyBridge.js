@@ -1,3 +1,7 @@
+/**
+ * Host-side HTTP proxy bridge → `adb reverse` → Android global `http_proxy` pointing at the reversed port.
+ * Upstream must be an **HTTP proxy** (Basic auth + CONNECT tunneling). SOCKS5-only rows are not supported on this path.
+ */
 import http from 'node:http'
 import net from 'node:net'
 
