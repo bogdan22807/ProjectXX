@@ -6,8 +6,8 @@ import http from 'node:http'
 import net from 'node:net'
 
 import { db } from '../../db.js'
-import { normalizeProxyEndpoint } from '../proxyConfig.js'
 import { runAdb } from './adbRunner.js'
+import { validateMobileProxyRowForBridge } from './mobileProxyValidation.js'
 
 const MOBILE_PROXY_DEVICE_PORT = 19100
 /** @type {Map<string, { proxyId: string, adbSerial: string, hostPort: number, server: import('node:http').Server }>} */
@@ -176,13 +176,7 @@ async function clearAndroidGlobalHttpProxy(adbSerial, opts = {}) {
 async function ensureBridge(accountId, adbSerial, proxyRow, opts = {}) {
   const proxyId = String(proxyRow?.id ?? '').trim()
   if (!proxyId) throw new Error('mobile proxy row is missing id')
-  const endpoint = normalizeProxyEndpoint(proxyRow)
-  if (!endpoint?.host || !endpoint.port) {
-    throw new Error('mobile proxy must include host and port')
-  }
-  if (endpoint.scheme !== 'http') {
-    throw new Error(`mobile proxy currently supports only http proxies (got ${endpoint.scheme})`)
-  }
+  const endpoint = validateMobileProxyRowForBridge(proxyRow)
 
   const existing = activeMobileProxyBridges.get(String(accountId))
   if (existing && existing.proxyId === proxyId && existing.adbSerial === adbSerial) {
