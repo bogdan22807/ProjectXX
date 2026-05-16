@@ -6,6 +6,11 @@ import http from 'node:http'
 import net from 'node:net'
 
 import { db } from '../../db.js'
+import {
+  deleteGlobalSetting,
+  putOrDeleteGlobalSetting,
+  readMobileProxyExclusionList,
+} from './adbGlobalSettings.js'
 import { runAdb } from './adbRunner.js'
 import { validateMobileProxyRowForBridge } from './mobileProxyValidation.js'
 
@@ -149,28 +154,24 @@ function getMobileProxyRow(accountRow) {
 }
 
 async function setAndroidGlobalHttpProxy(adbSerial, port, opts = {}) {
-  const commands = [
-    ['shell', 'settings', 'put', 'global', 'http_proxy', `127.0.0.1:${port}`],
-    ['shell', 'settings', 'put', 'global', 'global_http_proxy_host', '127.0.0.1'],
-    ['shell', 'settings', 'put', 'global', 'global_http_proxy_port', String(port)],
-    ['shell', 'settings', 'put', 'global', 'global_http_proxy_exclusion_list', ''],
-  ]
-  for (const args of commands) {
-    await runAdb(adbSerial, args, opts)
-  }
+  const exclusionList = readMobileProxyExclusionList(opts.env ?? process.env)
+  await putOrDeleteGlobalSetting(adbSerial, 'http_proxy', `127.0.0.1:${port}`, opts)
+  await putOrDeleteGlobalSetting(adbSerial, 'global_http_proxy_host', '127.0.0.1', opts)
+  await putOrDeleteGlobalSetting(adbSerial, 'global_http_proxy_port', String(port), opts)
+  await putOrDeleteGlobalSetting(adbSerial, 'global_http_proxy_exclusion_list', exclusionList, opts)
+  // Bridge endpoint inside Android is local and does not require upstream credentials.
+  await deleteGlobalSetting(adbSerial, 'global_http_proxy_username', opts).catch(() => {})
+  await deleteGlobalSetting(adbSerial, 'global_http_proxy_password', opts).catch(() => {})
 }
 
 async function clearAndroidGlobalHttpProxy(adbSerial, opts = {}) {
-  const commands = [
-    ['shell', 'settings', 'put', 'global', 'http_proxy', ':0'],
-    ['shell', 'settings', 'delete', 'global', 'global_http_proxy_host'],
-    ['shell', 'settings', 'delete', 'global', 'global_http_proxy_port'],
-    ['shell', 'settings', 'delete', 'global', 'global_http_proxy_exclusion_list'],
-    ['reverse', '--remove', `tcp:${MOBILE_PROXY_DEVICE_PORT}`],
-  ]
-  for (const args of commands) {
-    await runAdb(adbSerial, args, opts).catch(() => {})
-  }
+  await putOrDeleteGlobalSetting(adbSerial, 'http_proxy', ':0', opts).catch(() => {})
+  await deleteGlobalSetting(adbSerial, 'global_http_proxy_host', opts).catch(() => {})
+  await deleteGlobalSetting(adbSerial, 'global_http_proxy_port', opts).catch(() => {})
+  await deleteGlobalSetting(adbSerial, 'global_http_proxy_exclusion_list', opts).catch(() => {})
+  await deleteGlobalSetting(adbSerial, 'global_http_proxy_username', opts).catch(() => {})
+  await deleteGlobalSetting(adbSerial, 'global_http_proxy_password', opts).catch(() => {})
+  await runAdb(adbSerial, ['reverse', '--remove', `tcp:${MOBILE_PROXY_DEVICE_PORT}`], opts).catch(() => {})
 }
 
 async function ensureBridge(accountId, adbSerial, proxyRow, opts = {}) {
