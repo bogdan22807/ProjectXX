@@ -28,7 +28,14 @@ function parseEndpointFromProxyRow(proxyRow) {
 }
 
 async function putGlobalSetting(adbSerial, key, value, opts = {}) {
-  await runAdb(adbSerial, ['shell', 'settings', 'put', 'global', key, String(value)], opts)
+  const normalized = String(value ?? '').trim()
+  // `adb shell settings put ... ""` is treated as missing arg on many Android builds.
+  // For empty values always remove setting instead of sending an empty argument.
+  if (!normalized) {
+    await deleteGlobalSetting(adbSerial, key, opts)
+    return
+  }
+  await runAdb(adbSerial, ['shell', 'settings', 'put', 'global', key, normalized], opts)
 }
 
 async function deleteGlobalSetting(adbSerial, key, opts = {}) {
@@ -47,6 +54,7 @@ export async function applyMobileProxyToDevice(opts = {}) {
     await deleteGlobalSetting(adbSerial, 'global_http_proxy_port', adbOpts)
     await deleteGlobalSetting(adbSerial, 'global_http_proxy_username', adbOpts)
     await deleteGlobalSetting(adbSerial, 'global_http_proxy_password', adbOpts)
+    await deleteGlobalSetting(adbSerial, 'global_http_proxy_exclusion_list', adbOpts)
     emitLog(opts, 'MOBILE_PROXY_CLEARED', `adb_serial=${adbSerial}`)
     return { applied: false, cleared: true }
   }
@@ -54,6 +62,12 @@ export async function applyMobileProxyToDevice(opts = {}) {
   await putGlobalSetting(adbSerial, 'http_proxy', `${endpoint.host}:${endpoint.port}`, adbOpts)
   await putGlobalSetting(adbSerial, 'global_http_proxy_host', endpoint.host, adbOpts)
   await putGlobalSetting(adbSerial, 'global_http_proxy_port', endpoint.port, adbOpts)
+  await putGlobalSetting(
+    adbSerial,
+    'global_http_proxy_exclusion_list',
+    process.env.MOBILE_PROXY_EXCLUSION_LIST ?? 'localhost,127.0.0.1,::1',
+    adbOpts,
+  )
   if (endpoint.username) {
     await putGlobalSetting(adbSerial, 'global_http_proxy_username', endpoint.username, adbOpts)
   } else {
