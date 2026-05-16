@@ -437,6 +437,22 @@ export function DashboardPage() {
     return a.accountType === 'mobile' ? proxyLabel(a.mobileProxyId) : proxyLabel(a.proxyId)
   }
 
+  function latestMobileProxyProbe(a: Account): { ok: boolean; text: string } | null {
+    if (a.accountType !== 'mobile') return null
+    const probeLog = logs.find(
+      (l) =>
+        l.accountId === a.id &&
+        (l.action === 'MOBILE_PROXY_UPSTREAM_OK' || l.action === 'MOBILE_PROXY_UPSTREAM_FAILED'),
+    )
+    if (!probeLog) return null
+    if (probeLog.action === 'MOBILE_PROXY_UPSTREAM_OK') {
+      return { ok: true, text: 'Proxy check: OK' }
+    }
+    const reasonMatch = probeLog.details.match(/reason=(.+)$/)
+    const reason = reasonMatch?.[1]?.trim() || probeLog.details || 'unknown reason'
+    return { ok: false, text: `Proxy check: ${reason}` }
+  }
+
   function accountTypeLabel(a: Account) {
     if (a.accountType !== 'mobile') return a.platform
     return a.mode === 'manual' ? 'TikTok / Manual' : 'TikTok / MuMu'
@@ -634,6 +650,20 @@ export function DashboardPage() {
                       >
                         {accountProxyLabel(a)}
                       </span>
+                      {(() => {
+                        const probe = latestMobileProxyProbe(a)
+                        if (!probe) return null
+                        return (
+                          <span
+                            className={`mt-1 block truncate text-[11px] leading-snug ${
+                              probe.ok ? 'text-emerald-400/90' : 'text-rose-300'
+                            }`}
+                            title={probe.text}
+                          >
+                            {probe.text}
+                          </span>
+                        )
+                      })()}
                     </div>
                   </td>
                   <td className={`${tableCellClass} text-zinc-400`}>

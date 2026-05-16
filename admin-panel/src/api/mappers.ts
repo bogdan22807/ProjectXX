@@ -150,6 +150,7 @@ export function mapProfile(row: ApiProfile): BrowserProfile {
 export function mapLog(row: ApiLog): LogEntry {
   return {
     id: row.id,
+    accountId: row.account_id ?? null,
     time: row.created_at,
     action: row.action,
     details: row.details ?? '',

@@ -15,6 +15,7 @@ import { runAdb } from './adbRunner.js'
 import { validateMobileProxyRowForBridge } from './mobileProxyValidation.js'
 
 const MOBILE_PROXY_DEVICE_PORT = 19100
+const DEFAULT_PROXY_PROBE_TIMEOUT_MS = 7_000
 /** @type {Map<string, { proxyId: string, adbSerial: string, hostPort: number, server: import('node:http').Server }>} */
 const activeMobileProxyBridges = new Map()
 
@@ -50,6 +51,72 @@ function writeSocketError(socket, statusCode, message) {
   if (socket.destroyed) return
   socket.write(`HTTP/1.1 ${statusCode} ${message}\r\nConnection: close\r\n\r\n`)
   socket.destroy()
+}
+
+function readProxyProbeEnabled(env = process.env) {
+  const raw = String(env?.MOBILE_PROXY_UPSTREAM_PROBE ?? '1').trim().toLowerCase()
+  if (!raw) return true
+  return !['0', 'false', 'off', 'no'].includes(raw)
+}
+
+function readProxyProbeTimeoutMs(env = process.env) {
+  const raw = Number.parseInt(String(env?.MOBILE_PROXY_UPSTREAM_PROBE_TIMEOUT_MS ?? ''), 10)
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_PROXY_PROBE_TIMEOUT_MS
+  return Math.min(raw, 30_000)
+}
+
+async function verifyUpstreamHttpProxy(endpoint, opts = {}) {
+  const timeoutMs = Number(opts.timeoutMs ?? DEFAULT_PROXY_PROBE_TIMEOUT_MS)
+  const authHeader = proxyAuthHeader(endpoint)
+  await new Promise((resolve, reject) => {
+    let done = false
+    const socket = net.connect(Number(endpoint.port), endpoint.host)
+    let header = ''
+    const finish = (err) => {
+      if (done) return
+      done = true
+      socket.destroy()
+      if (err) reject(err)
+      else resolve(undefined)
+    }
+
+    socket.setTimeout(timeoutMs, () => finish(new Error(`upstream proxy probe timeout after ${timeoutMs}ms`)))
+    socket.once('error', (err) =>
+      finish(new Error(`failed to connect to proxy ${endpoint.host}:${endpoint.port}: ${err.message}`)),
+    )
+    socket.once('connect', () => {
+      let req = 'CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\nConnection: close\r\n'
+      if (authHeader) req += `Proxy-Authorization: ${authHeader}\r\n`
+      req += '\r\n'
+      socket.write(req)
+    })
+    socket.on('data', (chunk) => {
+      if (done) return
+      header += chunk.toString('utf8')
+      const lineEnd = header.indexOf('\r\n')
+      if (lineEnd === -1) return
+      const statusLine = header.slice(0, lineEnd)
+      const match = statusLine.match(/^HTTP\/1\.[01]\s+(\d{3})\b/i)
+      if (!match) {
+        finish(
+          new Error(
+            `proxy ${endpoint.host}:${endpoint.port} did not return HTTP status line (likely not HTTP proxy)`,
+          ),
+        )
+        return
+      }
+      const code = Number.parseInt(match[1], 10)
+      if (code === 200) {
+        finish()
+        return
+      }
+      if (code === 407) {
+        finish(new Error(`proxy auth failed for ${endpoint.host}:${endpoint.port} (HTTP 407)`))
+        return
+      }
+      finish(new Error(`proxy CONNECT rejected by ${endpoint.host}:${endpoint.port}: ${statusLine}`))
+    })
+  })
 }
 
 function createProxyBridgeServer(endpoint) {
@@ -178,6 +245,28 @@ async function ensureBridge(accountId, adbSerial, proxyRow, opts = {}) {
   const proxyId = String(proxyRow?.id ?? '').trim()
   if (!proxyId) throw new Error('mobile proxy row is missing id')
   const endpoint = validateMobileProxyRowForBridge(proxyRow)
+  const runtimeEnv = opts.env ?? process.env
+
+  if (readProxyProbeEnabled(runtimeEnv)) {
+    try {
+      await verifyUpstreamHttpProxy(endpoint, {
+        timeoutMs: readProxyProbeTimeoutMs(runtimeEnv),
+      })
+      emitLog(
+        opts.emit,
+        'MOBILE_PROXY_UPSTREAM_OK',
+        `proxy=${proxyId} upstream=${endpoint.host}:${endpoint.port}`,
+      )
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      emitLog(
+        opts.emit,
+        'MOBILE_PROXY_UPSTREAM_FAILED',
+        `proxy=${proxyId} upstream=${endpoint.host}:${endpoint.port} reason=${reason}`,
+      )
+      throw err
+    }
+  }
 
   const existing = activeMobileProxyBridges.get(String(accountId))
   if (existing && existing.proxyId === proxyId && existing.adbSerial === adbSerial) {
