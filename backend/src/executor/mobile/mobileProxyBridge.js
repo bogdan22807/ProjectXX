@@ -248,14 +248,24 @@ async function ensureBridge(accountId, adbSerial, proxyRow, opts = {}) {
   const runtimeEnv = opts.env ?? process.env
 
   if (readProxyProbeEnabled(runtimeEnv)) {
-    await verifyUpstreamHttpProxy(endpoint, {
-      timeoutMs: readProxyProbeTimeoutMs(runtimeEnv),
-    })
-    emitLog(
-      opts.emit,
-      'MOBILE_PROXY_UPSTREAM_OK',
-      `proxy=${proxyId} upstream=${endpoint.host}:${endpoint.port}`,
-    )
+    try {
+      await verifyUpstreamHttpProxy(endpoint, {
+        timeoutMs: readProxyProbeTimeoutMs(runtimeEnv),
+      })
+      emitLog(
+        opts.emit,
+        'MOBILE_PROXY_UPSTREAM_OK',
+        `proxy=${proxyId} upstream=${endpoint.host}:${endpoint.port}`,
+      )
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      emitLog(
+        opts.emit,
+        'MOBILE_PROXY_UPSTREAM_FAILED',
+        `proxy=${proxyId} upstream=${endpoint.host}:${endpoint.port} reason=${reason}`,
+      )
+      throw err
+    }
   }
 
   const existing = activeMobileProxyBridges.get(String(accountId))

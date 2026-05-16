@@ -75,6 +75,7 @@ export interface BrowserProfile {
 
 export interface LogEntry {
   id: string
+  accountId: string | null
   time: string
   action: string
   details: string
